@@ -69,11 +69,23 @@ pub struct ChatRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_p: Option<f32>,
     /// Passed through where a provider honours it; recorded either way so a
-    /// task's sampling configuration is auditable (SPEC §5.1).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// task's sampling configuration is auditable (SPEC §5.1). On the wire it
+    /// is reduced to 31 bits, see [`wire_seed`].
+    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "wire_seed")]
     pub seed: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stop: Option<Vec<String>>,
+}
+
+/// OpenAI-compatible servers parse `seed` as a signed machine integer (Ollama
+/// uses Go's `int`, llama.cpp a 32-bit value), so anything above `i32::MAX`
+/// is rejected with a 400. The mapping is fixed, so a recorded seed still
+/// reproduces the same request.
+fn wire_seed<S: serde::Serializer>(
+    seed: &Option<u64>,
+    s: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    serde::Serialize::serialize(&seed.map(|v| v & 0x7fff_ffff), s)
 }
 
 impl ChatRequest {
@@ -220,6 +232,17 @@ mod tests {
         assert!(json.get("temperature").is_none());
         assert!(json.get("seed").is_none());
         assert_eq!(json["messages"][0]["role"], "user");
+    }
+
+    #[test]
+    fn seed_fits_a_signed_32_bit_integer_on_the_wire() {
+        let huge = ChatRequest::new("m", vec![Message::user("hi")]).with_seed(u64::MAX);
+        assert_eq!(
+            serde_json::to_value(&huge).unwrap()["seed"],
+            i32::MAX as u64
+        );
+        let small = ChatRequest::new("m", vec![Message::user("hi")]).with_seed(7);
+        assert_eq!(serde_json::to_value(&small).unwrap()["seed"], 7);
     }
 
     #[test]
