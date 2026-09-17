@@ -180,6 +180,7 @@ async fn main() {
 
     let cli = Cli::parse();
     let json = cli.json;
+    load_dotenv(std::path::Path::new(&cli.project));
 
     match dispatch(cli).await {
         Ok(output) => {
@@ -934,6 +935,45 @@ async fn check_request_run(store: &Store, request_id: &RequestId, run_id: &RunId
 /// Choose the model provider from the environment (SPEC §13: model selection
 /// stays outside research policy).
 ///
+/// Apply `<project>/.env` to the process environment. Variables already set
+/// in the real environment win, so a shell override still works. A missing
+/// file is not an error.
+fn load_dotenv(project: &std::path::Path) {
+    let Ok(text) = std::fs::read_to_string(project.join(".env")) else {
+        return;
+    };
+    for (key, value) in parse_dotenv(&text) {
+        if std::env::var_os(&key).is_none() {
+            // SAFETY: called once at startup, before any other thread reads the
+            // environment.
+            unsafe { std::env::set_var(&key, &value) };
+        }
+    }
+}
+
+/// `KEY=value` lines; blanks, `#` comments, an `export ` prefix and one pair
+/// of surrounding quotes are tolerated. Anything else is skipped.
+fn parse_dotenv(text: &str) -> Vec<(String, String)> {
+    text.lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            let line = line.strip_prefix("export ").unwrap_or(line);
+            let (key, value) = line.split_once('=')?;
+            let key = key.trim();
+            let bad = key.is_empty() || key.starts_with('#') || key.contains(char::is_whitespace);
+            if bad {
+                return None;
+            }
+            let value = value.trim();
+            let value = match value.as_bytes() {
+                [q @ (b'"' | b'\''), .., last] if last == q => &value[1..value.len() - 1],
+                _ => value,
+            };
+            Some((key.to_string(), value.to_string()))
+        })
+        .collect()
+}
+
 /// With `URUK_PROVIDER_URL` and `URUK_MODEL` set, any OpenAI-compatible
 /// endpoint is used. Without them the run proceeds offline against a
 /// stand-in that says plainly that nothing was analysed.
@@ -1041,4 +1081,25 @@ fn install_signal_handler(cancel: tokio_util::sync::CancellationToken) {
 
 fn short_hash(s: &str) -> String {
     ContentHash::of_str(s).short().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_dotenv;
+
+    #[test]
+    fn dotenv_lines_parse_and_junk_is_skipped() {
+        let text = "# comment\n\nexport URUK_MODEL=qwen3.5:9b\nURUK_PROVIDER_URL = \"http://localhost:11434/v1\"\nKEY='x=y'\nnot a pair\n=novalue\n";
+        assert_eq!(
+            parse_dotenv(text),
+            vec![
+                ("URUK_MODEL".into(), "qwen3.5:9b".into()),
+                (
+                    "URUK_PROVIDER_URL".into(),
+                    "http://localhost:11434/v1".into()
+                ),
+                ("KEY".into(), "x=y".into()),
+            ]
+        );
+    }
 }

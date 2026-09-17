@@ -41,13 +41,18 @@ containment skip themselves on hosts without `sandbox-exec` (macOS) or
 
 ## Configure a model
 
-Any OpenAI-compatible `/chat/completions` endpoint works:
+Any OpenAI-compatible `/chat/completions` endpoint works. Put the settings in
+a `.env` file in the project directory (it is git-ignored) and every `uruk`
+command picks them up:
 
 ```sh
-export URUK_PROVIDER_URL=https://api.openai.com/v1   # or a local vLLM/Ollama URL
-export URUK_MODEL=gpt-4o
-export URUK_API_KEY=...                              # optional for local servers
+# .env
+URUK_PROVIDER_URL=http://localhost:11434/v1   # Ollama; or https://api.openai.com/v1
+URUK_MODEL=qwen3.5:9b
+URUK_API_KEY=...                              # optional for local servers
 ```
+
+A variable exported in the shell overrides the file.
 
 Without these, a run proceeds offline against a stand-in that performs no
 analysis. The report says so plainly rather than fabricating results.
