@@ -326,3 +326,51 @@ async fn project_lock_admits_one_scheduler() {
         "the lock must be released when the scheduler exits"
     );
 }
+
+/// The report describes what ran, not what was planned (SPEC §11): a campaign
+/// whose generation never produced a candidate cannot claim debates, rankings,
+/// or evolution.
+#[tokio::test]
+async fn report_methods_reflect_completed_work_not_the_plan() {
+    let f = fixture_with(
+        Mode::Campaign,
+        MockProvider::new().default_reply("this is not JSON"),
+        |g| {
+            g.budget.max_model_calls = 6;
+            g.budget.max_iterations = 2;
+        },
+    )
+    .await;
+    let summary = Scheduler::new(
+        f.store.clone(),
+        f.provider.clone(),
+        SchedulerConfig::default(),
+    )
+    .run(&f.run_id)
+    .await
+    .unwrap();
+    assert!(summary.state.is_terminal(), "{summary:?}");
+
+    let export = report::export_run(&f.store, &f.run_id).await.unwrap();
+    let text = tokio::fs::read_to_string(export.dir.join("REPORT.md"))
+        .await
+        .unwrap();
+    assert!(text.contains("**Roles used:** none"), "{text}");
+    let methods = text
+        .split("**Methods used**")
+        .nth(1)
+        .expect("methods section")
+        .split("**Planned but not run**")
+        .next()
+        .unwrap();
+    assert!(methods.contains("none: no task completed"), "{methods}");
+    assert!(
+        !methods.contains("debate"),
+        "a method that never ran was reported as used: {methods}"
+    );
+    let planned = text
+        .split("**Planned but not run**")
+        .nth(1)
+        .expect("the plan's unrun methods are listed under their own heading");
+    assert!(planned.contains("simulated scientific debate"), "{planned}");
+}

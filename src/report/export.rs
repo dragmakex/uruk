@@ -5,7 +5,7 @@ use crate::agents::outputs::{ClaimBasis, SynthesisOutput};
 use crate::records::*;
 use crate::store::{Store, write_atomic};
 use serde::Serialize;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use time::OffsetDateTime;
 
@@ -425,6 +425,8 @@ async fn build_report(
     manifest: &Manifest,
     artifacts: &[Artifact],
 ) -> Result<String> {
+    let tasks = store.list_tasks(run_id).await?;
+    let tasks = tasks.as_slice();
     let mut s = String::new();
     let partial = manifest.partial;
 
@@ -470,7 +472,23 @@ async fn build_report(
         }
     }
     if let Some(p) = plan {
-        s.push_str(&format!("- **Roles used:** {}\n", p.roles.join(", ")));
+        // What ran, not what was planned (SPEC §11): a role counts as used
+        // only when at least one of its tasks completed.
+        let (used, unused) = completed_roles(p, tasks);
+        s.push_str(&format!(
+            "- **Roles used:** {}\n",
+            if used.is_empty() {
+                "none (no task completed)".to_string()
+            } else {
+                used.join(", ")
+            }
+        ));
+        if !unused.is_empty() {
+            s.push_str(&format!(
+                "- **Roles planned but without completed work:** {}\n",
+                unused.join(", ")
+            ));
+        }
         s.push_str(&format!("- **Plan rationale:** {}\n", p.rationale));
     }
     s.push_str(&format!(
@@ -678,12 +696,32 @@ async fn build_report(
     // 4. Methods, uncertainty, unavailable information, incomplete validation.
     s.push_str("## 4. Methods, uncertainty, and limitations\n\n");
 
+    s.push_str("**Methods used** (from completed tasks):\n");
+    let completed = completed_by_strategy(tasks);
+    if completed.is_empty() {
+        s.push_str("- none: no task completed\n");
+    }
+    for ((role, strategy), n) in &completed {
+        s.push_str(&format!("- {role}: {strategy} ×{n}\n"));
+    }
+    s.push('\n');
     if let Some(p) = plan {
-        s.push_str("**Methods used:**\n");
-        for m in &p.methods {
-            s.push_str(&format!("- {m}\n"));
+        let (_, unused) = completed_roles(p, tasks);
+        // `build_plan` pushes one method per role, in the same order.
+        let not_run: Vec<&String> = p
+            .roles
+            .iter()
+            .zip(&p.methods)
+            .filter(|(role, _)| unused.contains(role))
+            .map(|(_, method)| method)
+            .collect();
+        if !not_run.is_empty() {
+            s.push_str("**Planned but not run** (no task of that role completed):\n");
+            for m in not_run {
+                s.push_str(&format!("- {m}\n"));
+            }
+            s.push('\n');
         }
-        s.push('\n');
     }
 
     s.push_str("**Resource use:**\n");
@@ -822,6 +860,31 @@ async fn build_report(
     ));
 
     Ok(s)
+}
+
+/// The plan's roles split into those with at least one completed task and
+/// those without.
+fn completed_roles(plan: &Plan, tasks: &[Task]) -> (Vec<String>, Vec<String>) {
+    let done: BTreeSet<&str> = tasks
+        .iter()
+        .filter(|t| t.state == TaskState::Completed)
+        .map(|t| t.role.as_str())
+        .collect();
+    plan.roles
+        .iter()
+        .cloned()
+        .partition(|r| done.contains(r.as_str()))
+}
+
+/// Completed tasks counted by role and strategy, in a stable order.
+fn completed_by_strategy(tasks: &[Task]) -> BTreeMap<(String, String), usize> {
+    let mut counts = BTreeMap::new();
+    for t in tasks.iter().filter(|t| t.state == TaskState::Completed) {
+        *counts
+            .entry((t.role.as_str().to_string(), t.strategy.clone()))
+            .or_insert(0) += 1;
+    }
+    counts
 }
 
 fn describe_assessment(a: Assessment) -> &'static str {
