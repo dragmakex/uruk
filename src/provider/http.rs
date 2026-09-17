@@ -14,6 +14,9 @@ use std::time::Duration;
 pub const ENV_URL: &str = "URUK_PROVIDER_URL";
 pub const ENV_KEY: &str = "URUK_API_KEY";
 pub const ENV_MODEL: &str = "URUK_MODEL";
+/// Optional `reasoning_effort` sent with every request (`none`, `low`, `medium`,
+/// `high`). Reasoning models spend most of their time thinking otherwise.
+pub const ENV_REASONING: &str = "URUK_REASONING_EFFORT";
 
 #[derive(Debug, Clone)]
 pub struct HttpProvider {
@@ -24,6 +27,7 @@ pub struct HttpProvider {
     name: String,
     max_retries: u32,
     retry_base: Duration,
+    reasoning_effort: Option<String>,
 }
 
 impl HttpProvider {
@@ -62,6 +66,7 @@ impl HttpProvider {
             name: format!("openai-compatible@{host}"),
             max_retries: 3,
             retry_base: Duration::from_millis(500),
+            reasoning_effort: None,
         })
     }
 
@@ -80,7 +85,12 @@ impl HttpProvider {
             ))
         })?;
         let key = std::env::var(ENV_KEY).ok().filter(|k| !k.trim().is_empty());
-        Ok(Some(Self::new(url, key, model)?))
+        let effort = std::env::var(ENV_REASONING)
+            .ok()
+            .filter(|e| !e.trim().is_empty());
+        Ok(Some(
+            Self::new(url, key, model)?.with_reasoning_effort(effort),
+        ))
     }
 
     pub fn with_max_retries(mut self, n: u32) -> Self {
@@ -92,6 +102,16 @@ impl HttpProvider {
     pub fn with_retry_base(mut self, d: Duration) -> Self {
         self.retry_base = d;
         self
+    }
+
+    /// `reasoning_effort` to send with every request; `None` omits the field.
+    pub fn with_reasoning_effort(mut self, effort: Option<String>) -> Self {
+        self.reasoning_effort = effort;
+        self
+    }
+
+    pub fn reasoning_effort(&self) -> Option<&str> {
+        self.reasoning_effort.as_deref()
     }
 
     pub fn base_url(&self) -> &str {
@@ -111,10 +131,15 @@ impl Provider for HttpProvider {
 
     async fn complete(&self, request: ChatRequest) -> Result<ChatResponse> {
         let url = format!("{}/chat/completions", self.base_url);
+        let mut body = serde_json::to_value(&request)
+            .map_err(|e| Error::Provider(format!("serialising request: {e}")))?;
+        if let Some(effort) = &self.reasoning_effort {
+            body["reasoning_effort"] = serde_json::Value::String(effort.clone());
+        }
         let mut attempt = 0u32;
 
         loop {
-            let mut req = self.client.post(&url).json(&request);
+            let mut req = self.client.post(&url).json(&body);
             if let Some(key) = &self.api_key {
                 req = req.bearer_auth(key);
             }

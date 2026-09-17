@@ -119,6 +119,10 @@ async fn posts_chat_completions_with_auth_and_parses_usage() {
     assert_eq!(body["messages"][0]["role"], "user");
     assert_eq!(body["messages"][0]["content"], "hi");
     assert_eq!(body["seed"], 7);
+    assert!(
+        body.get("reasoning_effort").is_none(),
+        "not sent unless configured"
+    );
     assert_eq!(
         provider.name(),
         format!(
@@ -126,6 +130,22 @@ async fn posts_chat_completions_with_auth_and_parses_usage() {
             url.trim_start_matches("http://").trim_end_matches("/v1")
         )
     );
+}
+
+#[tokio::test]
+async fn reasoning_effort_is_sent_when_configured() {
+    let (url, server) = serve(vec![(200, completion_body("ok"))]).await;
+    let provider = HttpProvider::new(&url, None, "m")
+        .unwrap()
+        .with_reasoning_effort(Some("none".into()));
+    provider
+        .complete(ChatRequest::new("m", vec![Message::user("hi")]))
+        .await
+        .unwrap();
+    let captured = server.await.unwrap();
+    let body: serde_json::Value = serde_json::from_str(&captured[0].body).unwrap();
+    assert_eq!(body["reasoning_effort"], "none");
+    assert_eq!(body["model"], "m", "the rest of the request is unchanged");
 }
 
 #[tokio::test]
@@ -205,6 +225,18 @@ fn from_env_requires_a_model_when_a_url_is_set() {
     // FIXME: Audit that the environment access only happens in single-threaded code.
     unsafe { std::env::set_var(uruk::provider::ENV_MODEL, "m") };
     assert!(HttpProvider::from_env().unwrap().is_some());
+
+    // FIXME: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::set_var(uruk::provider::ENV_REASONING, "none") };
+    assert_eq!(
+        HttpProvider::from_env()
+            .unwrap()
+            .unwrap()
+            .reasoning_effort(),
+        Some("none")
+    );
+    // FIXME: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::remove_var(uruk::provider::ENV_REASONING) };
 
     // FIXME: Audit that the environment access only happens in single-threaded code.
     unsafe { std::env::remove_var(uruk::provider::ENV_URL) };

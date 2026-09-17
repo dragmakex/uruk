@@ -50,6 +50,7 @@ command picks them up:
 URUK_PROVIDER_URL=http://localhost:11434/v1   # Ollama; or https://api.openai.com/v1
 URUK_MODEL=qwen3.5:9b
 URUK_API_KEY=...                              # optional for local servers
+URUK_REASONING_EFFORT=none                    # optional; stops reasoning models thinking at length
 ```
 
 A variable exported in the shell overrides the file.

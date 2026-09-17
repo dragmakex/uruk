@@ -11,7 +11,7 @@
 mod http;
 mod mock;
 
-pub use http::{ENV_KEY, ENV_MODEL, ENV_URL, HttpProvider};
+pub use http::{ENV_KEY, ENV_MODEL, ENV_REASONING, ENV_URL, HttpProvider};
 pub use mock::{MockProvider, MockRule, Reply};
 
 use crate::Result;
