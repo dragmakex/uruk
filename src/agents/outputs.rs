@@ -68,12 +68,14 @@ pub fn extract_json(text: &str) -> Result<serde_json::Value> {
                 depth -= 1;
                 if depth == 0 {
                     let candidate = &body[start..=offset];
-                    return serde_json::from_str(candidate).map_err(|e| {
-                        Error::validation(format!(
-                            "model output is not valid JSON: {e}; got {}",
-                            truncate(candidate, 200)
-                        ))
-                    });
+                    return serde_json::from_str(candidate)
+                        .or_else(|_| serde_json::from_str(&repair_escapes(candidate)))
+                        .map_err(|e| {
+                            Error::validation(format!(
+                                "model output is not valid JSON: {e}; got {}",
+                                truncate(candidate, 200)
+                            ))
+                        });
                 }
             }
             _ => {}
@@ -84,6 +86,34 @@ pub fn extract_json(text: &str) -> Result<serde_json::Value> {
         "model output has unbalanced JSON: {}",
         truncate(body, 200)
     )))
+}
+
+/// Drop the backslash from escapes JSON does not define (`\_`, `\-`, `\*`
+/// and so on), which models emit when they write Markdown inside a string.
+/// Only text inside strings is touched; defined escapes are kept.
+fn repair_escapes(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    let mut in_string = false;
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => {
+                in_string = !in_string;
+                out.push(c);
+            }
+            '\\' if in_string => match chars.peek() {
+                Some(&next) if "\"\\/bfnrtu".contains(next) => {
+                    out.push(c);
+                    out.push(next);
+                    chars.next();
+                }
+                Some(_) => {}
+                None => out.push(c),
+            },
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 fn truncate(s: &str, n: usize) -> String {
@@ -809,6 +839,18 @@ mod tests {
         let v = extract_json(r#"{"text": "a } brace", "n": 1}"#).unwrap();
         assert_eq!(v["n"], 1);
         assert_eq!(v["text"], "a } brace");
+    }
+
+    #[test]
+    fn stray_markdown_escapes_inside_strings_are_repaired() {
+        let v = extract_json(
+            r#"{"body": "snake\_case and a \- dash, kept \"quote\" and \\ backslash"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            v["body"],
+            "snake_case and a - dash, kept \"quote\" and \\ backslash"
+        );
     }
 
     #[test]
