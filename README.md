@@ -1,6 +1,9 @@
 # Uruk
 
-A scientist-in-the-loop research collaborator, implemented entirely in Rust.
+An autonomous research engine, implemented entirely in Rust. It generates,
+reviews, ranks, and tests hypotheses, and reports a finding as supported only
+when evidence beyond agent opinion backs it. Researchers set the goal, approve
+side effects, and can steer at any point; they are not needed to do the work.
 
 Uruk is the system specified in [`docs/SPEC.md`](docs/SPEC.md): a Supervisor plus six
 specialized roles (Generation, Reflection, Ranking, Evolution, Proximity,

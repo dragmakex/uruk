@@ -1,4 +1,4 @@
-//! Uruk — a scientist-in-the-loop research collaborator.
+//! Uruk — an autonomous research engine whose output is evidence-backed findings.
 //!
 //! See `docs/SPEC.md`. Module layout follows the ownership boundaries of SPEC §3:
 //! research policy ([`agents`]) stays independent of runtime types

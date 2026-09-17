@@ -1,6 +1,6 @@
-# Uruk — General-purpose Co-Scientist
+# Uruk — Autonomous Research Engine
 
-**Purpose:** A scientist-in-the-loop research collaborator for any stage of research.  
+**Purpose:** An autonomous research engine for any stage of research. Its output is evidence-backed findings; researchers set goals, approve side effects, and steer, but are not required to do the work.  
 **Foundation:** Gottweis et al., *Towards an AI co-scientist* (2025), supplied as [`pre_coscientist.pdf`](pre_coscientist.pdf), and *Accelerating scientific discovery with Co-Scientist* (2026), supplied as [`coscientist.pdf`](coscientist.pdf).  
 **Scope:** Domain-independent research reasoning, grounded in sources and connected to tools.  
 **Implementation:** Rust throughout Uruk, including orchestration, agents, storage, tool adapters, CLI, and later add-ons.  

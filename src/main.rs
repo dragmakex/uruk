@@ -19,7 +19,7 @@ use uruk::{Error, Result, provider};
 #[command(
     name = "uruk",
     version,
-    about = "A scientist-in-the-loop research collaborator"
+    about = "An autonomous research engine whose output is evidence-backed findings"
 )]
 struct Cli {
     /// Emit machine-readable JSON instead of human-facing text.
