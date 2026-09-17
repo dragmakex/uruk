@@ -1,0 +1,36 @@
+[package]
+name = "uruk"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+description = "Uruk — a scientist-in-the-loop research collaborator"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "signal", "fs", "io-util"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+thiserror = "2"
+time = { version = "0.3", features = ["serde-well-known", "formatting", "parsing", "macros"] }
+sha2 = "0.10"
+hex = "0.4"
+uuid = { version = "1", features = ["v4", "serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rand = "0.8"
+rand_chacha = "0.3"
+fs4 = "0.12"
+async-trait = "0.1.92"
+tokio-util = { version = "0.7.19", features = ["rt"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "charset", "http2"] }
+pdf_oxide = { version = "0.3", default-features = false, features = ["legacy-crypto"] }
+dom_smoothie = "0.18"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+strip = true
