@@ -27,4 +27,5 @@ pub mod ids {
     pub const META_OVERVIEW: &str = "meta.overview";
     pub const PROXIMITY_SIMILARITY: &str = "proximity.similarity";
     pub const TASK_SYNTHESIS: &str = "task.synthesis";
+    pub const SEARCH_PLAN_QUERIES: &str = "search.plan_queries";
 }

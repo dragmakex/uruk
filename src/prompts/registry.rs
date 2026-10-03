@@ -84,6 +84,7 @@ const TEMPLATES: &[TemplateDef] = templates![
     ids::META_OVERVIEW => ("meta.overview.md", None),
     ids::PROXIMITY_SIMILARITY => ("proximity.similarity.md", None),
     ids::TASK_SYNTHESIS => ("task.synthesis.md", None),
+    ids::SEARCH_PLAN_QUERIES => ("search.plan_queries.md", None),
 ];
 
 /// All loaded templates, keyed by ID.
@@ -176,6 +177,7 @@ mod tests {
             ids::PROXIMITY_SIMILARITY,
             ids::META_OVERVIEW,
             ids::TASK_SYNTHESIS,
+            ids::SEARCH_PLAN_QUERIES,
         ] {
             let t = reg.get(id).unwrap();
             assert!(

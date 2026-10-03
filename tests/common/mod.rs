@@ -39,6 +39,7 @@ pub mod anchor {
     pub const META_REVIEW: &str = "qualitative synthesis";
     pub const META_OVERVIEW: &str = "periodic overview";
     pub const TASK_SYNTHESIS: &str = "Requested deliverable:";
+    pub const SEARCH_PLAN_QUERIES: &str = "planning literature search queries";
 }
 
 /// A hypothesis reply matching the `generation.literature` contract.

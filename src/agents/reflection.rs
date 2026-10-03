@@ -69,7 +69,13 @@ pub async fn review(
         .set("item", render_item(item));
 
     if ctx.template_uses(template, "articles_with_reasoning") {
-        bindings = bindings.set("articles_with_reasoning", ctx.render_sources(12).await?);
+        // Passage retrieval keyed on the goal plus the item under review;
+        // whole sources when the run has no passage index.
+        let query = format!("{} {}", ctx.goal.question, item.title);
+        bindings = bindings.set(
+            "articles_with_reasoning",
+            ctx.render_grounding(&query, 12).await?,
+        );
     }
     if ctx.template_uses(template, "source_coverage") {
         bindings = bindings.set("source_coverage", ctx.source_coverage().await?);

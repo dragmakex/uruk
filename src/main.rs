@@ -63,9 +63,22 @@ enum Command {
         /// execution still needs `uruk approve`.
         #[arg(long)]
         allow_execute: bool,
-        /// Permit network retrieval.
+        /// Permit network retrieval of supplied URLs. This alone sends no
+        /// goal-derived query anywhere; literature search needs `--search`.
         #[arg(long)]
         allow_network: bool,
+        /// Opt in to federated literature search (OpenAlex, Crossref,
+        /// arXiv). Transmits goal-derived queries to those operators, so it
+        /// requires `--allow-network`.
+        #[arg(long)]
+        search: bool,
+        /// Narrow the connector set after `--search` (csv of openalex,
+        /// crossref, arxiv). Requires `--search`.
+        #[arg(long = "search-connectors")]
+        search_connectors: Option<String>,
+        /// Open-access full-text acquisitions attempted per discovery.
+        #[arg(long, default_value_t = 8)]
+        max_acquisitions: u32,
         /// Approved tool name. Repeatable.
         #[arg(long = "tool")]
         tools: Vec<String>,
@@ -164,6 +177,15 @@ enum Command {
         #[arg(long = "run-id")]
         run_id: String,
     },
+    /// Query a run's local passage index (FTS5, offline).
+    Passages {
+        #[arg(long = "run-id")]
+        run_id: String,
+        #[arg(long)]
+        query: String,
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
+    },
     /// List the prompt templates and their provenance.
     Prompts,
 }
@@ -230,6 +252,7 @@ fn error_kind(e: &Error) -> &'static str {
         Error::Budget(_) => "budget",
         Error::NotFound(_) => "not_found",
         Error::Provider(_) => "provider",
+        Error::Search(_) => "search",
         Error::Cancelled => "cancelled",
     }
 }
@@ -280,6 +303,9 @@ async fn dispatch(cli: Cli) -> Result<Output> {
             constraints,
             allow_execute,
             allow_network,
+            search,
+            search_connectors,
+            max_acquisitions,
             tools,
             max_model_calls,
             max_seconds,
@@ -287,6 +313,21 @@ async fn dispatch(cli: Cli) -> Result<Output> {
             max_debate_turns,
             dry_run,
         } => {
+            // Search is an explicit opt-in on top of the network permission:
+            // --allow-network alone keeps today's URL-fetch-only behavior and
+            // sends zero connector traffic.
+            if search && !allow_network {
+                return Err(Error::validation(
+                    "--search requires --allow-network: literature search transmits \
+                     goal-derived queries to external operators",
+                ));
+            }
+            if search_connectors.is_some() && !search {
+                return Err(Error::validation(
+                    "--search-connectors narrows the connector set and requires --search",
+                ));
+            }
+
             // One scheduler owns a project at a time (SPEC §9.2).
             let _lock = ProjectLock::acquire(&cli.project)?;
             let store = Store::open(&db_path).await?;
@@ -320,12 +361,28 @@ async fn dispatch(cli: Cli) -> Result<Output> {
                 })
                 .collect();
 
+            // `--search` enables the three MVP connectors through the
+            // allowlist; `--search-connectors` only narrows that set.
+            let mut allowed_tools = tools;
+            if search {
+                let connector_tools = match &search_connectors {
+                    Some(value) => {
+                        uruk::search::parse_connector_flag(value).map_err(Error::validation)?
+                    }
+                    None => uruk::search::DEFAULT_CONNECTOR_TOOLS
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect(),
+                };
+                allowed_tools.extend(connector_tools);
+            }
+
             let permissions = Permissions {
                 read_paths,
                 write_paths: vec![],
                 network: allow_network,
                 execute: allow_execute,
-                allowed_tools: tools,
+                allowed_tools,
                 disclose_to_provider: true,
                 require_approval_for: if allow_execute {
                     vec!["execute".to_string()]
@@ -369,6 +426,7 @@ async fn dispatch(cli: Cli) -> Result<Output> {
                     max_model_calls,
                     max_iterations,
                     max_debate_turns: max_debate_turns.clamp(1, 10),
+                    max_acquisitions,
                     ..Default::default()
                 },
                 profile,
@@ -543,10 +601,27 @@ async fn dispatch(cli: Cli) -> Result<Output> {
 
             let counts = |state: TaskState| tasks.iter().filter(|t| t.state == state).count();
 
+            let searches = store.list_search_records(&run_id).await?;
+            let works = store.list_works(&run_id).await?;
+            let search_line = if searches.is_empty() {
+                String::new()
+            } else {
+                use std::collections::BTreeSet;
+                let queries: BTreeSet<&str> = searches.iter().map(|s| s.query.as_str()).collect();
+                let connectors: BTreeSet<&str> = searches.iter().map(|s| s.tool.as_str()).collect();
+                format!(
+                    "Searches: {} queries, {} connectors, {} works, {} acquired\n",
+                    queries.len(),
+                    connectors.len(),
+                    works.len(),
+                    works.iter().filter(|w| w.source_id.is_some()).count(),
+                )
+            };
+
             let mut text = format!(
                 "Run {} — {}{}\nGoal (rev {}): {}\n\n\
                  Tasks: {} completed, {} running, {} pending, {} waiting for you, {} failed, {} uncertain\n\
-                 Usage: {} model call(s), {} token(s), cost {}\n",
+                 Usage: {} model call(s), {} token(s), cost {}\n{search_line}",
                 run.id,
                 run.state.as_str(),
                 match &run.stop_condition {
@@ -620,6 +695,11 @@ async fn dispatch(cli: Cli) -> Result<Output> {
                         "uncertain": counts(TaskState::Uncertain),
                     },
                     "usage": usage,
+                    "searches": {
+                        "records": searches.len(),
+                        "works": works.len(),
+                        "acquired": works.iter().filter(|w| w.source_id.is_some()).count(),
+                    },
                     "pending_approvals": pending.iter().map(|r| serde_json::json!({
                         "request_id": r.id.0,
                         "action": r.action,
@@ -893,6 +973,50 @@ async fn dispatch(cli: Cli) -> Result<Output> {
                     "rubric_changed": revised.rubric_changed,
                     "invalidated_approvals": revised.invalidated_approvals,
                     "decision_id": revised.decision.id.0,
+                }),
+            })
+        }
+
+        Command::Passages {
+            run_id,
+            query,
+            limit,
+        } => {
+            // Purely local FTS5 query; no network, no model call.
+            let store = Store::open(&db_path).await?;
+            let run_id = RunId::from_raw(run_id);
+            let hits = store.search_passages(&run_id, &query, limit).await?;
+            let sources = store.list_sources(&run_id).await?;
+
+            let mut text = if hits.is_empty() {
+                format!("No passages match {query:?} in run {run_id}.")
+            } else {
+                format!("{} passage(s) for {query:?}:\n", hits.len())
+            };
+            for (i, hit) in hits.iter().enumerate() {
+                let (citation, access) = sources
+                    .iter()
+                    .find(|s| s.id == hit.source_id)
+                    .map(|s| (s.short_citation(), s.access.as_str()))
+                    .unwrap_or_else(|| (hit.source_id.as_str().to_string(), "unknown"));
+                text.push_str(&format!(
+                    "{rank:>3}. [{score:.3}] {citation} ({id}, access: {access}, chars {start}..{end})\n     {snippet}\n",
+                    rank = i + 1,
+                    score = hit.score,
+                    id = hit.source_id,
+                    start = hit.byte_start,
+                    end = hit.byte_end,
+                    snippet = hit.snippet.replace('\n', " "),
+                ));
+            }
+
+            Ok(Output {
+                text,
+                data: serde_json::json!({
+                    "ok": true,
+                    "run_id": run_id.0,
+                    "query": query,
+                    "passages": hits,
                 }),
             })
         }

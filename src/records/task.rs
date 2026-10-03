@@ -18,6 +18,10 @@ pub enum Role {
     MetaReview,
     /// An explicit tool execution scheduled by the Supervisor.
     Tool,
+    /// Literature search: federated discovery and open-access acquisition.
+    /// A separate role keeps exec approval semantics untouched and gives
+    /// search its own budget line and report row.
+    Search,
 }
 
 impl Role {
@@ -31,6 +35,7 @@ impl Role {
             Self::Proximity => "proximity",
             Self::MetaReview => "meta_review",
             Self::Tool => "tool",
+            Self::Search => "search",
         }
     }
 
@@ -44,6 +49,7 @@ impl Role {
             "proximity" => Self::Proximity,
             "meta_review" => Self::MetaReview,
             "tool" => Self::Tool,
+            "search" => Self::Search,
             _ => return None,
         })
     }

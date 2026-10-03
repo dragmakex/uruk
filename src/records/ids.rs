@@ -88,6 +88,8 @@ id_type!(/// Identifies a proximity cluster.
     ClusterId, "clus");
 id_type!(/// Identifies a meta-review feedback version.
     FeedbackId, "fb");
+id_type!(/// Identifies one executed literature search (connector × query).
+    SearchId, "sch");
 
 /// A SHA-256 content hash, rendered lowercase hex.
 ///

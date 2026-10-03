@@ -33,6 +33,8 @@ struct Manifest {
     goal: GoalManifest,
     plan: Option<PlanManifest>,
     permissions: Permissions,
+    /// Search connectors enabled for this run (from the allowlist).
+    search_connectors: Vec<String>,
     budget: Budget,
     /// Provider adapters and models that served this run's tasks.
     providers: Vec<String>,
@@ -91,6 +93,9 @@ struct Counts {
     decisions: u32,
     experiments: u32,
     clusters: u32,
+    works: u32,
+    passages: u32,
+    searches: u32,
     tasks_completed: u32,
     tasks_failed: u32,
     tasks_uncertain: u32,
@@ -234,6 +239,24 @@ pub async fn export_run(store: &Store, run_id: &RunId) -> Result<Export> {
         files.push("research.jsonl".into());
     }
 
+    // --- works.jsonl: everything *found*, not just everything *read*.
+    // Per-connector ranks ride inside each merged WorkRecord (`work.hits`).
+    let works = store.list_works(run_id).await?;
+    let search_records = store.list_search_records(run_id).await?;
+    if !works.is_empty() {
+        let mut out = String::new();
+        for w in &works {
+            out.push_str(&serde_json::to_string(&serde_json::json!({
+                "work": w.work,
+                "rrf_score": w.rrf_score,
+                "source_id": w.source_id.as_ref().map(|s| s.0.clone()),
+            }))?);
+            out.push('\n');
+        }
+        write_atomic(&dir.join("works.jsonl"), out.as_bytes()).await?;
+        files.push("works.jsonl".into());
+    }
+
     // --- tournament.jsonl (campaigns with matches only) ---
     if !matches.is_empty() {
         let mut out = String::new();
@@ -321,6 +344,7 @@ pub async fn export_run(store: &Store, run_id: &RunId) -> Result<Export> {
                 .collect(),
         }),
         permissions: goal.permissions.clone(),
+        search_connectors: enabled_connectors(&goal.permissions),
         budget: goal.budget.clone(),
         providers,
         models,
@@ -346,6 +370,9 @@ pub async fn export_run(store: &Store, run_id: &RunId) -> Result<Export> {
             decisions: decisions.len() as u32,
             experiments: experiments.len() as u32,
             clusters: clusters.len() as u32,
+            works: works.len() as u32,
+            passages: store.count_passages(run_id).await? as u32,
+            searches: search_records.len() as u32,
             tasks_completed: tasks
                 .iter()
                 .filter(|t| t.state == TaskState::Completed)
@@ -512,7 +539,7 @@ async fn build_report(
 
     // Permissions actually in force, so an absent capability is visible.
     s.push_str(&format!(
-        "- **Capabilities:** network {}, execution {}, tools: {}\n\n",
+        "- **Capabilities:** network {}, execution {}, tools: {}\n",
         yes_no(goal.permissions.network),
         yes_no(goal.permissions.execute),
         if goal.permissions.allowed_tools.is_empty() {
@@ -521,6 +548,24 @@ async fn build_report(
             goal.permissions.allowed_tools.join(", ")
         }
     ));
+    // The disclosure contract is stated where a reviewer will read it:
+    // which operators received goal-derived queries, and that nothing else
+    // left the machine through the search route.
+    let connectors = enabled_connectors(&goal.permissions);
+    if connectors.is_empty() {
+        s.push_str(
+            "- **Literature search:** no connector enabled; no goal-derived query was \
+             transmitted to any external service\n\n",
+        );
+    } else {
+        s.push_str(&format!(
+            "- **Literature search:** enabled connectors (freely accessible public APIs): {}. \
+             Goal-derived queries, year filters, and the configured contact email were the \
+             only data transmitted to their operators; the verbatim queries are listed in \
+             §4\n\n",
+            connectors.join(", ")
+        ));
+    }
 
     // 2. Established results, Uruk's interpretations, and untested proposals.
     s.push_str("## 2. Findings\n\n");
@@ -724,6 +769,78 @@ async fn build_report(
         }
     }
 
+    // Search coverage: the verbatim queries and what each found, so "novel
+    // within searched sources" is a checkable claim.
+    let search_records = store.list_search_records(run_id).await?;
+    if !search_records.is_empty() {
+        let works = store.list_works(run_id).await?;
+        let sources_by_id: BTreeMap<&str, &Source> =
+            sources.iter().map(|s| (s.id.as_str(), s)).collect();
+
+        s.push_str("### Search coverage\n\n");
+        s.push_str("Queries executed (verbatim), per connector:\n");
+        for r in &search_records {
+            s.push_str(&format!(
+                "- `{}` → {}: {} result(s), {} retrieved{}\n",
+                r.query,
+                r.tool,
+                r.results_found,
+                r.results_retrieved.len(),
+                match &r.filters {
+                    Some(f) => format!(" (filters: {f})"),
+                    None => String::new(),
+                }
+            ));
+            for err in &r.connector_errors {
+                s.push_str(&format!("  - connector error: {err}\n"));
+            }
+        }
+
+        let acquired_full = works
+            .iter()
+            .filter(|w| {
+                w.source_id
+                    .as_ref()
+                    .and_then(|id| sources_by_id.get(id.as_str()))
+                    .is_some_and(|s| s.access == AccessLevel::FullText)
+            })
+            .count();
+        let abstract_only = works
+            .iter()
+            .filter(|w| {
+                w.source_id
+                    .as_ref()
+                    .and_then(|id| sources_by_id.get(id.as_str()))
+                    .is_some_and(|s| s.access == AccessLevel::AbstractOnly)
+            })
+            .count();
+        let unavailable: Vec<&String> = search_records
+            .iter()
+            .flat_map(|r| r.unavailable.iter())
+            .collect();
+        s.push_str(&format!(
+            "\n{} work(s) found after dedup; {} acquired full-text, {} abstract-only, \
+             {} unavailable (no open-access location).\n",
+            works.len(),
+            acquired_full,
+            abstract_only,
+            unavailable.len()
+        ));
+        if !unavailable.is_empty() {
+            s.push_str("\nIdentified but not readable:\n");
+            for u in unavailable.iter().take(20) {
+                s.push_str(&format!("- {u}\n"));
+            }
+            if unavailable.len() > 20 {
+                s.push_str(&format!("- … and {} more\n", unavailable.len() - 20));
+            }
+        }
+        s.push_str(
+            "\nNovelty claims hold only within the searched sources; works listed as \
+             unavailable were identified but never read.\n\n",
+        );
+    }
+
     s.push_str("**Resource use:**\n");
     s.push_str(&format!(
         "- {} model call(s), {} token(s), {} tool execution(s)\n",
@@ -860,6 +977,19 @@ async fn build_report(
     ));
 
     Ok(s)
+}
+
+/// Connector names enabled by the permissions (network plus allowlist).
+fn enabled_connectors(permissions: &Permissions) -> Vec<String> {
+    if !permissions.network {
+        return vec![];
+    }
+    permissions
+        .allowed_tools
+        .iter()
+        .filter_map(|t| t.strip_prefix("search:"))
+        .map(str::to_string)
+        .collect()
 }
 
 /// The plan's roles split into those with at least one completed task and

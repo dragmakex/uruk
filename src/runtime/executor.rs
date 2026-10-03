@@ -10,6 +10,7 @@
 use crate::agents::outputs::ProximityRelation;
 use crate::agents::{
     AgentContext, evolution, generation, meta_review, proximity, ranking, reflection, safety,
+    search,
 };
 use crate::records::*;
 use crate::store::{RecordBatch, write_atomic};
@@ -48,6 +49,7 @@ pub async fn execute_task(ctx: &AgentContext, task: &Task) -> Result<TaskOutcome
         Role::Proximity => run_proximity(ctx, task, &mut batch).await,
         Role::MetaReview => run_meta_review(ctx, task, &mut batch).await,
         Role::Tool => run_tool(ctx, task, &mut batch).await,
+        Role::Search => search::run_search(ctx, task, &mut batch).await,
         Role::Supervisor => Err(Error::validation(
             "the supervisor role is not dispatched through execute_task",
         )),

@@ -135,10 +135,18 @@ pub struct Budget {
     /// (SPEC §6).
     #[serde(default = "default_debate_turns")]
     pub max_debate_turns: u32,
+    /// Full-text acquisitions attempted per literature discovery, counting
+    /// from the top of the fused ranking.
+    #[serde(default = "default_max_acquisitions")]
+    pub max_acquisitions: u32,
 }
 
 fn default_debate_turns() -> u32 {
     5
+}
+
+fn default_max_acquisitions() -> u32 {
+    8
 }
 
 impl Default for Budget {
@@ -152,6 +160,7 @@ impl Default for Budget {
             max_cost_usd: None,
             reserve_calls_for_output: 4,
             max_debate_turns: 5,
+            max_acquisitions: 8,
         }
     }
 }

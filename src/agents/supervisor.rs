@@ -415,6 +415,30 @@ pub async fn select_work(
 
     let mut work: Vec<WorkItem> = Vec::new();
 
+    // --- Search: one federated discovery per goal revision ---
+    // Gated on the network permission and the per-connector allowlist; the
+    // acquisition tasks are enqueued by the discover task itself, dependent
+    // on it and priority-ordered by fused rank.
+    if crate::search::any_connector_enabled(&goal.permissions)
+        && [Role::Generation, Role::Reflection, Role::MetaReview]
+            .iter()
+            .any(|r| enabled(*r))
+    {
+        let inputs = vec![format!("goal_rev:{}", goal.revision)];
+        if ledger.allows(Role::Search, "discover", &inputs) {
+            work.push(WorkItem::new(
+                Role::Search,
+                "discover",
+                inputs,
+                weights.unreviewed_item + 5.0,
+                format!(
+                    "federated literature discovery for goal revision {}",
+                    goal.revision
+                ),
+            ));
+        }
+    }
+
     // --- Reflection: every candidate earns reviews, strategy by strategy ---
     if enabled(Role::Reflection) {
         for item in &candidates {
