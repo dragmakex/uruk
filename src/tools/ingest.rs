@@ -305,7 +305,10 @@ fn describe(
     }
 }
 
-/// Write the extracted text, if any, then commit the source.
+/// Write the extracted text, if any, then commit the source and index its
+/// passages. One code path for every text-bearing source — supplied files,
+/// supplied URLs, and connector acquisitions — so local passage retrieval
+/// works with zero connectors enabled.
 async fn finish(
     store: &Store,
     run_id: &RunId,
@@ -319,6 +322,11 @@ async fn finish(
     };
     source.text_artifact = artifact.as_ref().map(|a| a.id.clone());
     store.insert_source(&source).await?;
+    if artifact.is_some() {
+        store
+            .index_source_passages(&source, &extracted.text)
+            .await?;
+    }
     Ok(Ingested { source, artifact })
 }
 

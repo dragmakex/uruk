@@ -11,6 +11,7 @@ pub mod provider;
 pub mod records;
 pub mod report;
 pub mod runtime;
+pub mod search;
 pub mod store;
 pub mod tools;
 
@@ -40,6 +41,8 @@ pub enum Error {
     NotFound(String),
     #[error("provider: {0}")]
     Provider(String),
+    #[error("search: {0}")]
+    Search(String),
     #[error("cancelled")]
     Cancelled,
 }

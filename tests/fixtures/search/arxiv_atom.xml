@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <title>ArXiv Query: search_query=all:catalyst degradation</title>
+  <id>http://arxiv.org/api/example</id>
+  <totalResults xmlns="http://a9.com/-/spec/opensearch/1.1/">2</totalResults>
+  <entry>
+    <id>http://arxiv.org/abs/2403.01234v2</id>
+    <published>2024-03-02T18:00:00Z</published>
+    <title>Deep learning surrogates for
+      catalyst degradation</title>
+    <summary>We study catalyst degradation with
+      learned surrogates.</summary>
+    <author><name>Grace Hopper</name></author>
+    <author><name>Alan Turing</name></author>
+    <link href="http://arxiv.org/abs/2403.01234v2" rel="alternate" type="text/html"/>
+    <link title="pdf" href="http://arxiv.org/pdf/2403.01234v2" rel="related" type="application/pdf"/>
+    <arxiv:primary_category term="cs.LG"/>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2401.00001v1</id>
+    <published>2024-01-01T00:00:00Z</published>
+    <title>Catalyst degradation under thermal cycling</title>
+    <summary>Preprint version of the thermal cycling study.</summary>
+    <author><name>Ada Lovelace</name></author>
+    <arxiv:doi>10.1234/catalyst.2024.001</arxiv:doi>
+    <link href="http://arxiv.org/abs/2401.00001v1" rel="alternate" type="text/html"/>
+    <link title="pdf" href="http://arxiv.org/pdf/2401.00001v1" rel="related" type="application/pdf"/>
+    <arxiv:primary_category term="cond-mat.mtrl-sci"/>
+  </entry>
+</feed>

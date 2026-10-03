@@ -5,14 +5,18 @@
 //! has not passed the §4.3 and §7 gates.
 
 mod lock;
+mod passages;
 mod queries;
+mod search;
 mod tasks;
 #[cfg(test)]
 mod tests;
 mod writes;
 
 pub use lock::ProjectLock;
+pub use passages::{PassageHit, sanitize_match_query};
 pub use queries::ItemSummary;
+pub use search::StoredWork;
 pub use tasks::BudgetUsage;
 pub use writes::RecordBatch;
 

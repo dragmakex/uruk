@@ -1,0 +1,45 @@
+{
+  "status": "ok",
+  "message-type": "work-list",
+  "message": {
+    "total-results": 40,
+    "items": [
+      {
+        "DOI": "10.1234/CATALYST.2024.001",
+        "title": ["Catalyst degradation under thermal cycling"],
+        "author": [
+          { "given": "Ada", "family": "Lovelace" },
+          { "given": "Charles", "family": "Babbage" }
+        ],
+        "issued": { "date-parts": [[2024, 3, 15]] },
+        "container-title": ["Journal of Catalysis"],
+        "abstract": "<jats:p>Abstract Thermal cycling degrades catalyst activity.</jats:p>",
+        "score": 61.2,
+        "type": "journal-article"
+      },
+      {
+        "DOI": "10.5555/other.2023.9",
+        "title": ["A different study of electrode fouling"],
+        "author": [
+          { "given": "Dorothy", "family": "Vaughan" }
+        ],
+        "issued": { "date-parts": [[2023]] },
+        "container-title": ["Electrochimica Acta"],
+        "abstract": "<jats:p>Electrode fouling abstract only.</jats:p>",
+        "score": 44.0,
+        "type": "journal-article"
+      },
+      {
+        "DOI": "10.9999/paywalled.2022.7",
+        "title": ["Fully paywalled study of membrane ageing"],
+        "author": [
+          { "given": "Katherine", "family": "Johnson" }
+        ],
+        "issued": { "date-parts": [[2022]] },
+        "container-title": ["Journal of Membranes"],
+        "score": 21.5,
+        "type": "journal-article"
+      }
+    ]
+  }
+}

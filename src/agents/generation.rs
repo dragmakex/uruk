@@ -32,7 +32,11 @@ pub async fn from_literature(
     let bindings = ctx
         .base_bindings_for(ids::GENERATION_LITERATURE)
         .set("source_coverage", ctx.source_coverage().await?)
-        .set("articles_with_reasoning", ctx.render_sources(12).await?)
+        // Passage-grounded when the run has an index; whole sources otherwise.
+        .set(
+            "articles_with_reasoning",
+            ctx.render_grounding(&ctx.goal.question, 12).await?,
+        )
         .set_optional(
             "source_hypothesis",
             source_hypothesis.map(|i| format!("{}\n\n{}", i.title, i.content)),

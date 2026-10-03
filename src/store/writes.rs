@@ -291,6 +291,21 @@ impl Store {
         guard.commit().await
     }
 
+    /// Rewrite a source's record in place (acquisition backfills
+    /// bibliographic fields extraction could not find). The denormalized
+    /// columns are kept in sync with the body.
+    pub async fn update_source(&self, source: &Source) -> Result<()> {
+        let mut guard = self.begin_write().await?;
+        sqlx::query("UPDATE sources SET content_hash = ?, access = ?, body = ? WHERE id = ?")
+            .bind(source.content_hash.as_str())
+            .bind(source.access.as_str())
+            .bind(serde_json::to_string(source)?)
+            .bind(source.id.as_str())
+            .execute(guard.conn())
+            .await?;
+        guard.commit().await
+    }
+
     pub async fn insert_search_record(&self, rec: &SearchRecord) -> Result<()> {
         let mut guard = self.begin_write().await?;
         sqlx::query("INSERT INTO search_records (run_id, body, created_at) VALUES (?, ?, ?)")

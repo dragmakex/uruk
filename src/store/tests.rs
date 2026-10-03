@@ -1177,3 +1177,198 @@ async fn commit_task_is_atomic_and_idempotent() {
         vec![item.id.0]
     );
 }
+
+// --- Literature search: passages, FTS5, works (migration 0002) ---
+
+fn test_source(run_id: &RunId, text: &str) -> Source {
+    Source {
+        id: SourceId::new(),
+        schema_version: SCHEMA_VERSION,
+        run_id: run_id.clone(),
+        origin: Origin::Supplied,
+        title: Some("test source".into()),
+        authors: Some("Test Author".into()),
+        date: Some("2025".into()),
+        identifier: None,
+        retrieved_at: now(),
+        content_hash: ContentHash::of_str(text),
+        access: AccessLevel::FullText,
+        access_limitations: None,
+        text_artifact: Some(ArtifactId::new()),
+    }
+}
+
+/// Migration smoke test: a file-backed store opens with migration 0002
+/// applied, and an indexed passage is visible through FTS5 — proving the
+/// bundled SQLite has FTS5 and the triggers keep the index in sync.
+#[tokio::test]
+async fn migration_applies_and_fts5_search_works() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path().join(".uruk/state.sqlite"))
+        .await
+        .unwrap();
+    let (run, goal) = test_run();
+    store.ensure_project(&run.project_id, "test").await.unwrap();
+    store.create_run(&run, &goal).await.unwrap();
+    let _ = goal;
+
+    let text = "Catalyst degradation accelerates under thermal cycling.\n\n\
+                A control paragraph about unrelated sampling procedures.";
+    let source = test_source(&run.id, text);
+    store.insert_source(&source).await.unwrap();
+    let indexed = store.index_source_passages(&source, text).await.unwrap();
+    assert!(indexed >= 1);
+    assert_eq!(store.count_passages(&run.id).await.unwrap(), indexed as u64);
+
+    let hits = store
+        .search_passages(&run.id, "catalyst degradation", 10)
+        .await
+        .unwrap();
+    assert!(!hits.is_empty(), "FTS5 must find the indexed passage");
+    let hit = &hits[0];
+    assert_eq!(hit.source_id, source.id);
+    assert_eq!(
+        &text[hit.byte_start..hit.byte_end],
+        hit.text,
+        "byte span must slice the canonical text exactly"
+    );
+    assert!(hit.score.is_finite());
+    assert_eq!(
+        store
+            .passage_artifact_hash(&source.id, hit.seq)
+            .await
+            .unwrap(),
+        ContentHash::of_str(text)
+    );
+}
+
+#[tokio::test]
+async fn reindexing_a_source_is_idempotent() {
+    let (store, run, _goal) = setup().await;
+    let text = "One paragraph about electrodes.\n\nAnother paragraph about fouling.";
+    let source = test_source(&run.id, text);
+    store.insert_source(&source).await.unwrap();
+
+    let first = store.index_source_passages(&source, text).await.unwrap();
+    let second = store.index_source_passages(&source, text).await.unwrap();
+    assert_eq!(first, second);
+    assert_eq!(store.count_passages(&run.id).await.unwrap(), first as u64);
+
+    // The FTS index must not have doubled either.
+    let hits = store.search_passages(&run.id, "fouling", 10).await.unwrap();
+    assert_eq!(hits.len(), 1, "{hits:?}");
+}
+
+#[tokio::test]
+async fn bm25_ordering_is_deterministic_and_relevance_ranked() {
+    let (store, run, _goal) = setup().await;
+    let relevant = "Catalyst catalyst catalyst degradation in catalyst beds.";
+    let marginal = "A passing mention of a catalyst among many other topics \
+                    like sampling, electrodes, and instrumentation drift.";
+    for text in [relevant, marginal] {
+        let source = test_source(&run.id, text);
+        store.insert_source(&source).await.unwrap();
+        store.index_source_passages(&source, text).await.unwrap();
+    }
+
+    let a = store
+        .search_passages(&run.id, "catalyst", 10)
+        .await
+        .unwrap();
+    let b = store
+        .search_passages(&run.id, "catalyst", 10)
+        .await
+        .unwrap();
+    assert_eq!(a.len(), 2);
+    let order = |hits: &[PassageHit]| hits.iter().map(|h| h.text.clone()).collect::<Vec<_>>();
+    assert_eq!(order(&a), order(&b), "same query, same order");
+    assert!(
+        a[0].text.contains("beds"),
+        "denser match ranks first: {a:?}"
+    );
+    assert!(a[0].score >= a[1].score);
+}
+
+#[tokio::test]
+async fn works_round_trip_with_hits_in_the_body() {
+    use crate::search::types::{WorkHit, WorkKey, WorkRecord};
+
+    let (store, run, _goal) = setup().await;
+    let search_id = SearchId::new();
+    let mut work = WorkRecord {
+        title: "A discovered work".into(),
+        doi: Some("10.1/x".into()),
+        year: Some(2024),
+        // Ranks and raw hashes live only in the body (§ revised 6/13).
+        hits: vec![WorkHit {
+            connector: "openalex".into(),
+            search_id: search_id.clone(),
+            rank: 1,
+            raw_hash: ContentHash::of_str("raw"),
+        }],
+        ..Default::default()
+    };
+    work.work_key = WorkKey("doi:10.1/x".into());
+
+    store.insert_work(&run.id, &work, 0.032).await.unwrap();
+    // Replay is harmless.
+    store.insert_work(&run.id, &work, 0.032).await.unwrap();
+
+    let record = SearchRecord {
+        id: search_id.clone(),
+        run_id: run.id.clone(),
+        query: "catalyst degradation".into(),
+        tool: "openalex".into(),
+        executed_at: now(),
+        filters: None,
+        results_found: 1,
+        results_retrieved: vec![],
+        unavailable: vec![],
+        connector_errors: vec![],
+    };
+    store.insert_search_record(&record).await.unwrap();
+
+    let works = store.list_works(&run.id).await.unwrap();
+    assert_eq!(works.len(), 1, "idempotent insert");
+    assert_eq!(works[0].work.title, "A discovered work");
+    assert_eq!(works[0].rrf_score, Some(0.032));
+    assert!(works[0].source_id.is_none());
+    assert_eq!(works[0].work.hits.len(), 1, "hits round-trip via body");
+    assert_eq!(works[0].work.hits[0].search_id, search_id);
+    assert_eq!(works[0].work.hits[0].rank, 1);
+
+    let source = test_source(&run.id, "abstract text");
+    store.insert_source(&source).await.unwrap();
+    store
+        .set_work_source(&run.id, &work.work_key, &source.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .get_work(&run.id, "doi:10.1/x")
+            .await
+            .unwrap()
+            .source_id,
+        Some(source.id.clone())
+    );
+
+    // Search records are addressed by the id inside the JSON body.
+    let updated = store
+        .update_search_record(&run.id, &search_id, |r| {
+            r.results_retrieved.push(source.id.clone());
+        })
+        .await
+        .unwrap();
+    assert!(updated);
+    assert!(
+        !store
+            .update_search_record(&run.id, &SearchId::new(), |_| {})
+            .await
+            .unwrap(),
+        "an unknown id updates nothing"
+    );
+    let records = store.list_search_records(&run.id).await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].id, search_id);
+    assert_eq!(records[0].results_retrieved, vec![source.id]);
+}

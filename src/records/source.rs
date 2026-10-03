@@ -68,7 +68,11 @@ pub enum Locator {
     },
     /// A slice of a dataset: column, row range, or query.
     DataSlice(String),
-    /// A character offset range in extracted text.
+    /// A byte offset range into the UTF-8 extracted-text artifact.
+    ///
+    /// Offsets are byte positions in the canonical artifact file (always on
+    /// UTF-8 character boundaries), matching `passages.byte_start/byte_end`,
+    /// so a span citation resolves to an exact slice of the file.
     Span {
         start: usize,
         end: usize,
@@ -138,14 +142,21 @@ impl Source {
 /// queries, dates, filters, and what was unavailable are all persisted.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchRecord {
+    /// Durable identity, so a work's hits and later acquisition outcomes
+    /// refer back to the exact search that produced them.
+    pub id: SearchId,
     pub run_id: RunId,
     pub query: String,
     pub tool: String,
     #[serde(with = "time::serde::rfc3339")]
     pub executed_at: OffsetDateTime,
     pub filters: Option<String>,
+    /// Connector-reported total matches (may exceed the page retrieved).
     pub results_found: usize,
     pub results_retrieved: Vec<SourceId>,
     /// Material identified but not retrievable, with the reason.
     pub unavailable: Vec<String>,
+    /// Connector failures during this search; a partial federation is
+    /// recorded, not hidden.
+    pub connector_errors: Vec<String>,
 }

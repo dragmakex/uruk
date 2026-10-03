@@ -77,6 +77,15 @@ uruk run --goal "Summarise the reported effect sizes" --allow-network \
 uruk run --goal "Find competing explanations for this anomaly" \
            --mode campaign --max-iterations 10
 
+# Autonomous literature review is an explicit opt-in: --search (requires
+# --allow-network) formulates queries, searches OpenAlex/Crossref/arXiv,
+# acquires open-access full text, and grounds the synthesis in ranked
+# passages. --allow-network alone keeps URL-fetch-only behavior and sends
+# zero connector traffic; --search-connectors narrows the three connectors.
+uruk run --goal "What is known about catalyst degradation?" --mode task \
+           --allow-network --search [--search-connectors openalex,arxiv] [--max-acquisitions 8]
+uruk passages --run-id <id> --query "catalyst degradation"   # offline FTS5 lookup
+
 # Contained execution, gated by approval.
 uruk run --goal "Assess whether the mean exceeds zero" --input data.csv \
            --allow-execute --tool sh
@@ -95,7 +104,8 @@ uruk prompts                             # templates and their source figures
 
 Every command accepts `--json` for machine consumption, so an outer agent can
 drive Uruk as a tool. Errors carry a stable `kind`
-(`validation`, `permission`, `budget`, `not_found`, `provider`, `cancelled`, …)
+(`validation`, `permission`, `budget`, `not_found`, `provider`, `search`,
+`cancelled`, …)
 to branch on without parsing prose.
 
 Capabilities are off by default. `--allow-network`, `--allow-execute`, and
@@ -115,7 +125,8 @@ the new revision.
   manifest.json     identity, versions, providers, permissions, usage, artifact hashes
   REPORT.md         the deliverable with claim provenance, or a labelled partial result
   research.jsonl    items, evidence, reviews, decisions, experiments, lineage
-  sources.jsonl     source provenance and citation locators
+  sources.jsonl     source provenance, citation locators, and search records
+  works.jsonl       every work found by --search, with RRF score and per-connector ranks
   tournament.jsonl  matches and ratings (campaigns with comparisons)
   artifacts/        per-task directories: transcripts, logs, execution outputs
 ```
@@ -159,6 +170,16 @@ cannot run, the report says why.
   yielded text; a scanned PDF, a failed fetch, or a URL supplied without the
   network permission is recorded as such, with the reason, and the report
   repeats it. Retrieved pages and PDFs are untrusted data, fenced in prompts.
+- **Search disclosure is explicit opt-in and auditable.** Only `--search`
+  (which requires `--allow-network`) enables connectors; `--allow-network`
+  alone keeps today's URL-fetch-only behavior and sends zero connector
+  traffic. With search enabled, query text, year filters, and the configured
+  contact email (`URUK_CONTACT_EMAIL`, polite pools) are transmitted to the
+  enabled operators (OurResearch, Crossref, arXiv/Cornell) — never source
+  contents, never the goal record. Every transmitted query is persisted
+  verbatim in a `SearchRecord` and printed in REPORT.md. Acquisition fetches
+  only URLs a connector designates as legal open-access locations; paywalled
+  works are recorded as abstract-only or unavailable, never bypassed.
 
 ## Layout
 
@@ -169,15 +190,36 @@ src/agents/    research policy: the roles, safety, typed outputs, the Supervisor
 src/prompts/   versioned templates with provenance (§5.1, §15)
 src/provider/  OpenAI-shaped wire types, the HTTP adapter, and the mock
 src/runtime/   Tokio scheduler, limits, executor (§6, §9)
+src/search/    literature search: chunking, FTS5 passages, connectors, dedup, RRF
 src/tools/     ingestion, PDF and HTML extraction, contained execution (§8, §9.3)
 src/report/    deterministic export (§11)
 prompts/       the template assets
 ```
 
+## Literature search
+
+Every ingested source with a text artifact is chunked into passages and
+indexed in SQLite FTS5 inside `.uruk/state.sqlite`; prompts ground in ranked
+passages, and `uruk passages` queries the index offline — this needs no
+network at all. With `--allow-network --search`, discovery federates
+OpenAlex, Crossref, and arXiv (freely accessible public APIs — Uruk runs
+none of their code), deduplicates by DOI/arXiv/PMID/title fingerprint, fuses
+rankings with Reciprocal Rank Fusion, and acquires open-access full text
+through the ordinary ingestion pipeline. Resolution is local, from the
+discovery data already in hand: the arXiv PDF when the work has an arXiv id,
+else OpenAlex's designated `best_oa_location` (PDF, then landing page), else
+its `oa_url` — no resolver API is called. Every query, connector, result
+count, acquisition, and failure lands in the report's "Search coverage"
+section; each work's per-connector ranks and raw-response hashes ride in its
+own record, and `works.jsonl` lists everything found, not just everything
+read.
+
 ## Not implemented
 
-- Literature search (query a database and pick results). Retrieval takes the
-  URLs the researcher supplies; there is no search route yet.
+- Unpaywall open-access resolution; resolution currently uses only the OA
+  locations the discovery connectors themselves designate.
+- PubMed/PMC (NCBI E-utilities) connector and JATS full-text extraction;
+  biomedical coverage currently comes via OpenAlex.
 - OCR for scanned PDFs; they are recorded as metadata-only.
 - The research market (SPEC §7.1) is post-v1, opt-in, and deliberately not
   scaffolded.

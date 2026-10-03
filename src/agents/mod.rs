@@ -13,6 +13,7 @@ pub mod proximity;
 pub mod ranking;
 pub mod reflection;
 pub mod safety;
+pub mod search;
 pub mod supervisor;
 
 pub use context::{AgentContext, Completion};
