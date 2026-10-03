@@ -142,7 +142,7 @@ async fn ingest_url(
         .build()
         .map_err(|e| Error::Provider(format!("cannot build HTTP client: {e}")))?;
 
-    let response = match client.get(&url).send().await {
+    let mut response = match client.get(&url).send().await {
         Ok(r) => r,
         Err(e) => {
             return unavailable(store, run_id, &url, &format!("retrieval failed: {e}")).await;
@@ -173,26 +173,35 @@ async fn ingest_url(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_ascii_lowercase();
-    let bytes = match response.bytes().await {
-        Ok(b) => b,
-        Err(e) => {
-            return unavailable(
-                store,
-                run_id,
-                &url,
-                &format!("retrieval failed while reading: {e}"),
-            )
-            .await;
+    // Stream with the cap enforced as bytes arrive: a response without a
+    // Content-Length header must not buffer unboundedly before a post-hoc
+    // check. Oversized material is recorded as unavailable, never read.
+    let mut bytes: Vec<u8> = Vec::new();
+    loop {
+        match response.chunk().await {
+            Ok(Some(chunk)) => {
+                if bytes.len() as u64 + chunk.len() as u64 > MAX_RETRIEVAL_BYTES {
+                    return unavailable(
+                        store,
+                        run_id,
+                        &url,
+                        &format!("document exceeds the {MAX_RETRIEVAL_BYTES}-byte retrieval limit"),
+                    )
+                    .await;
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            Ok(None) => break,
+            Err(e) => {
+                return unavailable(
+                    store,
+                    run_id,
+                    &url,
+                    &format!("retrieval failed while reading: {e}"),
+                )
+                .await;
+            }
         }
-    };
-    if bytes.len() as u64 > MAX_RETRIEVAL_BYTES {
-        return unavailable(
-            store,
-            run_id,
-            &url,
-            &format!("document exceeds the {MAX_RETRIEVAL_BYTES}-byte retrieval limit"),
-        )
-        .await;
     }
     let content_hash = ContentHash::of_bytes(&bytes);
 
