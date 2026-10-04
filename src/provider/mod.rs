@@ -221,6 +221,72 @@ pub trait Provider: Send + Sync + std::fmt::Debug {
     async fn complete(&self, request: ChatRequest) -> Result<ChatResponse>;
 }
 
+/// Choose the model provider from the environment (SPEC §13: model selection
+/// stays outside research policy).
+///
+/// With `URUK_PROVIDER_URL` and `URUK_MODEL` set, any OpenAI-compatible
+/// endpoint is used. Without them the run proceeds offline against a
+/// stand-in that says plainly that nothing was analysed. The CLI and the web
+/// API share this exact selection.
+pub fn from_env_or_offline() -> Result<std::sync::Arc<dyn Provider>> {
+    if let Some(http) = HttpProvider::from_env()? {
+        tracing::info!(
+            provider = http.name(),
+            model = http.default_model(),
+            "using HTTP provider"
+        );
+        return Ok(std::sync::Arc::new(http));
+    }
+    tracing::warn!(
+        "no model provider configured ({ENV_URL} / {ENV_MODEL} unset); running offline \
+         with a stand-in that performs no analysis"
+    );
+    Ok(std::sync::Arc::new(
+        MockProvider::new()
+            .rule("Requested deliverable:", no_provider_deliverable())
+            .default_reply(no_provider_review()),
+    ))
+}
+
+/// Stand-in deliverable used when no model provider is configured.
+///
+/// Structurally valid, and explicit that nothing was analysed: SPEC §6 forbids
+/// implying a missing check passed.
+fn no_provider_deliverable() -> String {
+    let body = concat!(
+        "## No model provider configured\n\n",
+        "This run completed source ingestion, record-keeping, and export without a ",
+        "configured model provider, so no model-generated analysis was performed. The ",
+        "sources listed in this report were ingested and hashed, but nothing in them has ",
+        "been read or interpreted by a model.\n\n",
+        "Set URUK_PROVIDER_URL, URUK_MODEL, and URUK_API_KEY and re-run to obtain ",
+        "an analysed deliverable."
+    );
+    serde_json::json!({
+        "title": "No model provider configured",
+        "body": body,
+        "claims": [],
+        "disagreements": [],
+        "limitations": "No model provider was configured, so no model reasoning contributed to this report and no source content was analysed.",
+        "next_actions": [
+            "Configure a model provider and re-run to obtain an analysed deliverable."
+        ],
+    })
+    .to_string()
+}
+
+/// Stand-in review used when no model provider is configured.
+fn no_provider_review() -> String {
+    serde_json::json!({
+        "assessment_text": "No model provider is configured for this run, so no review was performed.",
+        "proposed_assessment": "inconclusive",
+        "objections": [],
+        "unknowns": ["No model provider was configured."],
+        "next_actions": [],
+    })
+    .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

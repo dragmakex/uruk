@@ -1,0 +1,35 @@
+{
+  "name": "uruk-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Uruk web frontend: a Next.js App Router UI over the local uruk API",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
+  },
+  "dependencies": {
+    "next": "16.3.8",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "eslint": "^9.30.0",
+    "eslint-config-next": "16.3.8",
+    "jsdom": "^26.0.0",
+    "typescript": "^5.8.0",
+    "vitest": "^5.0.3"
+  }
+}

@@ -14,6 +14,8 @@ pub mod runtime;
 pub mod search;
 pub mod store;
 pub mod tools;
+#[cfg(feature = "web")]
+pub mod web;
 
 /// Crate-wide error type.
 pub type Result<T> = std::result::Result<T, Error>;
@@ -58,5 +60,38 @@ impl Error {
 
     pub fn not_found(msg: impl Into<String>) -> Self {
         Self::NotFound(msg.into())
+    }
+
+    /// Stable error category, so a calling agent or API client can branch
+    /// without parsing prose. The CLI `--json` output and the web API both
+    /// report this exact string as `kind`.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Error::Storage(_) | Error::Migration(_) => "storage",
+            Error::Io(_) => "io",
+            Error::Json(_) => "serialization",
+            Error::Assessment(_) => "assessment_rejected",
+            Error::Validation(_) => "validation",
+            Error::Permission(_) => "permission",
+            Error::Budget(_) => "budget",
+            Error::NotFound(_) => "not_found",
+            Error::Provider(_) => "provider",
+            Error::Search(_) => "search",
+            Error::Cancelled => "cancelled",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Error;
+
+    #[test]
+    fn error_kinds_are_stable_strings() {
+        assert_eq!(Error::validation("x").kind(), "validation");
+        assert_eq!(Error::not_found("x").kind(), "not_found");
+        assert_eq!(Error::permission("x").kind(), "permission");
+        assert_eq!(Error::Budget("x".into()).kind(), "budget");
+        assert_eq!(Error::Cancelled.kind(), "cancelled");
     }
 }

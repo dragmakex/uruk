@@ -4,13 +4,11 @@
 //! can drive Uruk as a tool rather than scraping human-facing text.
 
 use clap::{Parser, Subcommand};
-use std::sync::Arc;
 use time::OffsetDateTime;
 use uruk::agents::supervisor;
-use uruk::provider::Provider as _;
 use uruk::records::*;
 use uruk::report;
-use uruk::runtime::{ConcurrencyLimits, Scheduler, SchedulerConfig};
+use uruk::runtime::{Scheduler, SchedulerConfig};
 use uruk::store::{ProjectLock, STATE_DB_RELATIVE, Store};
 use uruk::tools::ingest_input;
 use uruk::{Error, Result, provider};
@@ -188,6 +186,16 @@ enum Command {
     },
     /// List the prompt templates and their provenance.
     Prompts,
+    /// Serve the local web API (and the Next.js frontend's backend).
+    ///
+    /// SECURITY: there is no authentication. Keep the default loopback bind
+    /// unless an authenticating reverse proxy fronts it (docs/WEB.md).
+    #[cfg(feature = "web")]
+    Serve {
+        /// Address to bind, loopback by default.
+        #[arg(long, default_value = "127.0.0.1:7913")]
+        bind: String,
+    },
 }
 
 #[tokio::main]
@@ -220,7 +228,7 @@ async fn main() {
                 let body = serde_json::json!({
                     "ok": false,
                     "error": e.to_string(),
-                    "kind": error_kind(&e),
+                    "kind": e.kind(),
                 });
                 println!(
                     "{}",
@@ -238,23 +246,6 @@ async fn main() {
 struct Output {
     text: String,
     data: serde_json::Value,
-}
-
-/// Stable error categories, so a calling agent can branch without parsing prose.
-fn error_kind(e: &Error) -> &'static str {
-    match e {
-        Error::Storage(_) | Error::Migration(_) => "storage",
-        Error::Io(_) => "io",
-        Error::Json(_) => "serialization",
-        Error::Assessment(_) => "assessment_rejected",
-        Error::Validation(_) => "validation",
-        Error::Permission(_) => "permission",
-        Error::Budget(_) => "budget",
-        Error::NotFound(_) => "not_found",
-        Error::Provider(_) => "provider",
-        Error::Search(_) => "search",
-        Error::Cancelled => "cancelled",
-    }
 }
 
 async fn dispatch(cli: Cli) -> Result<Output> {
@@ -347,7 +338,9 @@ async fn dispatch(cli: Cli) -> Result<Output> {
             };
             let run_id = RunId::new();
             let goal_id = GoalId::new();
-            let project_id = ProjectId::from_raw(format!("prj_{}", short_hash(&cli.project)));
+            // Identity shared with the web API, derived from the canonical
+            // project directory rather than the raw --project spelling.
+            let (project_id, project_name) = store.project_identity();
 
             // Reading a supplied input is implied by supplying it; nothing
             // else is granted without an explicit flag (SPEC §12).
@@ -447,7 +440,7 @@ async fn dispatch(cli: Cli) -> Result<Output> {
                 updated_at: OffsetDateTime::now_utc(),
             };
 
-            store.ensure_project(&project_id, &cli.project).await?;
+            store.ensure_project(&project_id, &project_name).await?;
             store.create_run(&run, &goal_record).await?;
 
             // Check the goal itself before any work is scheduled (SPEC §12).
@@ -876,34 +869,19 @@ async fn dispatch(cli: Cli) -> Result<Output> {
 
             // A durable control request: the owning scheduler observes it,
             // cancels in-flight work, and a stopped run stays stopped across
-            // restarts (SPEC §9.2).
-            let cancelled = store.cancel_pending_tasks(&run_id).await?;
-            store
-                .set_run_state(&run_id, RunState::Cancelled, Some(StopCondition::Cancelled))
-                .await?;
-
-            let decision = Decision {
-                id: DecisionId::new(),
-                schema_version: SCHEMA_VERSION,
-                run_id: run_id.clone(),
-                kind: DecisionKind::Stop,
-                actor: Actor::Researcher,
-                reason: "researcher requested stop".into(),
-                referenced: vec![],
-                payload: serde_json::json!({"cancelled_tasks": cancelled}),
-                created_at: OffsetDateTime::now_utc(),
-            };
-            store.insert_decision(&decision).await?;
+            // restarts (SPEC §9.2). Shared with the web API's stop route.
+            let outcome = uruk::runtime::request_stop(&store, &run_id).await?;
 
             Ok(Output {
                 text: format!(
-                    "Stop requested for {run_id}; {cancelled} pending task(s) cancelled. \
-                     A running scheduler will observe this within a second."
+                    "Stop requested for {run_id}; {} pending task(s) cancelled. \
+                     A running scheduler will observe this within a second.",
+                    outcome.cancelled_tasks
                 ),
                 data: serde_json::json!({
                     "ok": true,
                     "run_id": run_id.0,
-                    "cancelled_tasks": cancelled,
+                    "cancelled_tasks": outcome.cancelled_tasks,
                 }),
             })
         }
@@ -1021,6 +999,23 @@ async fn dispatch(cli: Cli) -> Result<Output> {
             })
         }
 
+        #[cfg(feature = "web")]
+        Command::Serve { bind } => {
+            let bind: std::net::SocketAddr = bind
+                .parse()
+                .map_err(|e| Error::validation(format!("bad --bind address {bind:?}: {e}")))?;
+            uruk::web::serve(uruk::web::ServeOptions {
+                bind,
+                project: std::path::PathBuf::from(&cli.project),
+                config: uruk::web::WebConfig::default(),
+            })
+            .await?;
+            Ok(Output {
+                text: "web API stopped".into(),
+                data: serde_json::json!({"ok": true}),
+            })
+        }
+
         Command::Report { run_id } => {
             let store = Store::open(&db_path).await?;
             let run_id = RunId::from_raw(run_id);
@@ -1098,78 +1093,11 @@ fn parse_dotenv(text: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// With `URUK_PROVIDER_URL` and `URUK_MODEL` set, any OpenAI-compatible
-/// endpoint is used. Without them the run proceeds offline against a
-/// stand-in that says plainly that nothing was analysed.
-fn build_provider() -> Result<Arc<dyn provider::Provider>> {
-    if let Some(http) = provider::HttpProvider::from_env()? {
-        tracing::info!(
-            provider = http.name(),
-            model = http.default_model(),
-            "using HTTP provider"
-        );
-        return Ok(Arc::new(http));
-    }
-    tracing::warn!(
-        "no model provider configured ({} / {} unset); running offline with a stand-in \
-         that performs no analysis",
-        provider::ENV_URL,
-        provider::ENV_MODEL
-    );
-    Ok(Arc::new(
-        provider::MockProvider::new()
-            .rule("Requested deliverable:", no_provider_deliverable())
-            .default_reply(no_provider_review()),
-    ))
-}
-
-/// Stand-in deliverable used when no model provider is configured.
-///
-/// Structurally valid, and explicit that nothing was analysed: SPEC §6 forbids
-/// implying a missing check passed.
-fn no_provider_deliverable() -> String {
-    let body = concat!(
-        "## No model provider configured\n\n",
-        "This run completed source ingestion, record-keeping, and export without a ",
-        "configured model provider, so no model-generated analysis was performed. The ",
-        "sources listed in this report were ingested and hashed, but nothing in them has ",
-        "been read or interpreted by a model.\n\n",
-        "Set URUK_PROVIDER_URL, URUK_MODEL, and URUK_API_KEY and re-run to obtain ",
-        "an analysed deliverable."
-    );
-    serde_json::json!({
-        "title": "No model provider configured",
-        "body": body,
-        "claims": [],
-        "disagreements": [],
-        "limitations": "No model provider was configured, so no model reasoning contributed to this report and no source content was analysed.",
-        "next_actions": [
-            "Configure a model provider and re-run to obtain an analysed deliverable."
-        ],
-    })
-    .to_string()
-}
-
-/// Stand-in review used when no model provider is configured.
-fn no_provider_review() -> String {
-    serde_json::json!({
-        "assessment_text": "No model provider is configured for this run, so no review was performed.",
-        "proposed_assessment": "inconclusive",
-        "objections": [],
-        "unknowns": ["No model provider was configured."],
-        "next_actions": [],
-    })
-    .to_string()
-}
-
 fn build_scheduler(store: Store) -> Result<Scheduler> {
     Ok(Scheduler::new(
         store,
-        build_provider()?,
-        SchedulerConfig {
-            limits: ConcurrencyLimits::new(4, 1),
-            ..Default::default()
-        },
+        provider::from_env_or_offline()?,
+        SchedulerConfig::default(),
     ))
 }
 
@@ -1201,10 +1129,6 @@ fn install_signal_handler(cancel: tokio_util::sync::CancellationToken) {
         tracing::warn!("cancellation requested; finishing in-flight work");
         cancel.cancel();
     });
-}
-
-fn short_hash(s: &str) -> String {
-    ContentHash::of_str(s).short().to_string()
 }
 
 #[cfg(test)]
