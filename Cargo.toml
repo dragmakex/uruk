@@ -6,6 +6,12 @@ rust-version = "1.98"
 description = "Uruk — an autonomous research engine that reports only evidence-backed findings"
 license = "MIT OR Apache-2.0"
 
+[features]
+# The web API server is on by default so `uruk serve` works out of the box;
+# `--no-default-features` builds the lean CLI-only binary.
+default = ["web"]
+web = ["dep:axum", "dep:tower-http", "dep:futures-util"]
+
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "signal", "fs", "io-util"] }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
@@ -29,11 +35,18 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "rus
 pdf_oxide = { version = "0.3", default-features = false, features = ["legacy-crypto"] }
 dom_smoothie = "0.18"
 quick-xml = "0.42"
+# Web API adapter (feature `web`).
+axum = { version = "0.8", optional = true }
+tower-http = { version = "0.6", optional = true, features = ["trace", "timeout", "compression-gzip", "request-id", "util"] }
+futures-util = { version = "0.3", optional = true, default-features = false, features = ["std"] }
 
 [dev-dependencies]
 tempfile = "3"
 # `start_paused` time control for the rate-limiter tests.
 tokio = { version = "1", features = ["test-util"] }
+# `ServiceExt::oneshot` for exercising the web router without a socket.
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
 
 [profile.release]
 strip = true

@@ -15,7 +15,7 @@ mod writes;
 
 pub use lock::ProjectLock;
 pub use passages::{PassageHit, sanitize_match_query};
-pub use queries::ItemSummary;
+pub use queries::{ItemSummary, RunOverview};
 pub use search::StoredWork;
 pub use tasks::BudgetUsage;
 pub use writes::RecordBatch;
@@ -155,6 +155,19 @@ impl Store {
     /// The project directory this store belongs to.
     pub fn project_dir(&self) -> &Path {
         &self.project_dir
+    }
+
+    /// Stable project identity: the id is derived from the canonical
+    /// project directory (as resolved by [`Store::open`]), so the CLI and
+    /// the web API agree on which project row a run belongs to regardless
+    /// of how the path was spelled on the command line.
+    pub fn project_identity(&self) -> (crate::records::ProjectId, String) {
+        let name = self.project_dir.to_string_lossy().into_owned();
+        let id = crate::records::ProjectId::from_raw(format!(
+            "prj_{}",
+            crate::records::ContentHash::of_str(&name).short()
+        ));
+        (id, name)
     }
 
     /// Where a run's exported files live: `<project>/runs/<run-id>/`.

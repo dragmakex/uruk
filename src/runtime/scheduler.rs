@@ -143,9 +143,12 @@ impl Scheduler {
             }
         };
 
-        self.store
-            .set_run_state(run_id, RunState::Running, None)
-            .await?;
+        // Guarded transition: a stop request that lands between the
+        // terminal check above and this point must win. When it does, the
+        // loop below observes the cancelled state and winds down.
+        if !self.store.mark_run_running(run_id).await? {
+            tracing::warn!("run was cancelled while the scheduler was starting");
+        }
 
         // The wall clock runs from the run's creation, not from this process
         // start, so a restart cannot extend the deadline (SPEC §6).

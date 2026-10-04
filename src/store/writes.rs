@@ -245,6 +245,52 @@ impl Store {
         guard.commit().await
     }
 
+    /// Transition a run to `Running` for a (re)starting scheduler, refusing
+    /// to overwrite a durable stop request (SPEC §9.2): a run that is
+    /// already `cancelled` stays cancelled, so `uruk stop` cannot lose the
+    /// race against a scheduler that is just starting up.
+    ///
+    /// Returns whether the transition happened; when it did not, the caller
+    /// should let its run loop observe the cancelled state and wind down.
+    pub async fn mark_run_running(&self, run_id: &RunId) -> Result<bool> {
+        let mut guard = self.begin_write().await?;
+        let result =
+            sqlx::query("UPDATE runs SET state = ?, updated_at = ? WHERE id = ? AND state != ?")
+                .bind(RunState::Running.as_str())
+                .bind(to_rfc3339(now()))
+                .bind(run_id.as_str())
+                .bind(RunState::Cancelled.as_str())
+                .execute(guard.conn())
+                .await?;
+        guard.commit().await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Record a durable stop request (SPEC §9.2) unless the run is already
+    /// terminal, in one atomic step: a run that finished in the meantime is
+    /// never flipped to `cancelled` after the fact.
+    ///
+    /// Returns whether the run was cancelled by this call.
+    pub async fn try_cancel_run(&self, run_id: &RunId) -> Result<bool> {
+        let mut guard = self.begin_write().await?;
+        let result = sqlx::query(
+            "UPDATE runs SET state = ?, stop_condition = ?, updated_at = ?
+             WHERE id = ? AND state NOT IN (?, ?, ?, ?)",
+        )
+        .bind(RunState::Cancelled.as_str())
+        .bind(StopCondition::Cancelled.as_str())
+        .bind(to_rfc3339(now()))
+        .bind(run_id.as_str())
+        .bind(RunState::Completed.as_str())
+        .bind(RunState::BudgetExhausted.as_str())
+        .bind(RunState::Cancelled.as_str())
+        .bind(RunState::Failed.as_str())
+        .execute(guard.conn())
+        .await?;
+        guard.commit().await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     /// Reopen a finished run after a goal revision, so it can be resumed
     /// under the new revision (SPEC §6: the researcher may change constraints
     /// at any point).

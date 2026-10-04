@@ -1,0 +1,7 @@
+packages:
+  - "."
+
+# unrs-resolver ships a native binding used by eslint-config-next's import
+# resolver; its postinstall only links the prebuilt binary.
+allowBuilds:
+  unrs-resolver: true

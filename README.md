@@ -29,6 +29,15 @@ Built on Rust 1.98 (edition 2024) with current crates: `reqwest` 0.13 over
 rustls for the model provider and retrieval, `pdf_oxide` for PDF text, and
 `dom_smoothie` (a readability port) for web pages.
 
+## Web console
+
+`uruk serve` starts a local JSON/SSE API on `127.0.0.1:7913` (axum, behind
+the on-by-default `web` cargo feature), and `web/` holds a separate Next.js
+frontend for it: run specification, a live agent-topology view, reports,
+and the source library. **The API has no authentication; keep it on
+loopback.** Setup, architecture, and the reverse-proxy recipe are in
+[docs/WEB.md](docs/WEB.md).
+
 ## Build and test
 
 ```sh

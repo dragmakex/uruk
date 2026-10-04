@@ -1372,3 +1372,74 @@ async fn works_round_trip_with_hits_in_the_body() {
     assert_eq!(records[0].id, search_id);
     assert_eq!(records[0].results_retrieved, vec![source.id]);
 }
+
+#[tokio::test]
+async fn marking_a_run_running_is_refused_once_it_is_cancelled() {
+    let (store, run, _goal) = setup().await;
+
+    assert!(
+        store.mark_run_running(&run.id).await.unwrap(),
+        "a live run may (re)enter running"
+    );
+
+    store
+        .set_run_state(&run.id, RunState::Cancelled, Some(StopCondition::Cancelled))
+        .await
+        .unwrap();
+    assert!(
+        !store.mark_run_running(&run.id).await.unwrap(),
+        "a durable stop request must not be overwritten by a starting scheduler"
+    );
+    assert_eq!(
+        store.get_run(&run.id).await.unwrap().state,
+        RunState::Cancelled
+    );
+}
+
+#[tokio::test]
+async fn cancelling_a_run_is_refused_once_it_is_terminal() {
+    let (store, run, _goal) = setup().await;
+
+    assert!(
+        store.try_cancel_run(&run.id).await.unwrap(),
+        "a live run can be cancelled"
+    );
+    assert_eq!(
+        store.get_run(&run.id).await.unwrap().state,
+        RunState::Cancelled
+    );
+
+    let (run2, goal2) = test_run();
+    store.create_run(&run2, &goal2).await.unwrap();
+    store
+        .set_run_state(
+            &run2.id,
+            RunState::Completed,
+            Some(StopCondition::DeliverableSatisfied),
+        )
+        .await
+        .unwrap();
+    assert!(
+        !store.try_cancel_run(&run2.id).await.unwrap(),
+        "a finished run must not be flipped to cancelled by a racing stop"
+    );
+    assert_eq!(
+        store.get_run(&run2.id).await.unwrap().state,
+        RunState::Completed
+    );
+}
+
+#[tokio::test]
+async fn project_identity_is_stable_and_derived_from_the_project_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path().join(".uruk/state.sqlite"))
+        .await
+        .unwrap();
+
+    let (id, name) = store.project_identity();
+    let (id_again, name_again) = store.project_identity();
+    assert_eq!(id, id_again, "identity is deterministic");
+    assert_eq!(name, name_again);
+    assert_eq!(name, store.project_dir().to_string_lossy());
+    assert!(id.as_str().starts_with("prj_"), "id: {}", id.as_str());
+}

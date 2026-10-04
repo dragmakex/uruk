@@ -20,6 +20,19 @@ pub struct ItemSummary {
     pub review_count: u32,
 }
 
+/// One row of the run listing: run lifecycle facts plus the current goal.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RunOverview {
+    pub id: RunId,
+    pub state: RunState,
+    pub stop_condition: Option<StopCondition>,
+    pub iterations: u32,
+    pub question: String,
+    pub mode: Mode,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 async fn bodies<T: serde::de::DeserializeOwned>(rows: Vec<String>) -> Result<Vec<T>> {
     rows.iter().map(|b| Ok(serde_json::from_str(b)?)).collect()
 }
@@ -72,6 +85,40 @@ impl Store {
                     state,
                     r.get::<String, _>("created_at"),
                 ))
+            })
+            .collect()
+    }
+
+    /// Runs joined with their current goal, newest first (ties broken by ID
+    /// so the order is deterministic).
+    pub async fn list_run_overviews(&self) -> Result<Vec<RunOverview>> {
+        let rows = sqlx::query(
+            "SELECT r.id, r.state, r.stop_condition, r.iterations, r.created_at, r.updated_at,
+                    g.body AS goal
+             FROM runs r JOIN goals g ON g.id = r.goal_id
+             ORDER BY r.created_at DESC, r.id",
+        )
+        .fetch_all(self.pool())
+        .await?;
+
+        rows.into_iter()
+            .map(|r| {
+                let state = RunState::parse(r.get::<String, _>("state").as_str())
+                    .ok_or_else(|| Error::validation("unknown run state"))?;
+                let goal: Goal = serde_json::from_str(&r.get::<String, _>("goal"))?;
+                Ok(RunOverview {
+                    id: RunId::from_raw(r.get::<String, _>("id")),
+                    state,
+                    stop_condition: r
+                        .get::<Option<String>, _>("stop_condition")
+                        .as_deref()
+                        .and_then(StopCondition::parse),
+                    iterations: r.get::<i64, _>("iterations") as u32,
+                    question: goal.question,
+                    mode: goal.mode,
+                    created_at: r.get::<String, _>("created_at"),
+                    updated_at: r.get::<String, _>("updated_at"),
+                })
             })
             .collect()
     }
@@ -133,6 +180,15 @@ impl Store {
                 .bind(run_id.as_str())
                 .fetch_all(self.pool())
                 .await?;
+        bodies(rows).await
+    }
+
+    /// Every source in the project, newest first (ties broken by ID), for
+    /// the cross-run library view.
+    pub async fn list_sources_all(&self) -> Result<Vec<Source>> {
+        let rows = sqlx::query_scalar("SELECT body FROM sources ORDER BY created_at DESC, id")
+            .fetch_all(self.pool())
+            .await?;
         bodies(rows).await
     }
 

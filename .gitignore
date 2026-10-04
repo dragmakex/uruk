@@ -2,3 +2,12 @@
 /.uruk
 /runs
 /.env
+
+# Web frontend (web/)
+web/node_modules
+web/.next
+web/out
+web/*.tsbuildinfo
+
+# Local agent cache; never commit (see .hermes/).
+/.hermes/
