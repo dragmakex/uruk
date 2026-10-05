@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { LiveRun } from "@/components/LiveRun";
 import { ApiFailure, fetchSnapshot } from "@/lib/api";
+import { identityCookieHeader } from "@/lib/server-identity";
 import type { RunSnapshot } from "@/lib/types";
 
 export const metadata: Metadata = { title: "Run" };
@@ -20,14 +21,18 @@ export default async function RunPage({
 
   let initial: RunSnapshot | null = null;
   try {
-    initial = await fetchSnapshot(id);
+    initial = await fetchSnapshot(id, await identityCookieHeader());
   } catch (e) {
     if (e instanceof ApiFailure && e.kind === "not_found") {
       return (
         <div className="canvas canvas-narrow">
           <div className="empty-state">
             <h1>Run not found</h1>
-            <p>No run with id {id} exists in this project.</p>
+            <p>
+              No run with id {id} is available to this browser. Runs belong
+              to the browser that started them; a cleared cookie or a
+              different browser cannot reach them.
+            </p>
             <Link href="/runs" className="btn btn-outline">
               Back to runs
             </Link>

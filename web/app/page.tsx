@@ -22,8 +22,10 @@ export default function LandingPage() {
         </Link>
       </div>
       <p className="micro">
-        Local-first: the console talks to a uruk API on 127.0.0.1. The API
-        has no authentication; do not expose it to a network.
+        Anonymous browser workspace: no account, no login. Runs started
+        here are tied to this browser by a private cookie — they are
+        available only on this browser, and clearing site data loses
+        access to them permanently.
       </p>
     </div>
   );

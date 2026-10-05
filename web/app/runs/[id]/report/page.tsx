@@ -3,6 +3,7 @@ import Link from "next/link";
 import { ApiDown } from "@/components/ApiDown";
 import { ApiFailure, fetchReport } from "@/lib/api";
 import { shortRunId } from "@/lib/format";
+import { identityCookieHeader } from "@/lib/server-identity";
 import type { ReportView } from "@/lib/types";
 
 export const metadata: Metadata = { title: "Report" };
@@ -60,7 +61,7 @@ export default async function ReportPage({
 
   let report: ReportView;
   try {
-    report = await fetchReport(id);
+    report = await fetchReport(id, await identityCookieHeader());
   } catch (e) {
     if (e instanceof ApiFailure && e.kind === "not_found") {
       return (

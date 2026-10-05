@@ -3,6 +3,7 @@ import Link from "next/link";
 import { ApiDown } from "@/components/ApiDown";
 import { ApiFailure, fetchRuns } from "@/lib/api";
 import { shortRunId, stateLabel } from "@/lib/format";
+import { identityCookieHeader } from "@/lib/server-identity";
 import type { RunOverview } from "@/lib/types";
 
 export const metadata: Metadata = { title: "Runs" };
@@ -35,7 +36,7 @@ function RunCard({ run }: { run: RunOverview }) {
 export default async function RunsPage() {
   let runs: RunOverview[];
   try {
-    runs = await fetchRuns();
+    runs = await fetchRuns(await identityCookieHeader());
   } catch (e) {
     const detail =
       e instanceof ApiFailure ? `kind: ${e.kind}` : "unexpected failure";
@@ -59,21 +60,30 @@ export default async function RunsPage() {
       </div>
       {runs.length === 0 ? (
         <div className="empty-state">
-          <h2>No runs yet</h2>
+          <h2>No runs in this browser yet</h2>
           <p>
             Specify a research goal and Uruk plans, drafts, reviews, and
-            ranks candidate answers against it.
+            ranks candidate answers against it. Runs stay available to this
+            browser through an anonymous cookie; clearing site data loses
+            access to them.
           </p>
           <Link href="/runs/new" className="btn">
             Start research
           </Link>
         </div>
       ) : (
-        <div>
-          {runs.map((run) => (
-            <RunCard key={run.id} run={run} />
-          ))}
-        </div>
+        <>
+          <div>
+            {runs.map((run) => (
+              <RunCard key={run.id} run={run} />
+            ))}
+          </div>
+          <p className="micro" style={{ marginTop: 12 }}>
+            Runs started in this browser. Access rests on an anonymous
+            cookie: clearing site data loses it, and other browsers cannot
+            see these runs.
+          </p>
+        </>
       )}
     </div>
   );

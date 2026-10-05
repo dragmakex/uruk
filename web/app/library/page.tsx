@@ -3,6 +3,7 @@ import Link from "next/link";
 import { ApiDown } from "@/components/ApiDown";
 import { ApiFailure, fetchLibrary } from "@/lib/api";
 import { shortRunId } from "@/lib/format";
+import { identityCookieHeader } from "@/lib/server-identity";
 import type { SourceView } from "@/lib/types";
 
 export const metadata: Metadata = { title: "Library" };
@@ -14,14 +15,16 @@ function originText(source: SourceView): string {
 }
 
 /**
- * Every source recorded across runs, with the provenance facts the engine
- * stores: how it was obtained, how much was readable, and the content hash
- * pinning exactly what was read.
+ * Every source recorded across this browser's runs, with the provenance
+ * facts the engine stores: how it was obtained, how much was readable,
+ * and the content hash pinning exactly what was read. Sources from CLI
+ * runs belong to the terminal, not to any browser workspace, so they do
+ * not appear here.
  */
 export default async function LibraryPage() {
   let sources: SourceView[];
   try {
-    sources = await fetchLibrary();
+    sources = await fetchLibrary(await identityCookieHeader());
   } catch (e) {
     const detail =
       e instanceof ApiFailure ? `kind: ${e.kind}` : "unexpected failure";
@@ -40,18 +43,20 @@ export default async function LibraryPage() {
       <div className="page-head">
         <h1>Library</h1>
         <span className="micro">
-          {sources.length} source{sources.length === 1 ? "" : "s"} across all
-          runs
+          {sources.length} source{sources.length === 1 ? "" : "s"} across this
+          browser&apos;s runs
         </span>
       </div>
 
       {sources.length === 0 ? (
         <div className="empty-state">
-          <h2>No sources yet</h2>
+          <h2>No sources in this browser&apos;s runs</h2>
           <p>
-            Sources are recorded when a run ingests supplied files or URLs
-            (CLI `--input`) or acquires literature (`--search`). Web-started
-            runs grant no inputs, so this library fills from CLI runs.
+            Sources are recorded when a run ingests files or URLs or
+            acquires literature. Web-started runs grant no inputs yet, and
+            CLI-run sources belong to the terminal rather than to this
+            anonymous browser workspace, so this library stays empty for
+            now.
           </p>
           <Link href="/runs" className="btn btn-outline">
             View runs
