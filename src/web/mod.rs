@@ -8,19 +8,26 @@
 //!
 //! # Security
 //!
-//! There is **no authentication and no multi-tenant authorization**. The
-//! server binds `127.0.0.1` by default and must not be exposed on a
-//! non-loopback address until both exist (see `docs/WEB.md`). Binding a
-//! non-loopback address logs a loud warning but is not refused, so a
-//! reverse proxy that terminates auth can still front it deliberately.
+//! Identity is **one anonymous persistent browser cookie** — no accounts,
+//! no login ([`owner`]). Every data route requires it and every run-scoped
+//! route enforces owner isolation: a browser only ever sees and controls
+//! the runs it created, runs without an owner record (CLI runs) are not
+//! reachable over the web at all, and clearing the cookie permanently
+//! loses access. The cookie is a bearer token, so transport matters: the
+//! server binds `127.0.0.1` by default, and any non-loopback exposure
+//! must sit behind a TLS-terminating reverse proxy with
+//! `URUK_COOKIE_SECURE=true` (see `docs/WEB.md`). Binding a non-loopback
+//! address logs a loud warning but is not refused.
 
 mod error;
+mod owner;
 mod routes;
 mod sse;
 mod start;
 pub mod view;
 
 pub use error::{ApiError, ApiResult};
+pub use owner::{COOKIE_NAME, cookie_secure_from_env};
 pub use start::{StartRunRequest, resume_orphaned_runs};
 pub use view::RunSnapshot;
 
@@ -53,6 +60,11 @@ pub struct WebConfig {
     /// How often `serve` sweeps for runs it should be driving but is not
     /// (interrupted by a restart, or re-released by `uruk approve`).
     pub reconcile_interval: Duration,
+    /// Whether the browser-identity cookie carries the `Secure` attribute.
+    /// `false` fits the documented local HTTP setup; any deployment behind
+    /// an HTTPS reverse proxy must set it (`URUK_COOKIE_SECURE=true`,
+    /// parsed by [`cookie_secure_from_env`]).
+    pub cookie_secure: bool,
 }
 
 impl Default for WebConfig {
@@ -62,6 +74,7 @@ impl Default for WebConfig {
             request_timeout: Duration::from_secs(30),
             max_body_bytes: 64 * 1024,
             reconcile_interval: Duration::from_secs(5),
+            cookie_secure: false,
         }
     }
 }
@@ -133,12 +146,18 @@ impl AppState {
 /// The SSE route sits outside the request timeout and response compression:
 /// a live stream must neither expire at the request deadline nor be buffered
 /// by a compressor.
+///
+/// Every data route is mounted behind the browser-identity middleware
+/// ([`owner::attach_identity`]): handlers reach run-scoped state only
+/// through the owner-checked extractors. Health and the unknown-route
+/// fallback stay public and never mint a cookie.
 pub fn router(state: AppState) -> Router {
     let timeout = state.config().request_timeout;
     let body_cap = state.config().max_body_bytes;
 
+    let public = Router::new().route("/api/health", get(routes::health));
+
     let commands = Router::new()
-        .route("/api/health", get(routes::health))
         .route("/api/runs", get(routes::list_runs).post(routes::start_run))
         .route("/api/runs/{run_id}", get(routes::run_snapshot))
         .route("/api/runs/{run_id}/stop", post(routes::stop_run))
@@ -154,9 +173,18 @@ pub fn router(state: AppState) -> Router {
 
     let events = Router::new().route("/api/runs/{run_id}/events", get(sse::run_events));
 
+    let identified =
+        Router::new()
+            .merge(commands)
+            .merge(events)
+            .layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                owner::attach_identity,
+            ));
+
     Router::new()
-        .merge(commands)
-        .merge(events)
+        .merge(public)
+        .merge(identified)
         .fallback(routes::unknown_route)
         .layer(DefaultBodyLimit::max(body_cap))
         // Errors produced below the handlers (timeouts, method mismatches)
@@ -212,14 +240,22 @@ pub async fn serve(opts: ServeOptions) -> Result<()> {
     });
 
     if !opts.bind.ip().is_loopback() {
-        // Deliberate exposure behind an authenticating reverse proxy is the
-        // only sane reason to see this.
+        // Deliberate exposure behind a reverse proxy is the only sane
+        // reason to see this.
         tracing::warn!(
             addr = %opts.bind,
-            "binding a NON-LOOPBACK address: the uruk API has no authentication and no \
-             multi-tenant authorization; anyone who can reach this port controls the \
-             project and its model budget (docs/WEB.md)"
+            "binding a NON-LOOPBACK address: browser isolation rests entirely on an \
+             anonymous bearer cookie; front this with a TLS-terminating reverse proxy \
+             and keep the port itself unreachable (docs/WEB.md)"
         );
+        if !state.config().cookie_secure {
+            tracing::warn!(
+                "URUK_COOKIE_SECURE is not set: the identity cookie will also be sent \
+                 over plain HTTP. Set URUK_COOKIE_SECURE=true behind an HTTPS proxy \
+                 (docs/WEB.md); local HTTP development is the only setup where leaving \
+                 it off is sound"
+            );
+        }
     }
 
     let listener = tokio::net::TcpListener::bind(opts.bind).await?;

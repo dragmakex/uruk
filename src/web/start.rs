@@ -9,6 +9,7 @@ use super::AppState;
 use crate::agents::{safety, supervisor};
 use crate::records::*;
 use crate::runtime::{Scheduler, SchedulerConfig};
+use crate::store::OwnerDigest;
 use crate::{Error, Result, report};
 use time::OffsetDateTime;
 
@@ -152,8 +153,11 @@ pub fn validate(req: StartRunRequest) -> Result<ValidatedStart> {
 }
 
 /// Persist the run, gate it on safety, plan it, and dispatch the scheduler
-/// in the background. Mirrors the CLI `run` path (SPEC §11, §12).
-pub async fn start_run(state: &AppState, v: ValidatedStart) -> Result<RunId> {
+/// in the background. Mirrors the CLI `run` path (SPEC §11, §12), with one
+/// addition: the run is bound to the requesting browser's [`OwnerDigest`]
+/// in the same transaction that creates it, so a crash cannot leave an
+/// unowned web run behind.
+pub async fn start_run(state: &AppState, v: ValidatedStart, owner: &OwnerDigest) -> Result<RunId> {
     let store = state.store();
     let run_id = RunId::new();
     let goal_id = GoalId::new();
@@ -218,7 +222,7 @@ pub async fn start_run(state: &AppState, v: ValidatedStart) -> Result<RunId> {
     };
 
     store.ensure_project(&project_id, &project_name).await?;
-    store.create_run(&run, &goal).await?;
+    store.create_run_owned(&run, &goal, owner).await?;
 
     // Check the goal itself before any work is scheduled (SPEC §12).
     let verdict = safety::check(&goal.question);

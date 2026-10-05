@@ -8,20 +8,39 @@ issues.
 
 ## Security: read this first
 
-**The API has no authentication, no accounts, and no multi-tenant
-authorization. Anyone who can reach the port controls the project, its
-data, and its model-provider budget.**
+Identity is **one anonymous persistent browser cookie** — deliberately no
+accounts, no login, no email, no OAuth. On the first API request that
+needs an identity, the Rust service mints a 256-bit random token, sets it
+as `uruk_browser` (host-only, `HttpOnly`, `Path=/`, `SameSite=Lax`,
+`Max-Age` one year), and from then on:
 
-Consequences:
+- A browser only ever sees and controls the runs it created: listing,
+  snapshots, reports, sources, passages, the SSE stream, and stop are all
+  owner-scoped, enforced in the Rust store. Foreign and unknown run ids
+  get the same `not_found` answer, so probing discloses nothing.
+- Runs created by the CLI (and any run from before ownership existed)
+  have no owner record and are **not reachable over the web at all** —
+  they cannot be claimed by a visitor; web access fails closed.
+- SQLite stores only the SHA-256 digest of the token, never the token,
+  so a copy of the database grants access to nobody's runs. The token is
+  never logged and never visible to frontend JavaScript.
+- Clearing the cookie (or site data) **permanently loses access** to that
+  browser's runs. There is no recovery and no cross-device access; that
+  is the intended contract, not an accident.
 
-- `uruk serve` binds `127.0.0.1:7913` by default. Leave it there.
-- Binding a non-loopback address (`--bind 0.0.0.0:7913`) logs a loud
-  warning and must only be done behind a reverse proxy that terminates
-  authentication, and only for yourself: there is no per-user isolation,
-  so two people behind the same proxy share one project and can read and
-  cancel each other's runs.
-- Do not expose either service to the public internet until authentication
-  and multi-user authorization exist. They are deliberately deferred.
+What this is **not**: a user system. The cookie is a bearer token — any
+client presenting it is that browser. Therefore transport still matters:
+
+- `uruk serve` binds `127.0.0.1:7913` by default. Leave it there for
+  local use.
+- Any non-loopback exposure (`--bind 0.0.0.0:7913` logs a loud warning)
+  must sit behind a TLS-terminating reverse proxy, with
+  `URUK_COOKIE_SECURE=true` set so browsers refuse to send the identity
+  cookie over plain HTTP (see the configuration table below).
+- Everything behind one API still shares one project and one
+  model-provider budget: ownership isolates *visibility and control of
+  runs*, not spending. Starting runs is open to every visitor, so do not
+  put this in front of the anonymous internet unless you accept that.
 
 ## Architecture
 
@@ -41,10 +60,18 @@ browser ── same-origin /api ──▶ Rust API (axum, uruk serve, :7913)
 - The browser only ever talks to the same-origin `/api` path. In
   development, `next dev` rewrites `/api/*` to the Rust API. In
   production, the reverse proxy routes `/api` to the Rust service before
-  requests reach Next.
+  requests reach Next. Either way the identity cookie is set by and
+  returned to the Rust service directly — Next never handles the token,
+  and `HttpOnly` keeps it away from frontend JavaScript. Same-origin
+  fetches and the `EventSource` stream carry it automatically.
 - Server Components fetch the Rust API directly at `URUK_API_URL`
   (default `http://127.0.0.1:7913`) for first paint; the live run page
-  then follows SSE from the client.
+  then follows SSE from the client. Because those fetches bypass the
+  public origin, the pages forward the incoming request's cookie header
+  by hand (`web/lib/server-identity.ts`). Server Components can read but
+  never set cookies, so a brand-new visitor's first paint renders as an
+  empty workspace and the browser's own first `/api` request mints the
+  durable cookie.
 - Errors use one stable JSON body everywhere:
   `{"ok": false, "error": <prose>, "kind": <kind>}` with the same `kind`
   strings as the CLI's `--json` mode (`validation`, `not_found`,
@@ -68,23 +95,39 @@ driving: runs left `running` by an interrupted process are resumed on
 startup, and runs parked `waiting-for-human` are picked back up once
 their approvals are decided. Web-started runs grant no permissions
 beyond provider disclosure: no file inputs, no network retrieval, no
-execution, no literature search. Grants that need attribution stay
-CLI-only until authentication exists.
+execution, no literature search. Grants with real side effects stay
+CLI-only; an anonymous cookie identifies a browser, not a person who
+can be held to an approval.
+
+Ownership lives in one additive table, `run_owners` (migration 0004):
+`run_id → owner_digest`, written in the same transaction that creates a
+web run, so a crash can never leave an unowned web run behind. Existing
+databases migrate untouched — old runs simply have no row, which web
+reads treat as nonexistent. Enforcement is centralized in two axum
+extractors (`src/web/owner.rs`): run-scoped handlers receive an already
+authorized run id or the request never reaches them, so a new handler
+cannot quietly skip the check.
 
 ## API surface
 
 | Route | Meaning |
 | --- | --- |
-| `GET /api/health` | liveness and version |
-| `GET /api/runs` | run listing with goal and state |
-| `POST /api/runs` | start a run: `{goal, mode?, ranking?, …}` |
+| `GET /api/health` | liveness and version; public, never sets a cookie |
+| `GET /api/runs` | this browser's runs, with goal and state |
+| `POST /api/runs` | start a run owned by this browser: `{goal, mode?, ranking?, …}` |
 | `GET /api/runs/{id}` | complete run snapshot (view model) |
 | `POST /api/runs/{id}/stop` | durable stop request |
 | `GET /api/runs/{id}/events` | SSE stream of snapshots |
 | `GET /api/runs/{id}/report` | exported `REPORT.md` + `manifest.json` |
 | `GET /api/runs/{id}/sources` | the run's recorded sources |
 | `GET /api/runs/{id}/passages?q=…` | local FTS5 passage search |
-| `GET /api/library` | all sources across runs |
+| `GET /api/library` | all sources across this browser's runs |
+
+Every route except `/api/health` requires the browser identity: a request
+without a valid `uruk_browser` cookie gets one minted (and used for that
+same request) via `Set-Cookie`. All `{id}` routes are owner-checked; a
+run belonging to another browser is answered exactly like a run that
+does not exist.
 
 `POST /api/runs` accepts `mode` (`task` default, `campaign`) and `ranking`
 (`simple` default, `tournament`). Both ranking options keep the Elo
@@ -112,11 +155,15 @@ for the CLI (`URUK_PROVIDER_URL`, `URUK_MODEL`, `URUK_API_KEY`, read from
 the project's `.env`); without one, runs complete offline with a stand-in
 that states plainly that nothing was analysed.
 
-Environment variables for the frontend:
+Environment variables:
 
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `URUK_API_URL` | `http://127.0.0.1:7913` | where Next (server side and the dev rewrite) reaches the Rust API |
+| Variable | Read by | Default | Meaning |
+| --- | --- | --- | --- |
+| `URUK_API_URL` | Next | `http://127.0.0.1:7913` | where Next (server side and the dev rewrite) reaches the Rust API |
+| `URUK_COOKIE_SECURE` | `uruk serve` | `false` | mark the identity cookie `Secure` so browsers only send it over HTTPS. Accepts exactly `true`/`1`/`false`/`0`; anything else refuses to start. Leave unset for the loopback HTTP setup on this page — that is a documented local-development trade-off, **not** a production-safe default. Set `true` for any HTTPS deployment |
+
+Both live naturally in the project's `.env` next to the provider
+settings.
 
 ## Production, same origin
 
@@ -161,9 +208,21 @@ server {
 }
 ```
 
-Keep the proxy itself on loopback, or put real authentication in front of
-it; see the warning at the top. This repository documents a verified local
-setup only; nothing here has been deployed.
+Cookie expectations at the proxy: the identity cookie is set by the Rust
+service on `/api` responses and must reach the browser untouched, so the
+proxy must not strip or rewrite `Set-Cookie`/`Cookie` headers on the
+`/api` path (neither Caddy nor nginx does by default). The cookie is
+host-only — it belongs to the one public origin the proxy presents — and
+the SSE route authenticates with the same cookie, which `EventSource`
+sends automatically on the same origin. If the proxy terminates TLS, set
+`URUK_COOKIE_SECURE=true` on `uruk serve`; the Rust service itself can
+stay on plain loopback HTTP behind it, since the attribute only tells
+the *browser* when to send the cookie.
+
+Keep the proxy itself on loopback or otherwise unreachable to strangers;
+see the warning at the top — every visitor shares one project and one
+model budget. This repository documents a verified local setup only;
+nothing here has been deployed.
 
 ## Testing
 
@@ -171,7 +230,12 @@ setup only; nothing here has been deployed.
   the router through `tower::ServiceExt::oneshot` against temporary
   SQLite stores and the mock provider: view-model projection, validation,
   stable error bodies, stop, report, passages, body caps, request IDs,
-  and SSE (initial snapshot, terminal settle). Everything is offline.
+  and SSE (initial snapshot, terminal settle). `tests/web_owner.rs`
+  covers the identity layer with independent cookie jars: cookie minting
+  and attributes, malformed-cookie replacement, cross-browser isolation
+  on every run-scoped route including SSE and stop, foreign/unknown
+  indistinguishability, CLI-run invisibility, restart persistence, and
+  digest-only storage. Everything is offline.
 - Frontend: `cd web && bun run check` runs ESLint, `tsc --noEmit`, Vitest
   (runtime parsers, formatting, the SSE reducer, form validation, agent
   cards, the live run view with a scripted EventSource), and the

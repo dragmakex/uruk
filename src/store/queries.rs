@@ -33,8 +33,29 @@ pub struct RunOverview {
     pub updated_at: String,
 }
 
-async fn bodies<T: serde::de::DeserializeOwned>(rows: Vec<String>) -> Result<Vec<T>> {
+pub(crate) async fn bodies<T: serde::de::DeserializeOwned>(rows: Vec<String>) -> Result<Vec<T>> {
     rows.iter().map(|b| Ok(serde_json::from_str(b)?)).collect()
+}
+
+/// Map one `runs ⨝ goals` row (as selected by the overview queries) into a
+/// [`RunOverview`]. Shared with the owner-scoped listing in `owners.rs`.
+pub(crate) fn overview_from_row(r: &sqlx::sqlite::SqliteRow) -> Result<RunOverview> {
+    let state = RunState::parse(r.get::<String, _>("state").as_str())
+        .ok_or_else(|| Error::validation("unknown run state"))?;
+    let goal: Goal = serde_json::from_str(&r.get::<String, _>("goal"))?;
+    Ok(RunOverview {
+        id: RunId::from_raw(r.get::<String, _>("id")),
+        state,
+        stop_condition: r
+            .get::<Option<String>, _>("stop_condition")
+            .as_deref()
+            .and_then(StopCondition::parse),
+        iterations: r.get::<i64, _>("iterations") as u32,
+        question: goal.question,
+        mode: goal.mode,
+        created_at: r.get::<String, _>("created_at"),
+        updated_at: r.get::<String, _>("updated_at"),
+    })
 }
 
 impl Store {
@@ -101,26 +122,7 @@ impl Store {
         .fetch_all(self.pool())
         .await?;
 
-        rows.into_iter()
-            .map(|r| {
-                let state = RunState::parse(r.get::<String, _>("state").as_str())
-                    .ok_or_else(|| Error::validation("unknown run state"))?;
-                let goal: Goal = serde_json::from_str(&r.get::<String, _>("goal"))?;
-                Ok(RunOverview {
-                    id: RunId::from_raw(r.get::<String, _>("id")),
-                    state,
-                    stop_condition: r
-                        .get::<Option<String>, _>("stop_condition")
-                        .as_deref()
-                        .and_then(StopCondition::parse),
-                    iterations: r.get::<i64, _>("iterations") as u32,
-                    question: goal.question,
-                    mode: goal.mode,
-                    created_at: r.get::<String, _>("created_at"),
-                    updated_at: r.get::<String, _>("updated_at"),
-                })
-            })
-            .collect()
+        rows.iter().map(overview_from_row).collect()
     }
 
     pub async fn current_goal(&self, run_id: &RunId) -> Result<Goal> {
