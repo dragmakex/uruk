@@ -1,7 +1,12 @@
 /**
- * Typed API client. The browser talks to the same-origin `/api` path; on
- * the server (Server Components) requests go straight to the Rust service
- * at `URUK_API_URL` (default `http://127.0.0.1:7913`).
+ * Typed API client. The browser talks to the same-origin `/api` path and
+ * its anonymous identity cookie rides along automatically (HttpOnly —
+ * this code never sees or handles the token). On the server (Server
+ * Components) requests go straight to the Rust service at `URUK_API_URL`
+ * (default `http://127.0.0.1:7913`), so the read functions take the
+ * incoming request's cookie header (see `lib/server-identity.ts`) and
+ * forward it; without it the API would answer for a different, empty
+ * identity.
  *
  * Every response body passes through a `lib/parse.ts` validator. Errors
  * become [`ApiFailure`] carrying the stable `{error, kind}` body, plus the
@@ -41,12 +46,21 @@ function apiBase(): string {
   return process.env.URUK_API_URL ?? "http://127.0.0.1:7913";
 }
 
-async function request(path: string, init?: RequestInit): Promise<unknown> {
+async function request(
+  path: string,
+  init?: RequestInit,
+  cookie?: string,
+): Promise<unknown> {
   let response: Response;
   try {
+    const headers = new Headers(init?.headers);
+    if (cookie !== undefined && cookie !== "") {
+      headers.set("cookie", cookie);
+    }
     response = await fetch(`${apiBase()}${path}`, {
       cache: "no-store",
       ...init,
+      headers,
     });
   } catch {
     throw new ApiFailure(
@@ -70,26 +84,43 @@ async function request(path: string, init?: RequestInit): Promise<unknown> {
   return body;
 }
 
-export async function fetchRuns(): Promise<RunOverview[]> {
-  return parseRunOverviews(await request("/api/runs"));
+export async function fetchRuns(cookie?: string): Promise<RunOverview[]> {
+  return parseRunOverviews(await request("/api/runs", undefined, cookie));
 }
 
-export async function fetchSnapshot(runId: string): Promise<RunSnapshot> {
-  const body = await request(`/api/runs/${encodeURIComponent(runId)}`);
+export async function fetchSnapshot(
+  runId: string,
+  cookie?: string,
+): Promise<RunSnapshot> {
+  const body = await request(
+    `/api/runs/${encodeURIComponent(runId)}`,
+    undefined,
+    cookie,
+  );
   const envelope = body as { snapshot?: unknown };
   return parseRunSnapshot(envelope.snapshot);
 }
 
-export async function fetchReport(runId: string): Promise<ReportView> {
-  return parseReport(await request(`/api/runs/${encodeURIComponent(runId)}/report`));
+export async function fetchReport(
+  runId: string,
+  cookie?: string,
+): Promise<ReportView> {
+  return parseReport(
+    await request(`/api/runs/${encodeURIComponent(runId)}/report`, undefined, cookie),
+  );
 }
 
-export async function fetchRunSources(runId: string): Promise<SourceView[]> {
-  return parseSources(await request(`/api/runs/${encodeURIComponent(runId)}/sources`));
+export async function fetchRunSources(
+  runId: string,
+  cookie?: string,
+): Promise<SourceView[]> {
+  return parseSources(
+    await request(`/api/runs/${encodeURIComponent(runId)}/sources`, undefined, cookie),
+  );
 }
 
-export async function fetchLibrary(): Promise<SourceView[]> {
-  return parseSources(await request("/api/library"));
+export async function fetchLibrary(cookie?: string): Promise<SourceView[]> {
+  return parseSources(await request("/api/library", undefined, cookie));
 }
 
 export async function startRun(input: StartRunInput): Promise<string> {
