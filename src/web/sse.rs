@@ -7,10 +7,11 @@
 //! snapshot, an `end` event, and closes.
 
 use super::error::ApiResult;
+use super::owner::OwnedRun;
 use super::{AppState, view};
 use crate::records::RunId;
 use crate::store::Store;
-use axum::extract::{Path, State};
+use axum::extract::State;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use futures_util::Stream;
 use std::convert::Infallible;
@@ -114,14 +115,13 @@ fn snapshot_stream(
 }
 
 /// `GET /api/runs/{id}/events`
+///
+/// [`OwnedRun`] 404s unknown and foreign runs up front instead of opening
+/// a dead stream, with the same non-disclosing response for both.
 pub async fn run_events(
     State(state): State<AppState>,
-    Path(run_id): Path<String>,
+    OwnedRun(run_id): OwnedRun,
 ) -> ApiResult<Sse<impl Stream<Item = Result<Event, Infallible>>>> {
-    let run_id = RunId::from_raw(run_id);
-    // Unknown runs 404 up front instead of opening a dead stream.
-    state.store().get_run(&run_id).await?;
-
     let stream = snapshot_stream(state.store().clone(), run_id, state.config().sse_poll);
     Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
 }

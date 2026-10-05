@@ -131,27 +131,7 @@ impl Store {
     /// Insert a run together with its first goal revision, atomically.
     pub async fn create_run(&self, run: &Run, goal: &Goal) -> Result<()> {
         let mut guard = self.begin_write().await?;
-        let ts = to_rfc3339(run.created_at);
-
-        sqlx::query(
-            "INSERT INTO runs (id, schema_version, project_id, goal_id, plan_id, state,
-                               stop_condition, iterations, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(run.id.as_str())
-        .bind(run.schema_version)
-        .bind(run.project_id.as_str())
-        .bind(run.goal_id.as_str())
-        .bind(run.plan_id.as_ref().map(|p| p.0.clone()))
-        .bind(run.state.as_str())
-        .bind(run.stop_condition.as_ref().map(|s| s.as_str()))
-        .bind(run.iterations)
-        .bind(&ts)
-        .bind(&ts)
-        .execute(guard.conn())
-        .await?;
-
-        insert_goal(guard.conn(), goal).await?;
+        insert_run_and_goal_in_tx(guard.conn(), run, goal).await?;
         guard.commit().await
     }
 
@@ -495,6 +475,36 @@ impl Store {
         guard.commit().await?;
         Ok(drawn.to_string())
     }
+}
+
+/// Insert a run and its first goal revision inside an open transaction.
+/// Shared by [`Store::create_run`] (CLI) and [`Store::create_run_owned`]
+/// (web), so an owned run can never be committed without its owner row.
+pub(crate) async fn insert_run_and_goal_in_tx(
+    conn: &mut SqliteConnection,
+    run: &Run,
+    goal: &Goal,
+) -> Result<()> {
+    let ts = to_rfc3339(run.created_at);
+    sqlx::query(
+        "INSERT INTO runs (id, schema_version, project_id, goal_id, plan_id, state,
+                           stop_condition, iterations, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(run.id.as_str())
+    .bind(run.schema_version)
+    .bind(run.project_id.as_str())
+    .bind(run.goal_id.as_str())
+    .bind(run.plan_id.as_ref().map(|p| p.0.clone()))
+    .bind(run.state.as_str())
+    .bind(run.stop_condition.as_ref().map(|s| s.as_str()))
+    .bind(run.iterations)
+    .bind(&ts)
+    .bind(&ts)
+    .execute(&mut *conn)
+    .await?;
+
+    insert_goal(conn, goal).await
 }
 
 async fn insert_goal(conn: &mut SqliteConnection, goal: &Goal) -> Result<()> {

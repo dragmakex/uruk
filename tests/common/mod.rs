@@ -356,17 +356,39 @@ pub async fn fixture(mode: Mode, provider: MockProvider) -> Fixture {
     fixture_with(mode, provider, |_| {}).await
 }
 
-/// Build a fixture, adjusting the goal before it is persisted.
+/// The browser token the web tests present as "this browser". Any 64
+/// lowercase-hex characters form a valid token; tests only need it to be
+/// stable so requests and seeded ownership agree.
+pub const BROWSER_TOKEN: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+/// Build a fixture whose run is owned by the browser behind `token`, the
+/// way a web-created run would be.
+pub async fn fixture_owned(mode: Mode, provider: MockProvider, token: &str) -> Fixture {
+    let owner = uruk::store::OwnerDigest::from_token(token);
+    build_fixture(mode, provider, Some(&owner), |_| {}).await
+}
+
+/// Build a fixture, adjusting the goal before it is persisted. The run has
+/// no owner record, like a CLI-created run.
 pub async fn fixture_with(
     mode: Mode,
     provider: MockProvider,
+    adjust: impl FnOnce(&mut Goal),
+) -> Fixture {
+    build_fixture(mode, provider, None, adjust).await
+}
+
+async fn build_fixture(
+    mode: Mode,
+    provider: MockProvider,
+    owner: Option<&uruk::store::OwnerDigest>,
     adjust: impl FnOnce(&mut Goal),
 ) -> Fixture {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = Store::open(dir.path().join(".uruk/state.sqlite"))
         .await
         .expect("open store");
-    let (run_id, goal, plan) = seed(&store, mode, dir.path(), adjust).await;
+    let (run_id, goal, plan) = seed(&store, mode, dir.path(), owner, adjust).await;
 
     Fixture {
         store,
@@ -382,6 +404,7 @@ async fn seed(
     store: &Store,
     mode: Mode,
     dir: &std::path::Path,
+    owner: Option<&uruk::store::OwnerDigest>,
     adjust: impl FnOnce(&mut Goal),
 ) -> (RunId, Goal, Plan) {
     let run_id = RunId::new();
@@ -439,7 +462,10 @@ async fn seed(
     };
 
     store.ensure_project(&project_id, "test").await.unwrap();
-    store.create_run(&run, &goal).await.unwrap();
+    match owner {
+        Some(owner) => store.create_run_owned(&run, &goal, owner).await.unwrap(),
+        None => store.create_run(&run, &goal).await.unwrap(),
+    }
 
     let plan = supervisor::build_plan(&goal, 0);
     store.insert_plan(&plan).await.unwrap();
