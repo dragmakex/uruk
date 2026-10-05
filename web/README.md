@@ -10,15 +10,22 @@ docs/WEB.md before binding anything to a non-loopback address.**
 ## Commands
 
 ```sh
-pnpm install
-pnpm dev          # dev server on :3000, /api proxied to 127.0.0.1:7913
-pnpm test         # vitest (jsdom)
-pnpm lint         # eslint
-pnpm typecheck    # tsc --noEmit (strict)
-pnpm build        # production build
-pnpm start        # serve the production build
-pnpm check        # lint + typecheck + test + build
+bun install
+bun run dev        # dev server on :3000, /api proxied to 127.0.0.1:7913
+bun run test       # vitest (jsdom)
+bun run lint       # eslint
+bun run typecheck  # tsc --noEmit (strict)
+bun run build      # production build
+bun run start      # serve the production build
+bun run check      # lint + typecheck + test + build
 ```
+
+Tooling is Bun (`packageManager` pins `bun@1.3.14`; the lockfile is
+`bun.lock`). `unrs-resolver` is in `trustedDependencies` because its
+postinstall links the prebuilt native binding used by
+eslint-config-next's import resolver. The test suite is Vitest with a
+jsdom environment, so run it as `bun run test` (the `bun test` built-in
+runner has no jsdom environment and is not used here).
 
 ## Layout
 

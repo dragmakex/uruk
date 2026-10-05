@@ -103,8 +103,8 @@ cargo run -- serve                  # binds 127.0.0.1:7913
 
 # 2. The frontend:
 cd web
-pnpm install
-pnpm dev                            # binds localhost:3000, proxies /api
+bun install
+bun run dev                         # binds localhost:3000, proxies /api
 ```
 
 Open `http://localhost:3000`. A model provider is configured exactly as
@@ -125,7 +125,7 @@ browser sees one origin:
 
 ```sh
 cargo build --release && ./target/release/uruk serve
-cd web && pnpm build && pnpm start -p 3000
+cd web && bun run build && bun run start -p 3000
 ```
 
 Caddy:
@@ -172,7 +172,7 @@ setup only; nothing here has been deployed.
   SQLite stores and the mock provider: view-model projection, validation,
   stable error bodies, stop, report, passages, body caps, request IDs,
   and SSE (initial snapshot, terminal settle). Everything is offline.
-- Frontend: `cd web && pnpm check` runs ESLint, `tsc --noEmit`, Vitest
+- Frontend: `cd web && bun run check` runs ESLint, `tsc --noEmit`, Vitest
   (runtime parsers, formatting, the SSE reducer, form validation, agent
   cards, the live run view with a scripted EventSource), and the
   production build.
