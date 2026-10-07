@@ -34,7 +34,7 @@ describe("RunForm", () => {
     expect(startRunMock).not.toHaveBeenCalled();
   });
 
-  it("posts the goal with the selected ranking and navigates to the run", async () => {
+  it("posts every web run with tournament ranking and navigates to it", async () => {
     startRunMock.mockResolvedValue("run_new1");
     const user = userEvent.setup();
     render(<RunForm />);
@@ -43,7 +43,6 @@ describe("RunForm", () => {
       screen.getByLabelText("Research goal"),
       "why do the measurements disagree",
     );
-    await user.click(screen.getByRole("radio", { name: /Tournament/ }));
     await user.click(screen.getByRole("button", { name: "Start research" }));
 
     expect(startRunMock).toHaveBeenCalledWith({
@@ -54,81 +53,21 @@ describe("RunForm", () => {
     expect(pushMock).toHaveBeenCalledWith("/runs/run_new1");
   });
 
-  it("defaults the ranking to simple, as the reference preselects it", () => {
+  it("offers only the paper-style tournament method", () => {
     render(<RunForm />);
-    expect(screen.getByRole("radio", { name: /Simple/ })).toBeChecked();
+
+    expect(screen.queryByRole("radio", { name: /Simple/ })).not.toBeInTheDocument();
+    expect(screen.getByText("Tournament ranking")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Simple · 1-turn comparisons · limits: 200 model calls, 60 min, 10 rounds",
+        "Multi-turn scientific debates, Elo ranking, and iterative refinement. Runtime varies by research goal.",
       ),
     ).toBeInTheDocument();
-  });
-
-  it("adapts the budget summary to tournament debate depth", async () => {
-    const user = userEvent.setup();
-    render(<RunForm />);
-
-    await user.click(screen.getByRole("radio", { name: /Tournament/ }));
-
     expect(
       screen.getByText(
         "Tournament · debates up to 5 turns · limits: 200 model calls, 60 min, 10 rounds",
       ),
     ).toBeInTheDocument();
-  });
-
-  it("moves the checked state between the two choices with clicks", async () => {
-    const user = userEvent.setup();
-    render(<RunForm />);
-    const simple = screen.getByRole("radio", { name: /Simple/ });
-    const tournament = screen.getByRole("radio", { name: /Tournament/ });
-
-    await user.click(tournament);
-    expect(tournament).toBeChecked();
-    expect(simple).not.toBeChecked();
-
-    await user.click(simple);
-    expect(simple).toBeChecked();
-    expect(tournament).not.toBeChecked();
-  });
-
-  it("moves the checked state with the keyboard arrows, as a radio group", async () => {
-    const user = userEvent.setup();
-    render(<RunForm />);
-    const simple = screen.getByRole("radio", { name: /Simple/ });
-
-    simple.focus();
-    await user.keyboard("{ArrowRight}");
-    expect(screen.getByRole("radio", { name: /Tournament/ })).toBeChecked();
-
-    await user.keyboard("{ArrowLeft}");
-    expect(simple).toBeChecked();
-  });
-
-  it("sends ranking simple when the user settles back on simple", async () => {
-    startRunMock.mockResolvedValue("run_simple1");
-    const user = userEvent.setup();
-    render(<RunForm />);
-
-    await user.type(screen.getByLabelText("Research goal"), "a simple goal");
-    await user.click(screen.getByRole("radio", { name: /Tournament/ }));
-    await user.click(screen.getByRole("radio", { name: /Simple/ }));
-    await user.click(screen.getByRole("button", { name: "Start research" }));
-
-    expect(startRunMock).toHaveBeenCalledWith({
-      goal: "a simple goal",
-      mode: "campaign",
-      ranking: "simple",
-    });
-  });
-
-  it("marks each ranking choice with a visible selection indicator", () => {
-    render(<RunForm />);
-    const marks = document.querySelectorAll(".choice-mark");
-    expect(marks).toHaveLength(2);
-    for (const mark of marks) {
-      expect(mark).toHaveAttribute("aria-hidden", "true");
-    }
   });
 
   it("shows the API's stable error body when the start is rejected", async () => {
