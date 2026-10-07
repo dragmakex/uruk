@@ -1,45 +1,63 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { useLayoutEffect, useState } from "react";
 
 type Theme = "light" | "dark";
 
+const STORAGE_KEY = "uruk-theme";
+
 /**
- * The applied theme lives on `<html data-theme>`, written before paint by
- * the root layout's inline script. That attribute is the external store:
- * reads come from the DOM, changes go through a MutationObserver, so server
- * and first client render agree and no effect re-renders on mount.
+ * Resolves the theme the same way as the prepaint script in app/layout.tsx:
+ * the stored choice when valid, otherwise the system preference. Client-only.
  */
-function subscribe(onChange: () => void): () => void {
-  const observer = new MutationObserver(onChange);
-  observer.observe(document.documentElement, {
-    attributes: true,
-    attributeFilter: ["data-theme"],
-  });
-  return () => observer.disconnect();
+function resolveTheme(): Theme {
+  let stored: string | null = null;
+  try {
+    stored = localStorage.getItem(STORAGE_KEY);
+  } catch {
+    stored = null;
+  }
+  if (stored === "light" || stored === "dark") {
+    return stored;
+  }
+  return window.matchMedia("(prefers-color-scheme: dark)").matches
+    ? "dark"
+    : "light";
 }
 
-function readTheme(): Theme | "unknown" {
-  return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
-}
-
-function serverTheme(): Theme | "unknown" {
-  // The server cannot know the visitor's stored choice.
-  return "unknown";
-}
-
-/** Light/dark switch matching the dual reference pages. */
+/**
+ * Light/dark switch. The server renders "Dark" as the default action (it
+ * cannot know the visitor's choice); the first client render matches it, so
+ * hydration is clean, and the layout effect resolves the correct action.
+ *
+ * The layout effect also re-applies the resolved theme to `<html data-theme>`:
+ * in development, Strict Mode remounts reset `<html>` to its JSX attributes,
+ * which would silently drop what the prepaint script applied (see the Next.js
+ * guide "Preventing Flash", section "Re-applying attributes in development").
+ */
 export function ThemeToggle() {
-  const theme = useSyncExternalStore(subscribe, readTheme, serverTheme);
+  const [theme, setTheme] = useState<Theme | null>(null);
+
+  useLayoutEffect(() => {
+    const resolved = resolveTheme();
+    document.documentElement.dataset.theme = resolved;
+    // Two-pass hydration: the server rendered a placeholder because it cannot
+    // know the stored theme, so adopting the client value needs exactly one
+    // setState after hydration, before paint. A lazy initializer would make
+    // the first client render diverge from the server HTML instead.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot two-pass hydration update
+    setTheme(resolved);
+  }, []);
 
   function toggle() {
-    const next: Theme = readTheme() === "dark" ? "light" : "dark";
+    const next: Theme = (theme ?? resolveTheme()) === "dark" ? "light" : "dark";
     document.documentElement.dataset.theme = next;
     try {
-      localStorage.setItem("uruk-theme", next);
+      localStorage.setItem(STORAGE_KEY, next);
     } catch {
       // Private-mode storage failures only lose persistence, not the toggle.
     }
+    setTheme(next);
   }
 
   return (
@@ -47,14 +65,9 @@ export function ThemeToggle() {
       type="button"
       className="btn-outline btn"
       onClick={toggle}
-      aria-label={
-        theme === "unknown"
-          ? "Switch color theme"
-          : `Switch to the ${theme === "dark" ? "light" : "dark"} theme`
-      }
       style={{ padding: "6px 14px", fontFamily: "var(--font-mono)", fontSize: 12 }}
     >
-      {theme === "unknown" ? "Theme" : theme === "dark" ? "Light" : "Dark"}
+      {theme === "dark" ? "Light" : "Dark"}
     </button>
   );
 }

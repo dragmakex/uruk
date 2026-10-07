@@ -2,13 +2,14 @@
 //! serialize. No business logic lives here.
 
 use super::error::{ApiError, ApiResult, rejection_to_error};
+use super::owner::{OwnedRun, Owner};
 use super::{AppState, start, view};
 use crate::records::RunId;
 use crate::runtime;
 use crate::{Error, Result};
 use axum::Json;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
-use axum::extract::{Path, Query, State};
+use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 
@@ -20,28 +21,32 @@ pub async fn health() -> Json<serde_json::Value> {
     }))
 }
 
-pub async fn list_runs(State(state): State<AppState>) -> ApiResult<Json<serde_json::Value>> {
-    let runs = state.store().list_run_overviews().await?;
+pub async fn list_runs(
+    State(state): State<AppState>,
+    Owner(owner): Owner,
+) -> ApiResult<Json<serde_json::Value>> {
+    let runs = state.store().list_run_overviews_owned(&owner).await?;
     Ok(Json(serde_json::json!({"ok": true, "runs": runs})))
 }
 
 pub async fn run_snapshot(
     State(state): State<AppState>,
-    Path(run_id): Path<String>,
+    OwnedRun(run_id): OwnedRun,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let snapshot = view::run_snapshot(state.store(), &RunId::from_raw(run_id)).await?;
+    let snapshot = view::run_snapshot(state.store(), &run_id).await?;
     Ok(Json(serde_json::json!({"ok": true, "snapshot": snapshot})))
 }
 
 pub async fn start_run(
     State(state): State<AppState>,
+    Owner(owner): Owner,
     payload: std::result::Result<Json<start::StartRunRequest>, JsonRejection>,
 ) -> Response {
     let Json(request) = match payload {
         Ok(json) => json,
         Err(rejection) => return rejection_to_error(rejection),
     };
-    match create_and_dispatch(&state, request).await {
+    match create_and_dispatch(&state, request, &owner).await {
         Ok(run_id) => (
             StatusCode::CREATED,
             Json(serde_json::json!({"ok": true, "run_id": run_id.as_str()})),
@@ -51,16 +56,20 @@ pub async fn start_run(
     }
 }
 
-async fn create_and_dispatch(state: &AppState, request: start::StartRunRequest) -> Result<RunId> {
+async fn create_and_dispatch(
+    state: &AppState,
+    request: start::StartRunRequest,
+    owner: &crate::store::OwnerDigest,
+) -> Result<RunId> {
     let validated = start::validate(request)?;
-    start::start_run(state, validated).await
+    start::start_run(state, validated, owner).await
 }
 
 pub async fn stop_run(
     State(state): State<AppState>,
-    Path(run_id): Path<String>,
+    OwnedRun(run_id): OwnedRun,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let outcome = runtime::request_stop(state.store(), &RunId::from_raw(run_id)).await?;
+    let outcome = runtime::request_stop(state.store(), &run_id).await?;
     Ok(Json(serde_json::json!({
         "ok": true,
         "run_id": outcome.run_id.as_str(),
@@ -70,12 +79,8 @@ pub async fn stop_run(
 
 pub async fn report(
     State(state): State<AppState>,
-    Path(run_id): Path<String>,
+    OwnedRun(run_id): OwnedRun,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let run_id = RunId::from_raw(run_id);
-    // Distinguish "no such run" from "not exported yet".
-    state.store().get_run(&run_id).await?;
-
     let dir = state.store().run_dir(&run_id);
     let markdown = tokio::fs::read_to_string(dir.join("REPORT.md"))
         .await
@@ -101,16 +106,17 @@ pub async fn report(
 
 pub async fn sources(
     State(state): State<AppState>,
-    Path(run_id): Path<String>,
+    OwnedRun(run_id): OwnedRun,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let run_id = RunId::from_raw(run_id);
-    state.store().get_run(&run_id).await?;
     let sources = state.store().list_sources(&run_id).await?;
     Ok(Json(serde_json::json!({"ok": true, "sources": sources})))
 }
 
-pub async fn library(State(state): State<AppState>) -> ApiResult<Json<serde_json::Value>> {
-    let sources = state.store().list_sources_all().await?;
+pub async fn library(
+    State(state): State<AppState>,
+    Owner(owner): Owner,
+) -> ApiResult<Json<serde_json::Value>> {
+    let sources = state.store().list_sources_owned(&owner).await?;
     Ok(Json(serde_json::json!({"ok": true, "sources": sources})))
 }
 
@@ -124,14 +130,12 @@ pub struct PassagesQuery {
 
 pub async fn passages(
     State(state): State<AppState>,
-    Path(run_id): Path<String>,
+    OwnedRun(run_id): OwnedRun,
     query: std::result::Result<Query<PassagesQuery>, QueryRejection>,
 ) -> ApiResult<Json<serde_json::Value>> {
     // An unparsable query string is a caller mistake and must carry the
     // stable JSON error body, not axum's plain-text rejection.
     let Query(query) = query.map_err(|r| Error::validation(r.body_text()))?;
-    let run_id = RunId::from_raw(run_id);
-    state.store().get_run(&run_id).await?;
 
     let q = query.q.trim();
     if q.is_empty() {

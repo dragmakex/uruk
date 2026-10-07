@@ -4,8 +4,11 @@ The Next.js frontend for Uruk's local web console. Architecture, API
 contract, security posture, and reverse-proxy setup live in
 [`../docs/WEB.md`](../docs/WEB.md); this file covers the frontend itself.
 
-**No authentication exists anywhere in this stack. Local use only; see
-docs/WEB.md before binding anything to a non-loopback address.**
+**Identity is an anonymous browser cookie set and checked by the Rust
+API; this frontend never sees the token (it is HttpOnly). Server
+Components forward the incoming cookie header to the API via
+`lib/server-identity.ts`. Local use first; see docs/WEB.md before
+binding anything to a non-loopback address.**
 
 ## Commands
 

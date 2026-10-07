@@ -1004,10 +1004,18 @@ async fn dispatch(cli: Cli) -> Result<Output> {
             let bind: std::net::SocketAddr = bind
                 .parse()
                 .map_err(|e| Error::validation(format!("bad --bind address {bind:?}: {e}")))?;
+            // Strictly validated so a typo fails startup instead of
+            // silently weakening the browser-identity cookie.
+            let cookie_secure = uruk::web::cookie_secure_from_env(
+                std::env::var("URUK_COOKIE_SECURE").ok().as_deref(),
+            )?;
             uruk::web::serve(uruk::web::ServeOptions {
                 bind,
                 project: std::path::PathBuf::from(&cli.project),
-                config: uruk::web::WebConfig::default(),
+                config: uruk::web::WebConfig {
+                    cookie_secure,
+                    ..uruk::web::WebConfig::default()
+                },
             })
             .await?;
             Ok(Output {

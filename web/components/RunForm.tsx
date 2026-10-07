@@ -6,16 +6,13 @@ import { ApiFailure, startRun } from "@/lib/api";
 
 const MAX_GOAL_CHARS = 8000;
 
-/** Real budget facts sent with the request; shown instead of an estimate. */
-export const DEFAULT_BUDGET_NOTE = "budget 200 model calls, 60 min, 10 rounds";
-
 /**
  * The run specification form: research goal plus the ranking choice.
  * Submits `POST /api/runs` and navigates to the live run.
  *
- * Both ranking options keep the Elo tournament; the recorded difference is
- * the comparison debate turn cap (1 for simple, 5 for tournament), which is
- * exactly what the API stores on the run's budget.
+ * Both comparison methods feed the Elo tournament. The API retains its legacy
+ * values (`simple` and `tournament`), while the interface uses the paper-based
+ * names Direct and Multi-turn.
  */
 export function RunForm() {
   const router = useRouter();
@@ -98,9 +95,11 @@ export function RunForm() {
                 checked={ranking === "simple"}
                 onChange={() => setRanking("simple")}
               />
-              <span className="choice-name">Simple</span>
+              <span className="choice-mark" aria-hidden="true" />
+              <span className="choice-name">Direct</span>
               <span className="choice-desc">
-                Single-turn pairwise comparison. Fast, lower ranking accuracy.
+                Single-turn pairwise comparison with an Elo update. Lower compute;
+                runtime varies by research goal.
               </span>
             </label>
             <label
@@ -113,10 +112,11 @@ export function RunForm() {
                 checked={ranking === "tournament"}
                 onChange={() => setRanking("tournament")}
               />
-              <span className="choice-name">Tournament</span>
+              <span className="choice-mark" aria-hidden="true" />
+              <span className="choice-name">Multi-turn</span>
               <span className="choice-desc">
-                Elo tournament with multi-turn scientific debate. Slower, best
-                ranking.
+                Pairwise scientific debate up to 5 turns, followed by an Elo update.
+                More compute-intensive; runtime varies by research goal.
               </span>
             </label>
           </div>
@@ -124,7 +124,6 @@ export function RunForm() {
       </div>
 
       <div className="panel-foot">
-        <span className="micro">{DEFAULT_BUDGET_NOTE}</span>
         <button type="submit" className="btn" disabled={submitting}>
           {submitting ? "Starting run" : "Start research"}
         </button>

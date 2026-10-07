@@ -34,9 +34,13 @@ rustls for the model provider and retrieval, `pdf_oxide` for PDF text, and
 `uruk serve` starts a local JSON/SSE API on `127.0.0.1:7913` (axum, behind
 the on-by-default `web` cargo feature), and `web/` holds a separate Next.js
 frontend for it: run specification, a live agent-topology view, reports,
-and the source library. **The API has no authentication; keep it on
-loopback.** Setup, architecture, and the reverse-proxy recipe are in
-[docs/WEB.md](docs/WEB.md).
+and the source library. Identity is one anonymous persistent browser
+cookie — no accounts or login: each browser sees and controls only the
+runs it started, CLI runs are never exposed over the web, and clearing
+site data permanently loses access. The cookie is a bearer token, so keep
+the API on loopback or behind a TLS proxy with `URUK_COOKIE_SECURE=true`.
+Setup, architecture, the cookie contract, and the reverse-proxy recipe
+are in [docs/WEB.md](docs/WEB.md).
 
 ## Build and test
 
