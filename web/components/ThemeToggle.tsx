@@ -26,9 +26,9 @@ function resolveTheme(): Theme {
 }
 
 /**
- * Light/dark switch. The server renders a neutral "Theme" placeholder (it
+ * Light/dark switch. The server renders "Dark" as the default action (it
  * cannot know the visitor's choice); the first client render matches it, so
- * hydration is clean, and the layout effect renames the button before paint.
+ * hydration is clean, and the layout effect resolves the correct action.
  *
  * The layout effect also re-applies the resolved theme to `<html data-theme>`:
  * in development, Strict Mode remounts reset `<html>` to its JSX attributes,
@@ -67,7 +67,7 @@ export function ThemeToggle() {
       onClick={toggle}
       style={{ padding: "6px 14px", fontFamily: "var(--font-mono)", fontSize: 12 }}
     >
-      {theme === null ? "Theme" : theme === "dark" ? "Switch to light" : "Switch to dark"}
+      {theme === "dark" ? "Light" : "Dark"}
     </button>
   );
 }
