@@ -98,6 +98,7 @@ export function RunForm() {
                 checked={ranking === "simple"}
                 onChange={() => setRanking("simple")}
               />
+              <span className="choice-mark" aria-hidden="true" />
               <span className="choice-name">Simple</span>
               <span className="choice-desc">
                 Single-turn pairwise comparison. Fast, lower ranking accuracy.
@@ -113,6 +114,7 @@ export function RunForm() {
                 checked={ranking === "tournament"}
                 onChange={() => setRanking("tournament")}
               />
+              <span className="choice-mark" aria-hidden="true" />
               <span className="choice-name">Tournament</span>
               <span className="choice-desc">
                 Elo tournament with multi-turn scientific debate. Slower, best
