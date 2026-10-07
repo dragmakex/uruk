@@ -54,9 +54,6 @@ export default async function RunsPage() {
     <div className="canvas canvas-narrow">
       <div className="page-head">
         <h1>Runs</h1>
-        <Link href="/runs/new" className="btn">
-          Start research
-        </Link>
       </div>
       {runs.length === 0 ? (
         <div className="empty-state">
