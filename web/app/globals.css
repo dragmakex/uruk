@@ -334,22 +334,102 @@ a {
   color: var(--danger-ink);
 }
 
-.ranking-summary {
+/* Ranking choice tiles: a real radio group; the checked tile is filled. */
+.choice-grid {
   display: grid;
-  gap: 5px;
-  padding: 18px 22px;
+  grid-template-columns: 1fr 1fr;
   border: var(--hairline) solid var(--line);
-  background: var(--surface-raised);
 }
 
-.ranking-summary strong {
+.choice {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  column-gap: 14px;
+  padding: 18px 22px;
+  cursor: pointer;
+}
+
+.choice + .choice {
+  border-left: var(--hairline) solid var(--line);
+}
+
+.choice input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+/* Square radio mark mirroring the hidden input's checked state. */
+.choice-mark {
+  grid-column: 1;
+  grid-row: 1;
+  width: 14px;
+  height: 14px;
+  margin-top: 5px;
+  border: var(--hairline) solid var(--line);
+  position: relative;
+}
+
+.choice-mark::after {
+  content: "";
+  position: absolute;
+  inset: 3px;
+}
+
+.choice:has(input:checked) .choice-mark {
+  border-color: var(--fill-ink);
+}
+
+.choice:has(input:checked) .choice-mark::after {
+  background: var(--fill-ink);
+}
+
+.choice-name {
+  display: block;
+  grid-column: 2;
+  font-weight: 700;
   font-size: 16px;
+  margin-bottom: 4px;
 }
 
-.ranking-summary span {
-  color: var(--muted);
+.choice-desc {
+  display: block;
+  grid-column: 2;
   font-size: 13.5px;
   line-height: 1.45;
+  color: var(--muted);
+}
+
+.choice.is-selected {
+  background: var(--fill);
+}
+
+.choice.is-selected .choice-name {
+  color: var(--fill-ink);
+}
+
+.choice.is-selected .choice-desc {
+  color: var(--fill-ink);
+  opacity: 0.82;
+}
+
+.choice:has(input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+@media (max-width: 640px) {
+  .choice-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .choice + .choice {
+    border-left: 0;
+    border-top: var(--hairline) solid var(--line);
+  }
 }
 
 /* ---------- agent legend (run specification page) ---------- */
