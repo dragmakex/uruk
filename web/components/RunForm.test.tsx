@@ -34,7 +34,7 @@ describe("RunForm", () => {
     expect(startRunMock).not.toHaveBeenCalled();
   });
 
-  it("posts every web run with tournament ranking and navigates to it", async () => {
+  it("posts the direct comparison choice and navigates to the run", async () => {
     startRunMock.mockResolvedValue("run_new1");
     const user = userEvent.setup();
     render(<RunForm />);
@@ -48,26 +48,44 @@ describe("RunForm", () => {
     expect(startRunMock).toHaveBeenCalledWith({
       goal: "why do the measurements disagree",
       mode: "campaign",
-      ranking: "tournament",
+      ranking: "simple",
     });
     expect(pushMock).toHaveBeenCalledWith("/runs/run_new1");
   });
 
-  it("offers only the paper-style tournament method", () => {
+  it("labels the paper's comparison methods Direct and Multi-turn", () => {
     render(<RunForm />);
 
-    expect(screen.queryByRole("radio", { name: /Simple/ })).not.toBeInTheDocument();
-    expect(screen.getByText("Tournament ranking")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /^Direct/ })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /^Multi-turn/ })).not.toBeChecked();
     expect(
       screen.getByText(
-        "Multi-turn scientific debates, Elo ranking, and iterative refinement. Runtime varies by research goal.",
+        "Direct · 1-turn comparison · limits: 200 model calls, 60 min, 10 rounds",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("selects multi-turn debate and updates its budget summary", async () => {
+    startRunMock.mockResolvedValue("run_new2");
+    const user = userEvent.setup();
+    render(<RunForm />);
+
+    await user.click(screen.getByRole("radio", { name: /^Multi-turn/ }));
+
+    expect(screen.getByRole("radio", { name: /^Multi-turn/ })).toBeChecked();
     expect(
       screen.getByText(
-        "Tournament · debates up to 5 turns · limits: 200 model calls, 60 min, 10 rounds",
+        "Multi-turn · debates up to 5 turns · limits: 200 model calls, 60 min, 10 rounds",
       ),
     ).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("Research goal"), "compare both ideas");
+    await user.click(screen.getByRole("button", { name: "Start research" }));
+    expect(startRunMock).toHaveBeenCalledWith({
+      goal: "compare both ideas",
+      mode: "campaign",
+      ranking: "tournament",
+    });
   });
 
   it("shows the API's stable error body when the start is rejected", async () => {
