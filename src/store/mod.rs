@@ -5,6 +5,7 @@
 //! has not passed the §4.3 and §7 gates.
 
 mod lock;
+mod owners;
 mod passages;
 mod queries;
 mod search;
@@ -14,6 +15,7 @@ mod tests;
 mod writes;
 
 pub use lock::ProjectLock;
+pub use owners::OwnerDigest;
 pub use passages::{PassageHit, sanitize_match_query};
 pub use queries::{ItemSummary, RunOverview};
 pub use search::StoredWork;

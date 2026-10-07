@@ -16,9 +16,11 @@ use uruk::records::{Mode, RunState};
 use uruk::web::{AppState, WebConfig, router};
 
 /// A router over a fresh on-disk store (so exports and resumes work), plus
-/// the fixture that seeded it.
+/// the fixture that seeded it. The fixture run is owned by the browser
+/// behind [`common::BROWSER_TOKEN`], which [`get`] and [`post_json`]
+/// present; cross-browser isolation itself is covered in `web_owner.rs`.
 async fn seeded_app(mode: Mode) -> (axum::Router, common::Fixture) {
-    let fixture = common::fixture(mode, MockProvider::new()).await;
+    let fixture = common::fixture_owned(mode, MockProvider::new(), common::BROWSER_TOKEN).await;
     let state = AppState::new(
         fixture.store.clone(),
         fixture.provider.clone(),
@@ -52,6 +54,10 @@ async fn body_json(response: axum::response::Response) -> serde_json::Value {
 fn get(uri: &str) -> Request<Body> {
     Request::builder()
         .uri(uri)
+        .header(
+            header::COOKIE,
+            format!("uruk_browser={}", common::BROWSER_TOKEN),
+        )
         .body(Body::empty())
         .expect("request")
 }
@@ -61,6 +67,10 @@ fn post_json(uri: &str, body: serde_json::Value) -> Request<Body> {
         .method("POST")
         .uri(uri)
         .header(header::CONTENT_TYPE, "application/json")
+        .header(
+            header::COOKIE,
+            format!("uruk_browser={}", common::BROWSER_TOKEN),
+        )
         .body(Body::from(body.to_string()))
         .expect("request")
 }

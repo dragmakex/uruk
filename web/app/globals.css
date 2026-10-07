@@ -239,7 +239,7 @@ a {
 .panel-foot {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
   gap: 16px;
   padding: 20px 28px;
 }
@@ -342,7 +342,9 @@ a {
 }
 
 .choice {
-  display: block;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  column-gap: 14px;
   padding: 18px 22px;
   cursor: pointer;
 }
@@ -360,8 +362,34 @@ a {
   clip: rect(0 0 0 0);
 }
 
+/* Square radio mark mirroring the hidden input's checked state. */
+.choice-mark {
+  grid-column: 1;
+  grid-row: 1;
+  width: 14px;
+  height: 14px;
+  margin-top: 5px;
+  border: var(--hairline) solid var(--line);
+  position: relative;
+}
+
+.choice-mark::after {
+  content: "";
+  position: absolute;
+  inset: 3px;
+}
+
+.choice:has(input:checked) .choice-mark {
+  border-color: var(--fill-ink);
+}
+
+.choice:has(input:checked) .choice-mark::after {
+  background: var(--fill-ink);
+}
+
 .choice-name {
   display: block;
+  grid-column: 2;
   font-weight: 700;
   font-size: 16px;
   margin-bottom: 4px;
@@ -369,6 +397,7 @@ a {
 
 .choice-desc {
   display: block;
+  grid-column: 2;
   font-size: 13.5px;
   line-height: 1.45;
   color: var(--muted);
@@ -965,9 +994,20 @@ details.legend-fold .legend-line {
 
 .landing-actions {
   display: flex;
+  justify-content: center;
   gap: 16px;
   flex-wrap: wrap;
-  margin-bottom: 28px;
+}
+
+.landing-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 150px;
+  min-height: 48px;
+  line-height: 1.2;
+  text-align: center;
 }
 
 @media (max-width: 640px) {
@@ -977,6 +1017,18 @@ details.legend-fold .legend-line {
 
   .landing h1 {
     font-size: 40px;
+  }
+
+  .landing-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .landing-action {
+    width: 100%;
+    min-width: 0;
+    padding: 12px 10px;
   }
 }
 

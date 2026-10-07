@@ -34,7 +34,7 @@ describe("RunForm", () => {
     expect(startRunMock).not.toHaveBeenCalled();
   });
 
-  it("posts the goal with the selected ranking and navigates to the run", async () => {
+  it("posts the direct comparison choice and navigates to the run", async () => {
     startRunMock.mockResolvedValue("run_new1");
     const user = userEvent.setup();
     render(<RunForm />);
@@ -43,20 +43,47 @@ describe("RunForm", () => {
       screen.getByLabelText("Research goal"),
       "why do the measurements disagree",
     );
-    await user.click(screen.getByRole("radio", { name: /Tournament/ }));
     await user.click(screen.getByRole("button", { name: "Start research" }));
 
     expect(startRunMock).toHaveBeenCalledWith({
       goal: "why do the measurements disagree",
       mode: "campaign",
-      ranking: "tournament",
+      ranking: "simple",
     });
     expect(pushMock).toHaveBeenCalledWith("/runs/run_new1");
   });
 
-  it("defaults the ranking to simple, as the reference preselects it", () => {
+  it("labels the paper's comparison methods Direct and Multi-turn", () => {
     render(<RunForm />);
-    expect(screen.getByRole("radio", { name: /Simple/ })).toBeChecked();
+
+    expect(screen.getByRole("radio", { name: /^Direct/ })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /^Multi-turn/ })).not.toBeChecked();
+  });
+
+  it("keeps only the Start research button in the form footer", () => {
+    render(<RunForm />);
+
+    const button = screen.getByRole("button", { name: "Start research" });
+    expect(button.closest(".panel-foot")?.children).toHaveLength(1);
+    expect(screen.queryByText(/limits: 200 model calls/)).not.toBeInTheDocument();
+  });
+
+  it("selects multi-turn debate and submits it", async () => {
+    startRunMock.mockResolvedValue("run_new2");
+    const user = userEvent.setup();
+    render(<RunForm />);
+
+    await user.click(screen.getByRole("radio", { name: /^Multi-turn/ }));
+
+    expect(screen.getByRole("radio", { name: /^Multi-turn/ })).toBeChecked();
+
+    await user.type(screen.getByLabelText("Research goal"), "compare both ideas");
+    await user.click(screen.getByRole("button", { name: "Start research" }));
+    expect(startRunMock).toHaveBeenCalledWith({
+      goal: "compare both ideas",
+      mode: "campaign",
+      ranking: "tournament",
+    });
   });
 
   it("shows the API's stable error body when the start is rejected", async () => {
