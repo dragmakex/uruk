@@ -21,12 +21,6 @@ export default function LandingPage() {
           View runs
         </Link>
       </div>
-      <p className="micro">
-        Anonymous browser workspace: no account, no login. Runs started
-        here are tied to this browser by a private cookie — they are
-        available only on this browser, and clearing site data loses
-        access to them permanently.
-      </p>
     </div>
   );
 }

@@ -59,6 +59,60 @@ describe("RunForm", () => {
     expect(screen.getByRole("radio", { name: /Simple/ })).toBeChecked();
   });
 
+  it("moves the checked state between the two choices with clicks", async () => {
+    const user = userEvent.setup();
+    render(<RunForm />);
+    const simple = screen.getByRole("radio", { name: /Simple/ });
+    const tournament = screen.getByRole("radio", { name: /Tournament/ });
+
+    await user.click(tournament);
+    expect(tournament).toBeChecked();
+    expect(simple).not.toBeChecked();
+
+    await user.click(simple);
+    expect(simple).toBeChecked();
+    expect(tournament).not.toBeChecked();
+  });
+
+  it("moves the checked state with the keyboard arrows, as a radio group", async () => {
+    const user = userEvent.setup();
+    render(<RunForm />);
+    const simple = screen.getByRole("radio", { name: /Simple/ });
+
+    simple.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(screen.getByRole("radio", { name: /Tournament/ })).toBeChecked();
+
+    await user.keyboard("{ArrowLeft}");
+    expect(simple).toBeChecked();
+  });
+
+  it("sends ranking simple when the user settles back on simple", async () => {
+    startRunMock.mockResolvedValue("run_simple1");
+    const user = userEvent.setup();
+    render(<RunForm />);
+
+    await user.type(screen.getByLabelText("Research goal"), "a simple goal");
+    await user.click(screen.getByRole("radio", { name: /Tournament/ }));
+    await user.click(screen.getByRole("radio", { name: /Simple/ }));
+    await user.click(screen.getByRole("button", { name: "Start research" }));
+
+    expect(startRunMock).toHaveBeenCalledWith({
+      goal: "a simple goal",
+      mode: "campaign",
+      ranking: "simple",
+    });
+  });
+
+  it("marks each ranking choice with a visible selection indicator", () => {
+    render(<RunForm />);
+    const marks = document.querySelectorAll(".choice-mark");
+    expect(marks).toHaveLength(2);
+    for (const mark of marks) {
+      expect(mark).toHaveAttribute("aria-hidden", "true");
+    }
+  });
+
   it("shows the API's stable error body when the start is rejected", async () => {
     startRunMock.mockRejectedValue(
       new ApiFailure("the goal is blocked", "permission", 403),
