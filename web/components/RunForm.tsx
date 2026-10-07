@@ -6,8 +6,18 @@ import { ApiFailure, startRun } from "@/lib/api";
 
 const MAX_GOAL_CHARS = 8000;
 
-/** Real budget facts sent with the request; shown instead of an estimate. */
-export const DEFAULT_BUDGET_NOTE = "budget 200 model calls, 60 min, 10 rounds";
+/**
+ * Real Uruk limits sent with the request, plus the selected ranking depth.
+ * Google's AI co-scientist paper calls tournament ranking computationally
+ * intensive but does not publish fixed per-mode wall-clock durations, so this
+ * deliberately states limits rather than an estimated completion time.
+ */
+export const BUDGET_NOTES = {
+  simple:
+    "Simple · 1-turn comparisons · limits: 200 model calls, 60 min, 10 rounds",
+  tournament:
+    "Tournament · debates up to 5 turns · limits: 200 model calls, 60 min, 10 rounds",
+} as const;
 
 /**
  * The run specification form: research goal plus the ranking choice.
@@ -101,7 +111,8 @@ export function RunForm() {
               <span className="choice-mark" aria-hidden="true" />
               <span className="choice-name">Simple</span>
               <span className="choice-desc">
-                Single-turn pairwise comparison. Fast, lower ranking accuracy.
+                Single-turn pairwise comparisons. Lower compute; runtime varies
+                by research goal.
               </span>
             </label>
             <label
@@ -117,8 +128,8 @@ export function RunForm() {
               <span className="choice-mark" aria-hidden="true" />
               <span className="choice-name">Tournament</span>
               <span className="choice-desc">
-                Elo tournament with multi-turn scientific debate. Slower, best
-                ranking.
+                Pairwise scientific debates up to 5 turns. More compute-intensive;
+                runtime varies by research goal.
               </span>
             </label>
           </div>
@@ -126,7 +137,9 @@ export function RunForm() {
       </div>
 
       <div className="panel-foot">
-        <span className="micro">{DEFAULT_BUDGET_NOTE}</span>
+        <span className="micro" aria-live="polite">
+          {BUDGET_NOTES[ranking]}
+        </span>
         <button type="submit" className="btn" disabled={submitting}>
           {submitting ? "Starting run" : "Start research"}
         </button>

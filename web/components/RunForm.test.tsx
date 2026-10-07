@@ -57,6 +57,24 @@ describe("RunForm", () => {
   it("defaults the ranking to simple, as the reference preselects it", () => {
     render(<RunForm />);
     expect(screen.getByRole("radio", { name: /Simple/ })).toBeChecked();
+    expect(
+      screen.getByText(
+        "Simple · 1-turn comparisons · limits: 200 model calls, 60 min, 10 rounds",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("adapts the budget summary to tournament debate depth", async () => {
+    const user = userEvent.setup();
+    render(<RunForm />);
+
+    await user.click(screen.getByRole("radio", { name: /Tournament/ }));
+
+    expect(
+      screen.getByText(
+        "Tournament · debates up to 5 turns · limits: 200 model calls, 60 min, 10 rounds",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("moves the checked state between the two choices with clicks", async () => {
