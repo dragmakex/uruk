@@ -14,10 +14,10 @@ export default function LandingPage() {
         live tournament, and read the evidence-backed report it exports.
       </p>
       <div className="landing-actions">
-        <Link href="/runs/new" className="btn">
+        <Link href="/runs/new" className="btn landing-action">
           Start research
         </Link>
-        <Link href="/runs" className="btn btn-outline">
+        <Link href="/runs" className="btn btn-outline landing-action">
           View runs
         </Link>
       </div>

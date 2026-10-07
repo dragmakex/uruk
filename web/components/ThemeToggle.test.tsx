@@ -10,36 +10,33 @@ beforeEach(() => {
 });
 
 describe("ThemeToggle", () => {
-  it("server-renders the neutral placeholder, since the server cannot know the choice", () => {
-    expect(renderToString(<ThemeToggle />)).toContain("Theme");
+  it("server-renders a concise theme action instead of an ambiguous placeholder", () => {
+    expect(renderToString(<ThemeToggle />)).toContain("Dark");
+    expect(renderToString(<ThemeToggle />)).not.toContain(">Theme<");
   });
 
-  it("offers dark mode when the resolved theme is light", () => {
+  it("is labeled Dark when clicking it will enable dark mode", () => {
     render(<ThemeToggle />);
-    expect(
-      screen.getByRole("button", { name: "Switch to dark" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Dark" })).toBeInTheDocument();
   });
 
-  it("offers light mode when the stored theme is dark", () => {
+  it("is labeled Light when clicking it will enable light mode", () => {
     localStorage.setItem("uruk-theme", "dark");
     document.documentElement.dataset.theme = "dark";
     render(<ThemeToggle />);
-    expect(
-      screen.getByRole("button", { name: "Switch to light" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Light" })).toBeInTheDocument();
   });
 
   it("switches light to dark: applies data-theme, persists, and renames itself", async () => {
     const user = userEvent.setup();
     render(<ThemeToggle />);
 
-    await user.click(screen.getByRole("button", { name: "Switch to dark" }));
+    await user.click(screen.getByRole("button", { name: "Dark" }));
 
     expect(document.documentElement.dataset.theme).toBe("dark");
     expect(localStorage.getItem("uruk-theme")).toBe("dark");
     expect(
-      screen.getByRole("button", { name: "Switch to light" }),
+      screen.getByRole("button", { name: "Light" }),
     ).toBeInTheDocument();
   });
 
@@ -49,19 +46,19 @@ describe("ThemeToggle", () => {
     const user = userEvent.setup();
     render(<ThemeToggle />);
 
-    await user.click(screen.getByRole("button", { name: "Switch to light" }));
+    await user.click(screen.getByRole("button", { name: "Light" }));
 
     expect(document.documentElement.dataset.theme).toBe("light");
     expect(localStorage.getItem("uruk-theme")).toBe("light");
     expect(
-      screen.getByRole("button", { name: "Switch to dark" }),
+      screen.getByRole("button", { name: "Dark" }),
     ).toBeInTheDocument();
   });
 
   it("restores the persisted choice on a fresh mount, even if <html> was reset", async () => {
     const user = userEvent.setup();
     const first = render(<ThemeToggle />);
-    await user.click(screen.getByRole("button", { name: "Switch to dark" }));
+    await user.click(screen.getByRole("button", { name: "Dark" }));
     first.unmount();
 
     // Dev Strict Mode remounts reset <html> to its JSX attributes; the
@@ -71,7 +68,7 @@ describe("ThemeToggle", () => {
 
     expect(document.documentElement.dataset.theme).toBe("dark");
     expect(
-      screen.getByRole("button", { name: "Switch to light" }),
+      screen.getByRole("button", { name: "Light" }),
     ).toBeInTheDocument();
   });
 });
