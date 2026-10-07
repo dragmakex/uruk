@@ -12,26 +12,22 @@ const MAX_GOAL_CHARS = 8000;
  * intensive but does not publish fixed per-mode wall-clock durations, so this
  * deliberately states limits rather than an estimated completion time.
  */
-export const BUDGET_NOTES = {
-  simple:
-    "Simple · 1-turn comparisons · limits: 200 model calls, 60 min, 10 rounds",
-  tournament:
-    "Tournament · debates up to 5 turns · limits: 200 model calls, 60 min, 10 rounds",
-} as const;
+export const TOURNAMENT_BUDGET_NOTE =
+  "Tournament · debates up to 5 turns · limits: 200 model calls, 60 min, 10 rounds";
 
 /**
- * The run specification form: research goal plus the ranking choice.
+ * The run specification form: research goal plus the tournament method.
  * Submits `POST /api/runs` and navigates to the live run.
  *
- * Both ranking options keep the Elo tournament; the recorded difference is
- * the comparison debate turn cap (1 for simple, 5 for tournament), which is
- * exactly what the API stores on the run's budget.
+ * Web runs use the paper-style ranking path: pairwise multi-turn scientific
+ * debate, Elo ranking, and iterative refinement. The API stores a five-turn
+ * debate cap on the run's budget.
  */
 export function RunForm() {
   const router = useRouter();
   const goalId = useId();
   const [goal, setGoal] = useState("");
-  const [ranking, setRanking] = useState<"simple" | "tournament">("simple");
+
   const [submitting, setSubmitting] = useState(false);
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [apiError, setApiError] = useState<{ error: string; kind: string } | null>(
@@ -55,7 +51,11 @@ export function RunForm() {
     setSubmitting(true);
 
     try {
-      const runId = await startRun({ goal: question, mode: "campaign", ranking });
+      const runId = await startRun({
+        goal: question,
+        mode: "campaign",
+        ranking: "tournament",
+      });
       router.push(`/runs/${encodeURIComponent(runId)}`);
     } catch (e) {
       if (e instanceof ApiFailure) {
@@ -97,48 +97,19 @@ export function RunForm() {
       </div>
 
       <div className="panel-section">
-        <fieldset style={{ border: 0, padding: 0, margin: 0 }}>
-          <legend className="section-label">Ranking</legend>
-          <div className="choice-grid" role="presentation">
-            <label className={`choice${ranking === "simple" ? " is-selected" : ""}`}>
-              <input
-                type="radio"
-                name="ranking"
-                value="simple"
-                checked={ranking === "simple"}
-                onChange={() => setRanking("simple")}
-              />
-              <span className="choice-mark" aria-hidden="true" />
-              <span className="choice-name">Simple</span>
-              <span className="choice-desc">
-                Single-turn pairwise comparisons. Lower compute; runtime varies
-                by research goal.
-              </span>
-            </label>
-            <label
-              className={`choice${ranking === "tournament" ? " is-selected" : ""}`}
-            >
-              <input
-                type="radio"
-                name="ranking"
-                value="tournament"
-                checked={ranking === "tournament"}
-                onChange={() => setRanking("tournament")}
-              />
-              <span className="choice-mark" aria-hidden="true" />
-              <span className="choice-name">Tournament</span>
-              <span className="choice-desc">
-                Pairwise scientific debates up to 5 turns. More compute-intensive;
-                runtime varies by research goal.
-              </span>
-            </label>
-          </div>
-        </fieldset>
+        <span className="section-label">Method</span>
+        <div className="ranking-summary">
+          <strong>Tournament ranking</strong>
+          <span>
+            Multi-turn scientific debates, Elo ranking, and iterative refinement.
+            Runtime varies by research goal.
+          </span>
+        </div>
       </div>
 
       <div className="panel-foot">
         <span className="micro" aria-live="polite">
-          {BUDGET_NOTES[ranking]}
+          {TOURNAMENT_BUDGET_NOTE}
         </span>
         <button type="submit" className="btn" disabled={submitting}>
           {submitting ? "Starting run" : "Start research"}
