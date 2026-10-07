@@ -58,14 +58,17 @@ describe("RunForm", () => {
 
     expect(screen.getByRole("radio", { name: /^Direct/ })).toBeChecked();
     expect(screen.getByRole("radio", { name: /^Multi-turn/ })).not.toBeChecked();
-    expect(
-      screen.getByText(
-        "Direct · 1-turn comparison · limits: 200 model calls, 60 min, 10 rounds",
-      ),
-    ).toBeInTheDocument();
   });
 
-  it("selects multi-turn debate and updates its budget summary", async () => {
+  it("keeps only the Start research button in the form footer", () => {
+    render(<RunForm />);
+
+    const button = screen.getByRole("button", { name: "Start research" });
+    expect(button.closest(".panel-foot")?.children).toHaveLength(1);
+    expect(screen.queryByText(/limits: 200 model calls/)).not.toBeInTheDocument();
+  });
+
+  it("selects multi-turn debate and submits it", async () => {
     startRunMock.mockResolvedValue("run_new2");
     const user = userEvent.setup();
     render(<RunForm />);
@@ -73,11 +76,6 @@ describe("RunForm", () => {
     await user.click(screen.getByRole("radio", { name: /^Multi-turn/ }));
 
     expect(screen.getByRole("radio", { name: /^Multi-turn/ })).toBeChecked();
-    expect(
-      screen.getByText(
-        "Multi-turn · debates up to 5 turns · limits: 200 model calls, 60 min, 10 rounds",
-      ),
-    ).toBeInTheDocument();
 
     await user.type(screen.getByLabelText("Research goal"), "compare both ideas");
     await user.click(screen.getByRole("button", { name: "Start research" }));

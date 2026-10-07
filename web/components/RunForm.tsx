@@ -7,19 +7,6 @@ import { ApiFailure, startRun } from "@/lib/api";
 const MAX_GOAL_CHARS = 8000;
 
 /**
- * Real Uruk limits sent with the request, plus the selected ranking depth.
- * Google's AI co-scientist paper calls tournament ranking computationally
- * intensive but does not publish fixed per-mode wall-clock durations, so this
- * deliberately states limits rather than an estimated completion time.
- */
-export const BUDGET_NOTES = {
-  simple:
-    "Direct · 1-turn comparison · limits: 200 model calls, 60 min, 10 rounds",
-  tournament:
-    "Multi-turn · debates up to 5 turns · limits: 200 model calls, 60 min, 10 rounds",
-} as const;
-
-/**
  * The run specification form: research goal plus the ranking choice.
  * Submits `POST /api/runs` and navigates to the live run.
  *
@@ -137,9 +124,6 @@ export function RunForm() {
       </div>
 
       <div className="panel-foot">
-        <span className="micro" aria-live="polite">
-          {BUDGET_NOTES[ranking]}
-        </span>
         <button type="submit" className="btn" disabled={submitting}>
           {submitting ? "Starting run" : "Start research"}
         </button>
