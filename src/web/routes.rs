@@ -10,7 +10,7 @@ use crate::{Error, Result};
 use axum::Json;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Query, State};
-use axum::http::{StatusCode, header};
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 
 pub async fn health() -> Json<serde_json::Value> {
@@ -93,7 +93,7 @@ async fn read_report_markdown(state: &AppState, run_id: &RunId) -> Result<String
 /// A file-download response: explicit content type, attachment
 /// disposition, raw bytes.
 fn file_download(bytes: Vec<u8>, content_type: &'static str, filename: String) -> Response {
-    (
+    let mut response = (
         [
             (header::CONTENT_TYPE, content_type.to_string()),
             (
@@ -103,7 +103,19 @@ fn file_download(bytes: Vec<u8>, content_type: &'static str, filename: String) -
         ],
         bytes,
     )
-        .into_response()
+        .into_response();
+    // Downloads contain generated/untrusted prose. Prevent MIME sniffing and
+    // stale intermediary caches from changing which canonical snapshot an
+    // owner receives.
+    response.headers_mut().insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, no-store"),
+    );
+    response
 }
 
 pub async fn report(
@@ -127,22 +139,16 @@ pub async fn report(
     })))
 }
 
-/// `REPORT.pdf` as a download. Serves the exported file; for runs
-/// exported before the PDF twin existed it derives the identical bytes
-/// from the canonical markdown on demand (rendering is deterministic and
-/// needs no model call).
+/// `REPORT.pdf` as a download, always derived from the canonical markdown.
+/// The exported PDF is a convenience artifact, not a second source of truth:
+/// deriving here prevents an interrupted old export or tampered PDF from
+/// disagreeing with `REPORT.md`. Rendering is deterministic and model-free.
 pub async fn report_pdf(
     State(state): State<AppState>,
     OwnedRun(run_id): OwnedRun,
 ) -> ApiResult<Response> {
-    let dir = state.store().run_dir(&run_id);
-    let bytes = match tokio::fs::read(dir.join("REPORT.pdf")).await {
-        Ok(bytes) => bytes,
-        Err(_) => {
-            let markdown = read_report_markdown(&state, &run_id).await?;
-            crate::report::render_report_pdf(&markdown)
-        }
-    };
+    let markdown = read_report_markdown(&state, &run_id).await?;
+    let bytes = crate::report::render_report_pdf(&markdown);
     Ok(file_download(
         bytes,
         "application/pdf",

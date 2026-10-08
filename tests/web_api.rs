@@ -774,6 +774,34 @@ async fn report_pdf_is_derived_on_demand_for_markdown_only_exports() {
 }
 
 #[tokio::test]
+async fn report_pdf_never_serves_a_stale_or_tampered_twin() {
+    let (app, fixture) = seeded_app(Mode::Task).await;
+    uruk::report::export_run(&fixture.store, &fixture.run_id)
+        .await
+        .unwrap();
+    let dir = fixture.store.run_dir(&fixture.run_id);
+    let canonical_markdown = tokio::fs::read_to_string(dir.join("REPORT.md"))
+        .await
+        .unwrap();
+    tokio::fs::write(dir.join("REPORT.pdf"), b"not the canonical PDF")
+        .await
+        .unwrap();
+
+    let response = app
+        .oneshot(get(&format!("/api/runs/{}/report.pdf", fixture.run_id)))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(header(&response, "x-content-type-options"), "nosniff");
+    assert_eq!(header(&response, "cache-control"), "private, no-store");
+    assert_eq!(
+        body_bytes(response).await,
+        uruk::report::render_report_pdf(&canonical_markdown),
+        "REPORT.md is the sole source of truth"
+    );
+}
+
+#[tokio::test]
 async fn report_markdown_download_serves_the_exact_canonical_bytes() {
     let (app, fixture) = seeded_app(Mode::Task).await;
     uruk::report::export_run(&fixture.store, &fixture.run_id)
