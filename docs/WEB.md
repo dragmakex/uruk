@@ -1,10 +1,11 @@
 # The Uruk web interface
 
-Uruk ships a local-first web console: a Rust API served by the `uruk`
-binary itself, and a separate Next.js frontend under `web/`. The engine and
-its SQLite store remain authoritative; the web layer is a thin adapter that
-reads the same records the CLI reads and issues the same commands the CLI
-issues.
+Uruk ships a local-first web console, and the browser is the product's
+only frontend: a Rust API served by the `uruk` binary itself (whose
+single command is `uruk serve`), and a separate Next.js frontend under
+`web/`. The engine and its SQLite store remain authoritative; the web
+layer is a thin adapter that derives every response from the engine's
+durable records.
 
 ## Security: read this first
 
@@ -18,9 +19,10 @@ as `uruk_browser` (host-only, `HttpOnly`, `Path=/`, `SameSite=Lax`,
   snapshots, reports, sources, passages, the SSE stream, and stop are all
   owner-scoped, enforced in the Rust store. Foreign and unknown run ids
   get the same `not_found` answer, so probing discloses nothing.
-- Runs created by the CLI (and any run from before ownership existed)
-  have no owner record and are **not reachable over the web at all** —
-  they cannot be claimed by a visitor; web access fails closed.
+- Runs without an owner record (created by builds that predate the
+  web-only product, or directly through the engine by tests) are **not
+  reachable over the web at all** — they cannot be claimed by a visitor;
+  web access fails closed.
 - SQLite stores only the SHA-256 digest of the token, never the token,
   so a copy of the database grants access to nobody's runs. The token is
   never logged and never visible to frontend JavaScript.
@@ -47,7 +49,7 @@ client presenting it is that browser. Therefore transport still matters:
 ```
 browser ── same-origin /api ──▶ Rust API (axum, uruk serve, :7913)
    │                                 │
-   └── pages, assets ──▶ Next.js (web/, :3000)   SQLite ◀── CLI (uruk …)
+   └── pages, assets ──▶ Next.js (web/, :3000)   SQLite (.uruk/state.sqlite)
 ```
 
 - **Commands are JSON over POST** (`/api/runs`, `/api/runs/{id}/stop`).
@@ -73,31 +75,32 @@ browser ── same-origin /api ──▶ Rust API (axum, uruk serve, :7913)
   empty workspace and the browser's own first `/api` request mints the
   durable cookie.
 - Errors use one stable JSON body everywhere:
-  `{"ok": false, "error": <prose>, "kind": <kind>}` with the same `kind`
-  strings as the CLI's `--json` mode (`validation`, `not_found`,
+  `{"ok": false, "error": <prose>, "kind": <kind>}` with the engine's
+  stable `kind` strings (`validation`, `not_found`,
   `permission`, `budget`, `storage`, …), plus `timeout` for a request
   that hit the server-side deadline. Infrastructure failures (the 5xx
   family) are logged in full on the server but reported with generic
   prose: internal paths and SQL state never cross the wire.
 
-The Rust adapter lives in `src/web/` behind the on-by-default `web` cargo
-feature (`--no-default-features` builds the CLI-only binary). It holds no
-state of its own; every response is rebuilt from durable records, so a
-restarted server shows exactly what a restarted CLI would.
+The Rust adapter lives in `src/web/`. It holds no state of its own;
+every response is rebuilt from durable records, so a restarted server
+shows exactly the state a fresh one derives.
 
 Runs started over the API are dispatched by a scheduler inside the serve
 process. `uruk serve` therefore takes the project scheduler lock for its
-lifetime: `uruk status`, `uruk stop`, and `uruk approve` keep working
-from another terminal, while `uruk run` and `uruk resume` fail fast with
-a lock message until the server stops. Because `uruk resume` is locked
-out, the serve process sweeps every few seconds for runs it should be
+lifetime: a second `uruk serve` on the same project fails fast with a
+lock message until the first stops. As the project's only scheduler
+owner, the serve process sweeps every few seconds for runs it should be
 driving: runs left `running` by an interrupted process are resumed on
-startup, and runs parked `waiting-for-human` are picked back up once
-their approvals are decided. Web-started runs grant no permissions
-beyond provider disclosure: no file inputs, no network retrieval, no
-execution, no literature search. Grants with real side effects stay
-CLI-only; an anonymous cookie identifies a browser, not a person who
-can be held to an approval.
+startup, and runs parked `waiting-for-human` are picked back up once no
+approvals remain pending. Web-started runs grant no permissions beyond
+provider disclosure: no file inputs, no network retrieval, no execution,
+no literature search. An anonymous cookie identifies a browser, not a
+person who can be held to a grant — in particular, **computational
+execution is unavailable in the web-only product**: the engine executes
+a program only under an approval bound to the exact payload hash, and
+until the console has a UI that shows that exact payload and records the
+researcher's approval, no execution request can be granted.
 
 Ownership lives in one additive table, `run_owners` (migration 0004):
 `run_id → owner_digest`, written in the same transaction that creates a
@@ -150,10 +153,11 @@ bun install
 bun run dev                         # binds localhost:3000, proxies /api
 ```
 
-Open `http://localhost:3000`. A model provider is configured exactly as
-for the CLI (`URUK_PROVIDER_URL`, `URUK_MODEL`, `URUK_API_KEY`, read from
-the project's `.env`); without one, runs complete offline with a stand-in
-that states plainly that nothing was analysed.
+Open `http://localhost:3000`. A model provider is configured through the
+environment (`URUK_PROVIDER_URL`, `URUK_MODEL`, `URUK_API_KEY`, read from
+the project's `.env` when `uruk serve` starts); without one, runs
+complete offline with a stand-in that states plainly that nothing was
+analysed.
 
 Environment variables:
 
@@ -234,7 +238,7 @@ nothing here has been deployed.
   covers the identity layer with independent cookie jars: cookie minting
   and attributes, malformed-cookie replacement, cross-browser isolation
   on every run-scoped route including SSE and stop, foreign/unknown
-  indistinguishability, CLI-run invisibility, restart persistence, and
+  indistinguishability, ownerless-run invisibility, restart persistence, and
   digest-only storage. Everything is offline.
 - Frontend: `cd web && bun run check` runs ESLint, `tsc --noEmit`, Vitest
   (runtime parsers, formatting, the SSE reducer, form validation, agent

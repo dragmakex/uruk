@@ -23,7 +23,10 @@ the test suite: records and SQLite persistence, the Tokio runtime with the
 files, PDFs, and URLs, task and campaign modes, all six roles scheduled by the
 Supervisor, the eight adapted prompt templates, approval-gated contained
 execution with reproducibility records, mid-run goal revision, an
-OpenAI-compatible HTTP provider, and the CLI and report exporter.
+OpenAI-compatible HTTP provider, the web API, and the report exporter.
+The product surface is web-only: the binary's single command is
+`uruk serve`, and some engine capabilities are not yet reachable from the
+web surface (see "What a web run can do" below).
 
 Built on Rust 1.98 (edition 2024) with current crates: `reqwest` 0.13 over
 rustls for the model provider and retrieval, `pdf_oxide` for PDF text, and
@@ -31,16 +34,17 @@ rustls for the model provider and retrieval, `pdf_oxide` for PDF text, and
 
 ## Web console
 
-`uruk serve` starts a local JSON/SSE API on `127.0.0.1:7913` (axum, behind
-the on-by-default `web` cargo feature), and `web/` holds a separate Next.js
-frontend for it: run specification, a live agent-topology view, reports,
-and the source library. Identity is one anonymous persistent browser
-cookie — no accounts or login: each browser sees and controls only the
-runs it started, CLI runs are never exposed over the web, and clearing
-site data permanently loses access. The cookie is a bearer token, so keep
-the API on loopback or behind a TLS proxy with `URUK_COOKIE_SECURE=true`.
-Setup, architecture, the cookie contract, and the reverse-proxy recipe
-are in [docs/WEB.md](docs/WEB.md).
+The browser is Uruk's only frontend. `uruk serve` — the binary's single
+command — starts a local JSON/SSE API on `127.0.0.1:7913` (axum), and
+`web/` holds the Next.js frontend for it: run specification, a live
+agent-topology view, reports, and the source library. Identity is one
+anonymous persistent browser cookie — no accounts or login: each browser
+sees and controls only the runs it started, ownerless runs from older
+builds are never exposed over the web, and clearing site data permanently
+loses access. The cookie is a bearer token, so keep the API on loopback
+or behind a TLS proxy with `URUK_COOKIE_SECURE=true`. Setup,
+architecture, the cookie contract, and the reverse-proxy recipe are in
+[docs/WEB.md](docs/WEB.md).
 
 ## Build and test
 
@@ -49,6 +53,7 @@ cargo build --release
 cargo fmt --check
 cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked          # no network, no API key, no paid LLM
+cd web && bun run check      # frontend: lint + typecheck + vitest + build
 ```
 
 The toolchain is pinned in `rust-toolchain.toml`. Tests that need OS
@@ -58,8 +63,8 @@ containment skip themselves on hosts without `sandbox-exec` (macOS) or
 ## Configure a model
 
 Any OpenAI-compatible `/chat/completions` endpoint works. Put the settings in
-a `.env` file in the project directory (it is git-ignored) and every `uruk`
-command picks them up:
+a `.env` file in the project directory (it is git-ignored) and `uruk serve`
+picks them up at startup:
 
 ```sh
 # .env
@@ -76,60 +81,55 @@ analysis. The report says so plainly rather than fabricating results.
 
 ## Use
 
+Two processes, one browser:
+
 ```sh
-# A bounded task over local papers, PDFs included.
-uruk run --goal "Compare these papers and explain where they disagree" \
-           --mode task --input a.pdf --input b.md --deliverable "cited comparison"
-
-# Sources by URL need the network permission; each fetch is hashed and its
-# access level recorded (article text, PDF text, or unavailable with the reason).
-uruk run --goal "Summarise the reported effect sizes" --allow-network \
-           --input https://doi.org/10.1000/example --input https://example.org/paper.pdf
-
-# An open campaign.
-uruk run --goal "Find competing explanations for this anomaly" \
-           --mode campaign --max-iterations 10
-
-# Autonomous literature review is an explicit opt-in: --search (requires
-# --allow-network) formulates queries, searches OpenAlex/Crossref/arXiv,
-# acquires open-access full text, and grounds the synthesis in ranked
-# passages. --allow-network alone keeps URL-fetch-only behavior and sends
-# zero connector traffic; --search-connectors narrows the three connectors.
-uruk run --goal "What is known about catalyst degradation?" --mode task \
-           --allow-network --search [--search-connectors openalex,arxiv] [--max-acquisitions 8]
-uruk passages --run-id <id> --query "catalyst degradation"   # offline FTS5 lookup
-
-# Contained execution, gated by approval.
-uruk run --goal "Assess whether the mean exceeds zero" --input data.csv \
-           --allow-execute --tool sh
-uruk status   --run-id <id>              # shows the pending request
-uruk approve  --run-id <id> --request-id <id> [--payload-hash <hash>]
-uruk resume   --run-id <id>
-
-uruk feedback --run-id <id> --file notes.md [--as-item] [--item <item-id>]
-uruk revise   --run-id <id> [--goal <text>] [--attribute <axis>]... [--constraint <c>]...
-                [--exclude <x>]... [--assume <a>]... [--max-model-calls N] [--reason <why>]
-uruk deny     --run-id <id> --request-id <id>
-uruk stop     --run-id <id>              # observed by the running scheduler
-uruk report   --run-id <id>
-uruk prompts                             # templates and their source figures
+uruk serve                  # the only command: the web API on 127.0.0.1:7913
+cd web && bun run dev       # the web app on localhost:3000 (proxies /api)
 ```
 
-Every command accepts `--json` for machine consumption, so an outer agent can
-drive Uruk as a tool. Errors carry a stable `kind`
+Open `http://localhost:3000`: specify a goal, deliverables, preferences,
+attributes, constraints, and budgets; watch the agent topology live; read
+the report; search the run's passages. The same operations are plain JSON
+if an outer agent should drive Uruk as a tool (full surface and the cookie
+contract in [docs/WEB.md](docs/WEB.md)):
+
+```sh
+curl -c jar -b jar -X POST localhost:7913/api/runs \
+     -H 'content-type: application/json' \
+     -d '{"goal": "Find competing explanations for this anomaly",
+          "mode": "campaign", "ranking": "tournament"}'
+curl -b jar localhost:7913/api/runs                      # this browser's runs
+curl -b jar localhost:7913/api/runs/<id>                 # live snapshot
+curl -b jar -X POST localhost:7913/api/runs/<id>/stop    # durable stop request
+curl -b jar localhost:7913/api/runs/<id>/report          # REPORT.md + manifest
+curl -b jar 'localhost:7913/api/runs/<id>/passages?q=catalyst+degradation'
+```
+
+Errors carry a stable `kind`
 (`validation`, `permission`, `budget`, `not_found`, `provider`, `search`,
 `cancelled`, …)
 to branch on without parsing prose.
 
-Capabilities are off by default. `--allow-network`, `--allow-execute`, and
-`--tool <name>` grant them explicitly; permissions are enforced at execution
-boundaries, not by prompt text. `--allow-execute` is refused on a host without
-OS-level containment.
+### What a web run can do
 
-`uruk revise` records a new goal revision. In-flight results keep their
-original context; pending approvals are invalidated; a changed rubric starts a
-fresh Elo cohort; a finished run is reopened so `uruk resume` continues under
-the new revision.
+A web run analyses its goal with the configured model and reports
+evidence-backed findings; it grants the engine nothing with side effects.
+No file inputs, no network retrieval, no literature search, and no tool
+execution: an anonymous cookie identifies a browser, not a person who can
+be held to a grant.
+
+**Computational execution is unavailable in the web-only product.** The
+engine runs a program only under an approval bound to the exact payload
+hash (SPEC §12), and the web console has no UI yet that shows that exact
+payload and records the researcher's approval of it. Until an
+exact-payload approval UI exists, no execution request can be granted —
+items that would need an experiment stay below `Supported` for lack of
+empirical evidence rather than anything executing silently. Ingestion,
+federated literature search,
+and contained execution remain implemented and tested in the engine
+(`src/tools`, `src/search`, `src/runtime`) and return to the surface once
+the API can attribute an exact-payload approval to someone.
 
 ## Outputs
 
@@ -139,7 +139,7 @@ the new revision.
   REPORT.md         the deliverable with claim provenance, or a labelled partial result
   research.jsonl    items, evidence, reviews, decisions, experiments, lineage
   sources.jsonl     source provenance, citation locators, and search records
-  works.jsonl       every work found by --search, with RRF score and per-connector ranks
+  works.jsonl       every work found by literature search, with RRF score and per-connector ranks
   tournament.jsonl  matches and ratings (campaigns with comparisons)
   artifacts/        per-task directories: transcripts, logs, execution outputs
 ```
@@ -173,7 +173,8 @@ cannot run, the report says why.
   replay after commit changes nothing. Interrupted external effects become
   `uncertain` rather than being retried blindly. Approvals bind to an exact
   payload hash and survive restart. Writes use `BEGIN IMMEDIATE`, so a
-  `uruk approve` during a run queues instead of failing.
+  concurrent control write (a stop request) during a run queues instead
+  of failing.
 - **Failed work is charged.** Every attempted model call is settled, retries
   are bounded, and a cancelled task keeps its labelled partial artifacts.
 - **Execution is contained or unavailable.** Approved programs run under macOS
@@ -183,10 +184,12 @@ cannot run, the report says why.
   yielded text; a scanned PDF, a failed fetch, or a URL supplied without the
   network permission is recorded as such, with the reason, and the report
   repeats it. Retrieved pages and PDFs are untrusted data, fenced in prompts.
-- **Search disclosure is explicit opt-in and auditable.** Only `--search`
-  (which requires `--allow-network`) enables connectors; `--allow-network`
-  alone keeps today's URL-fetch-only behavior and sends zero connector
-  traffic. With search enabled, query text, year filters, and the configured
+- **Search disclosure is explicit opt-in and auditable.** Only the
+  per-run search grants (`search:openalex`, `search:crossref`,
+  `search:arxiv` on top of the network permission) enable connectors; the
+  network permission alone keeps URL-fetch-only behavior and sends zero
+  connector traffic. Web runs today grant neither (see "What a web run
+  can do"). With search enabled, query text, year filters, and the configured
   contact email (`URUK_CONTACT_EMAIL`, polite pools) are transmitted to the
   enabled operators (OurResearch, Crossref, arXiv/Cornell) — never source
   contents, never the goal record. Every transmitted query is persisted
@@ -213,8 +216,9 @@ prompts/       the template assets
 
 Every ingested source with a text artifact is chunked into passages and
 indexed in SQLite FTS5 inside `.uruk/state.sqlite`; prompts ground in ranked
-passages, and `uruk passages` queries the index offline — this needs no
-network at all. With `--allow-network --search`, discovery federates
+passages, and `GET /api/runs/{id}/passages` queries the index offline —
+this needs no network at all. With the network and search permissions
+granted (not yet possible from the web surface), discovery federates
 OpenAlex, Crossref, and arXiv (freely accessible public APIs — Uruk runs
 none of their code), deduplicates by DOI/arXiv/PMID/title fingerprint, fuses
 rankings with Reciprocal Rank Fusion, and acquires open-access full text
@@ -229,6 +233,10 @@ read.
 
 ## Not implemented
 
+- Web surfaces for granting file inputs, network retrieval, literature
+  search, or computational execution. All of them wait on the same
+  prerequisite: a UI that can show the exact payload being approved and
+  attribute that approval (see "What a web run can do").
 - Unpaywall open-access resolution; resolution currently uses only the OA
   locations the discovery connectors themselves designate.
 - PubMed/PMC (NCBI E-utilities) connector and JATS full-text extraction;
