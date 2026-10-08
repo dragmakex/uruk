@@ -233,7 +233,7 @@ mod creating {
     #[tokio::test]
     async fn a_disallowed_file_type_is_rejected_with_the_allowed_list() {
         let (app, _store, _dir) = empty_app().await;
-        for name in ["payload.exe", "archive.zip", "noextension"] {
+        for name in ["payload.exe", "archive.zip", "noextension", ".txt"] {
             let response = app
                 .clone()
                 .oneshot(post_bytes(
