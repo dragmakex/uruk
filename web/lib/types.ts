@@ -6,6 +6,7 @@
 
 export type RunState =
   | "running"
+  | "paused"
   | "waiting-for-human"
   | "blocked"
   | "completed"
@@ -15,6 +16,7 @@ export type RunState =
 
 export const RUN_STATES: readonly RunState[] = [
   "running",
+  "paused",
   "waiting-for-human",
   "blocked",
   "completed",
@@ -37,6 +39,8 @@ export interface RunMeta {
   state: RunState;
   stop_condition: string | null;
   iterations: number;
+  /** Accumulated paused time, excluded from the wall-clock budget. */
+  paused_ms: number;
   created_at: string;
   updated_at: string;
 }

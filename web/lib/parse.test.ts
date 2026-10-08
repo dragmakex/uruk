@@ -18,6 +18,7 @@ describe("parseRunSnapshot", () => {
     const snap = parseRunSnapshot(snapshotFixture());
     expect(snap.run.id).toBe("run_0412aa");
     expect(snap.run.state).toBe("running");
+    expect(snap.run.paused_ms).toBe(0);
     expect(snap.goal.budget.max_iterations).toBe(4);
     expect(snap.agents).toHaveLength(2);
     expect(snap.agents[0]?.assignments?.[0]?.role).toBe("generation");
@@ -25,6 +26,15 @@ describe("parseRunSnapshot", () => {
     expect(snap.stats.leader?.rating).toBeCloseTo(1412.2);
     expect(snap.usage.cost_usd).toBeNull();
     expect(snap.items[0]?.review_count).toBe(3);
+  });
+
+  it("accepts the paused lifecycle state", () => {
+    const paused = snapshotFixture() as { run: Record<string, unknown> };
+    paused.run.state = "paused";
+    paused.run.paused_ms = 12_000;
+    const snap = parseRunSnapshot(paused);
+    expect(snap.run.state).toBe("paused");
+    expect(snap.run.paused_ms).toBe(12_000);
   });
 
   it("rejects a payload missing the run object", () => {

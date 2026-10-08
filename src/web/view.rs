@@ -32,6 +32,8 @@ pub struct RunMeta {
     pub state: String,
     pub stop_condition: Option<String>,
     pub iterations: u32,
+    /// Accumulated paused time, excluded from the wall-clock budget.
+    pub paused_ms: u64,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -323,6 +325,7 @@ pub async fn run_snapshot(store: &Store, run_id: &RunId) -> Result<RunSnapshot> 
             state: run.state.as_str().to_string(),
             stop_condition: run.stop_condition.as_ref().map(|c| c.as_str().to_string()),
             iterations: run.iterations,
+            paused_ms: run.paused_ms,
             created_at: rfc3339(run.created_at),
             updated_at: rfc3339(run.updated_at),
         },

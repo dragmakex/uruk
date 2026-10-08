@@ -173,10 +173,38 @@ export async function deleteUpload(uploadId: string): Promise<void> {
   });
 }
 
+/**
+ * Pause a run. Despite the route name this is a durable, resumable pause,
+ * never the CLI's terminal cancel: queued work waits, and paused time does
+ * not count against the wall-clock budget.
+ */
 export async function stopRun(runId: string): Promise<void> {
   await request(`/api/runs/${encodeURIComponent(runId)}/stop`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: "{}",
   });
+}
+
+/** Resume a paused run; a no-op on a run that is already running. */
+export async function resumeRun(runId: string): Promise<void> {
+  await request(`/api/runs/${encodeURIComponent(runId)}/resume`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  });
+}
+
+/**
+ * Start a fresh run from this run's original start configuration (new
+ * identity, no copied results; uploads are re-ingested). Returns the new
+ * run's id. Refused while the original is still actively working.
+ */
+export async function restartRun(runId: string): Promise<string> {
+  const body = await request(`/api/runs/${encodeURIComponent(runId)}/restart`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  });
+  return parseStartedRun(body);
 }
