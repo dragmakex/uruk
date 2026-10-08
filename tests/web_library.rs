@@ -442,8 +442,10 @@ mod library_filters {
     async fn filtered_results_never_include_other_owners_sources() {
         let (app, fixture) = filterable_fixture().await;
         // Both seeded sources match broad filters for their owner; a
-        // different browser gets nothing, filtered or not.
-        drop(fixture);
+        // different browser gets nothing, filtered or not. Keep the fixture
+        // alive while issuing requests: it owns the temporary project
+        // directory backing the router's still-open SQLite pool.
+        let _fixture = fixture;
         for uri in [
             "/api/library",
             "/api/library?access=full_text",
