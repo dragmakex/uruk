@@ -24,7 +24,7 @@
 use super::AppState;
 use super::error::ApiError;
 use crate::Error;
-use crate::records::RunId;
+use crate::records::{RunId, Source, SourceId};
 use crate::store::OwnerDigest;
 use axum::RequestPartsExt;
 use axum::extract::{FromRequestParts, Path, Request, State};
@@ -196,6 +196,51 @@ impl FromRequestParts<AppState> for OwnedRun {
         let run_id = RunId::from_raw(raw);
         state.store().get_run_owned(&run_id, &owner).await?;
         Ok(Self(run_id))
+    }
+}
+
+/// A `{run_id}/{source_id}` path pair, **already authorized**: the run
+/// belongs to the requesting browser and the source was recorded by that
+/// run (both constraints live in owner-scoped SQL, never in a post-fetch
+/// check). Source-scoped handlers take this instead of raw path params,
+/// so a new handler cannot quietly skip either check.
+///
+/// # Errors
+///
+/// Rejects with the same non-disclosing `not_found` for an unknown run, a
+/// foreign run, an ownerless (CLI) run, an unknown source, and a source
+/// recorded by a different run.
+pub struct OwnedSource {
+    pub run_id: RunId,
+    pub source: Source,
+}
+
+impl FromRequestParts<AppState> for OwnedSource {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> std::result::Result<Self, Self::Rejection> {
+        let Owner(owner) = parts.extract_with_state::<Owner, _>(state).await?;
+        let Path((raw_run, raw_source)) = parts
+            .extract::<Path<(String, String)>>()
+            .await
+            .map_err(|rejection| ApiError(Error::validation(rejection.body_text())))?;
+        if raw_run.chars().count() > MAX_RUN_ID_CHARS {
+            // Bounded echo: an absurd path segment is not reflected back.
+            return Err(ApiError(Error::not_found("no such run")));
+        }
+        if raw_source.chars().count() > MAX_RUN_ID_CHARS {
+            return Err(ApiError(Error::not_found("no such source")));
+        }
+        let run_id = RunId::from_raw(raw_run);
+        state.store().get_run_owned(&run_id, &owner).await?;
+        let source = state
+            .store()
+            .get_source_in_run(&run_id, &SourceId::from_raw(raw_source))
+            .await?;
+        Ok(Self { run_id, source })
     }
 }
 

@@ -17,11 +17,28 @@
 //!   not exist — never adopted by or exposed to a web visitor.
 
 use super::{Store, now, queries, to_rfc3339};
-use crate::records::{Goal, Run, RunId, Source};
+use crate::records::{AccessLevel, Goal, Run, RunId, Source};
 use crate::store::RunOverview;
 use crate::{Error, Result};
 use sha2::{Digest, Sha256};
 use sqlx::SqliteConnection;
+
+/// Metadata filters for the owner-scoped source library.
+///
+/// Filters combine conjunctively; `None` means no constraint. Every
+/// constraint is applied inside the owner-scoped SQL query — never by
+/// filtering a broader result afterwards.
+#[derive(Debug, Clone, Default)]
+pub struct SourceFilter {
+    /// Keep only sources with exactly this access level.
+    pub access: Option<AccessLevel>,
+    /// Keep only sources whose origin kind matches; one of
+    /// [`crate::records::Origin::KINDS`], validated by the caller.
+    pub origin_kind: Option<String>,
+    /// Keep only sources whose title, authors, or identifier contains this
+    /// text (literal substring, ASCII case-insensitive).
+    pub text: Option<String>,
+}
 
 /// One-way identifier of an anonymous browser: the lowercase-hex SHA-256
 /// digest of the opaque cookie token. This is the only representation that
@@ -105,17 +122,52 @@ impl Store {
     }
 
     /// The owner-scoped source library: every source recorded by one of
-    /// the owner's runs, newest first, ties broken by id.
-    pub async fn list_sources_owned(&self, owner: &OwnerDigest) -> Result<Vec<Source>> {
-        let rows = sqlx::query_scalar(
+    /// the owner's runs that passes `filter`, newest first, ties broken by
+    /// id. The owner join and every filter run inside the one SQL query.
+    ///
+    /// The text filter uses `instr` on the stored metadata, so `%` and `_`
+    /// are literal characters, not patterns; case folding is SQLite's
+    /// `lower`, which is ASCII-only.
+    pub async fn list_sources_owned(
+        &self,
+        owner: &OwnerDigest,
+        filter: &SourceFilter,
+    ) -> Result<Vec<Source>> {
+        let mut sql = String::from(
             "SELECT s.body FROM sources s
              JOIN run_owners o ON o.run_id = s.run_id
-             WHERE o.owner_digest = ?
-             ORDER BY s.created_at DESC, s.id",
-        )
-        .bind(owner.as_str())
-        .fetch_all(self.pool())
-        .await?;
+             WHERE o.owner_digest = ?",
+        );
+        if filter.access.is_some() {
+            sql.push_str(" AND s.access = ?");
+        }
+        if filter.origin_kind.is_some() {
+            sql.push_str(" AND json_extract(s.body, '$.origin.kind') = ?");
+        }
+        if filter.text.is_some() {
+            sql.push_str(
+                " AND (instr(lower(coalesce(json_extract(s.body, '$.title'), '')), lower(?)) > 0
+                   OR instr(lower(coalesce(json_extract(s.body, '$.authors'), '')), lower(?)) > 0
+                   OR instr(lower(coalesce(json_extract(s.body, '$.identifier'), '')), lower(?)) > 0)",
+            );
+        }
+        sql.push_str(" ORDER BY s.created_at DESC, s.id");
+
+        let mut query = sqlx::query_scalar(&sql).bind(owner.as_str());
+        if let Some(access) = filter.access {
+            query = query.bind(access.as_str());
+        }
+        if let Some(kind) = &filter.origin_kind {
+            query = query.bind(kind.as_str());
+        }
+        if let Some(text) = &filter.text {
+            query = query
+                .bind(text.as_str())
+                .bind(text.as_str())
+                .bind(text.as_str());
+        }
+
+        let rows = query.fetch_all(self.pool()).await?;
         queries::bodies(rows).await
     }
 }
