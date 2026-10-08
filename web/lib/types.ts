@@ -185,6 +185,79 @@ export interface SourceView {
   text_artifact: string | null;
 }
 
+/** One run's source with how many passages its text contributes. */
+export interface SourceDetail {
+  run_id: string;
+  source: SourceView;
+  passage_count: number;
+}
+
+/** One stored passage in artifact order (browsing a source's text). */
+export interface PassageView {
+  seq: number;
+  /** Byte offsets into the canonical UTF-8 artifact text. */
+  byte_start: number;
+  byte_end: number;
+  text: string;
+}
+
+/** One browse page of a source's passages. */
+export interface PassagePage {
+  total: number;
+  offset: number;
+  limit: number;
+  passages: PassageView[];
+}
+
+/** One BM25-ranked hit of a within-source passage search. */
+export interface SourcePassageHit {
+  source_id: string;
+  seq: number;
+  byte_start: number;
+  byte_end: number;
+  text: string;
+  /** FTS5 snippet, plain text with `…` ellipsis. */
+  snippet: string;
+  /** Higher is better. */
+  score: number;
+}
+
+/** A ranked hit of the owner-wide search, naming its run and source. */
+export interface LibraryPassageHit extends SourcePassageHit {
+  run_id: string;
+  source_title: string | null;
+}
+
+/** Metadata filters for the library listing; absent means no filter. */
+export interface LibraryFilter {
+  access?: string;
+  origin?: string;
+  q?: string;
+}
+
+export type CitationOriginView =
+  | { kind: "deliverable_claim"; basis: string }
+  | { kind: "review_observation"; review_id: string };
+
+/**
+ * The three honest resolution shapes (`src/report/citations.rs`): exact
+ * verified bytes, a coarse locator on a recorded source, or an explicit
+ * failure with its reason. There is no fourth, approximate shape.
+ */
+export type CitationResolutionView =
+  | { kind: "span"; start: number; end: number; text: string; truncated: boolean }
+  | { kind: "source_locator" }
+  | { kind: "unresolved"; reason: string };
+
+export interface CitationView {
+  origin: CitationOriginView;
+  claim: string;
+  source_id: string;
+  source_title: string | null;
+  locator: string | null;
+  resolution: CitationResolutionView;
+}
+
 export interface ReportView {
   run_id: string;
   markdown: string;

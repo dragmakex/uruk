@@ -15,16 +15,27 @@
 
 import {
   parseApiError,
+  parseCitations,
+  parseLibraryPassageHits,
+  parsePassagePage,
   parseReport,
   parseRunOverviews,
   parseRunSnapshot,
+  parseSourceDetail,
+  parseSourcePassageHits,
   parseSources,
   parseStartedRun,
 } from "./parse";
 import type {
+  CitationView,
+  LibraryFilter,
+  LibraryPassageHit,
+  PassagePage,
   ReportView,
   RunOverview,
   RunSnapshot,
+  SourceDetail,
+  SourcePassageHit,
   SourceView,
   StartRunInput,
 } from "./types";
@@ -119,8 +130,92 @@ export async function fetchRunSources(
   );
 }
 
-export async function fetchLibrary(cookie?: string): Promise<SourceView[]> {
-  return parseSources(await request("/api/library", undefined, cookie));
+/** Build `?k=v…` from the entries that are set and non-empty. */
+function queryString(params: Record<string, string | undefined>): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== "") search.set(key, value);
+  }
+  const qs = search.toString();
+  return qs === "" ? "" : `?${qs}`;
+}
+
+export async function fetchLibrary(
+  cookie?: string,
+  filter?: LibraryFilter,
+): Promise<SourceView[]> {
+  const qs = queryString({
+    access: filter?.access,
+    origin: filter?.origin,
+    q: filter?.q,
+  });
+  return parseSources(await request(`/api/library${qs}`, undefined, cookie));
+}
+
+export async function searchLibraryPassages(
+  q: string,
+  cookie?: string,
+): Promise<LibraryPassageHit[]> {
+  return parseLibraryPassageHits(
+    await request(`/api/library/passages${queryString({ q })}`, undefined, cookie),
+  );
+}
+
+function sourcePath(runId: string, sourceId: string): string {
+  return `/api/runs/${encodeURIComponent(runId)}/sources/${encodeURIComponent(sourceId)}`;
+}
+
+export async function fetchSourceDetail(
+  runId: string,
+  sourceId: string,
+  cookie?: string,
+): Promise<SourceDetail> {
+  return parseSourceDetail(
+    await request(sourcePath(runId, sourceId), undefined, cookie),
+  );
+}
+
+export async function browseSourcePassages(
+  runId: string,
+  sourceId: string,
+  page: { offset?: number; limit?: number },
+  cookie?: string,
+): Promise<PassagePage> {
+  const qs = queryString({
+    offset: page.offset !== undefined ? String(page.offset) : undefined,
+    limit: page.limit !== undefined ? String(page.limit) : undefined,
+  });
+  return parsePassagePage(
+    await request(`${sourcePath(runId, sourceId)}/passages${qs}`, undefined, cookie),
+  );
+}
+
+export async function searchSourcePassages(
+  runId: string,
+  sourceId: string,
+  q: string,
+  cookie?: string,
+): Promise<SourcePassageHit[]> {
+  return parseSourcePassageHits(
+    await request(
+      `${sourcePath(runId, sourceId)}/passages${queryString({ q })}`,
+      undefined,
+      cookie,
+    ),
+  );
+}
+
+export async function fetchCitations(
+  runId: string,
+  cookie?: string,
+): Promise<CitationView[]> {
+  return parseCitations(
+    await request(
+      `/api/runs/${encodeURIComponent(runId)}/citations`,
+      undefined,
+      cookie,
+    ),
+  );
 }
 
 export async function startRun(input: StartRunInput): Promise<string> {
