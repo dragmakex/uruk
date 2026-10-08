@@ -162,6 +162,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/runs/{run_id}", get(routes::run_snapshot))
         .route("/api/runs/{run_id}/stop", post(routes::stop_run))
         .route("/api/runs/{run_id}/report", get(routes::report))
+        .route("/api/runs/{run_id}/report.pdf", get(routes::report_pdf))
+        .route("/api/runs/{run_id}/report.md", get(routes::report_markdown))
         .route("/api/runs/{run_id}/sources", get(routes::sources))
         .route("/api/runs/{run_id}/passages", get(routes::passages))
         .route("/api/library", get(routes::library))

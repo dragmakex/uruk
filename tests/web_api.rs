@@ -684,3 +684,153 @@ async fn interrupted_runs_resume_when_the_server_starts() {
         "finished runs are not re-dispatched"
     );
 }
+
+// --- report downloads: REPORT.pdf and REPORT.md as files ---
+
+async fn body_bytes(response: axum::response::Response) -> Vec<u8> {
+    response
+        .into_body()
+        .collect()
+        .await
+        .expect("collect body")
+        .to_bytes()
+        .to_vec()
+}
+
+fn header<'r>(response: &'r axum::response::Response, name: &str) -> &'r str {
+    response
+        .headers()
+        .get(name)
+        .unwrap_or_else(|| panic!("{name} header present"))
+        .to_str()
+        .expect("header is ASCII")
+}
+
+#[tokio::test]
+async fn report_pdf_download_carries_pdf_headers_and_magic() {
+    let (app, fixture) = seeded_app(Mode::Task).await;
+    uruk::report::export_run(&fixture.store, &fixture.run_id)
+        .await
+        .unwrap();
+
+    let response = app
+        .oneshot(get(&format!("/api/runs/{}/report.pdf", fixture.run_id)))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(header(&response, "content-type"), "application/pdf");
+    assert_eq!(
+        header(&response, "content-disposition"),
+        format!(
+            "attachment; filename=\"uruk-report-{}.pdf\"",
+            fixture.run_id
+        )
+    );
+    let bytes = body_bytes(response).await;
+    assert!(bytes.starts_with(b"%PDF-"), "PDF magic number");
+    assert!(
+        bytes.len() > 1_000,
+        "nontrivial size ({} bytes)",
+        bytes.len()
+    );
+}
+
+#[tokio::test]
+async fn report_pdf_of_an_unexported_run_is_not_found() {
+    let (app, fixture) = seeded_app(Mode::Task).await;
+    let response = app
+        .oneshot(get(&format!("/api/runs/{}/report.pdf", fixture.run_id)))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let body = body_json(response).await;
+    assert_eq!(body["kind"], "not_found");
+}
+
+#[tokio::test]
+async fn report_pdf_is_derived_on_demand_for_markdown_only_exports() {
+    // Runs exported before the PDF twin existed have only REPORT.md on
+    // disk; the route derives the same deterministic bytes on demand.
+    let (app, fixture) = seeded_app(Mode::Task).await;
+    uruk::report::export_run(&fixture.store, &fixture.run_id)
+        .await
+        .unwrap();
+    let dir = fixture.store.run_dir(&fixture.run_id);
+    let exported = tokio::fs::read(dir.join("REPORT.pdf")).await.unwrap();
+    tokio::fs::remove_file(dir.join("REPORT.pdf"))
+        .await
+        .unwrap();
+
+    let response = app
+        .oneshot(get(&format!("/api/runs/{}/report.pdf", fixture.run_id)))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        body_bytes(response).await,
+        exported,
+        "on-demand rendering reproduces the exported bytes exactly"
+    );
+}
+
+#[tokio::test]
+async fn report_markdown_download_serves_the_exact_canonical_bytes() {
+    let (app, fixture) = seeded_app(Mode::Task).await;
+    uruk::report::export_run(&fixture.store, &fixture.run_id)
+        .await
+        .unwrap();
+    let canonical = tokio::fs::read(fixture.store.run_dir(&fixture.run_id).join("REPORT.md"))
+        .await
+        .unwrap();
+
+    let response = app
+        .oneshot(get(&format!("/api/runs/{}/report.md", fixture.run_id)))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        header(&response, "content-type"),
+        "text/markdown; charset=utf-8"
+    );
+    assert_eq!(
+        header(&response, "content-disposition"),
+        format!("attachment; filename=\"uruk-report-{}.md\"", fixture.run_id)
+    );
+    assert_eq!(
+        body_bytes(response).await,
+        canonical,
+        "the download is the canonical file, byte for byte"
+    );
+}
+
+#[tokio::test]
+async fn report_markdown_download_of_an_unexported_run_is_not_found() {
+    let (app, fixture) = seeded_app(Mode::Task).await;
+    let response = app
+        .oneshot(get(&format!("/api/runs/{}/report.md", fixture.run_id)))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let body = body_json(response).await;
+    assert_eq!(body["kind"], "not_found");
+}
+
+#[tokio::test]
+async fn report_download_ids_cannot_traverse_outside_the_runs_directory() {
+    // A traversal-shaped id must be answered exactly like a missing run,
+    // before any filesystem path is formed from it.
+    let (app, _dir) = empty_app().await;
+    for uri in [
+        "/api/runs/..%2F..%2F..%2Fetc%2Fpasswd/report.pdf",
+        "/api/runs/..%2F..%2F..%2Fetc%2Fpasswd/report.md",
+    ] {
+        let response = app.clone().oneshot(get(uri)).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "{uri} must be indistinguishable from a missing run"
+        );
+        let body = body_json(response).await;
+        assert_eq!(body["kind"], "not_found");
+    }
+}

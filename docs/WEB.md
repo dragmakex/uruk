@@ -119,6 +119,8 @@ cannot quietly skip the check.
 | `POST /api/runs/{id}/stop` | durable stop request |
 | `GET /api/runs/{id}/events` | SSE stream of snapshots |
 | `GET /api/runs/{id}/report` | exported `REPORT.md` + `manifest.json` |
+| `GET /api/runs/{id}/report.pdf` | `REPORT.pdf` download (derived on demand for pre-PDF exports) |
+| `GET /api/runs/{id}/report.md` | `REPORT.md` download, canonical bytes verbatim |
 | `GET /api/runs/{id}/sources` | the run's recorded sources |
 | `GET /api/runs/{id}/passages?q=…` | local FTS5 passage search |
 | `GET /api/library` | all sources across this browser's runs |
