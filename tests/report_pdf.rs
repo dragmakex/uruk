@@ -118,6 +118,36 @@ async fn export_writes_a_pdf_twin_of_the_markdown() {
     assert_eq!(render_report_pdf(&markdown), pdf);
 }
 
+#[tokio::test]
+async fn reexporting_unchanged_state_is_byte_for_byte_reproducible() {
+    let f = common::fixture(Mode::Task, MockProvider::new()).await;
+    let first = report::export_run(&f.store, &f.run_id).await.unwrap();
+    let mut baseline = Vec::new();
+    for name in &first.files {
+        baseline.push((
+            name.clone(),
+            tokio::fs::read(first.dir.join(name)).await.unwrap(),
+        ));
+    }
+    assert!(
+        first.files.contains(&"REPORT.pdf".to_string()),
+        "the sweep covers the canonical report files: {:?}",
+        first.files
+    );
+
+    // A wall-clock export timestamp used to make the files differ.
+    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+    let second = report::export_run(&f.store, &f.run_id).await.unwrap();
+    assert_eq!(second.files, first.files, "the same files are exported");
+    for (name, bytes) in &baseline {
+        assert_eq!(
+            &tokio::fs::read(second.dir.join(name)).await.unwrap(),
+            bytes,
+            "{name} must be reproduced byte for byte"
+        );
+    }
+}
+
 #[test]
 fn pdf_rendering_is_byte_deterministic() {
     let markdown = "# Determinism\n\nSame input, same bytes.\n\n- every time\n";
