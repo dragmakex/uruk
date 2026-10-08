@@ -386,6 +386,17 @@ impl Pager {
         self.y
     }
 
+    /// Start a fresh page when a short block plus the first line following it
+    /// would otherwise be orphaned. Oversized blocks paginate normally rather
+    /// than creating a leading empty page.
+    fn keep_together(&mut self, height: f32) {
+        let page_capacity = PAGE_H - 2.0 * MARGIN;
+        if !self.current.is_empty() && height <= page_capacity && self.y - height < MARGIN {
+            self.pages.push(std::mem::take(&mut self.current));
+            self.y = PAGE_H - MARGIN;
+        }
+    }
+
     fn finish(mut self) -> Vec<Vec<Item>> {
         self.pages.push(self.current);
         self.pages
@@ -439,10 +450,25 @@ fn style(base: Font, size: f32, leading: f32, before: f32, after: f32, indent: f
 
 fn layout(blocks: &[Block]) -> Vec<Vec<Item>> {
     let mut pager = Pager::new();
-    for block in blocks {
+    for (index, block) in blocks.iter().enumerate() {
         let st = block_style(block);
         match block {
-            Block::Heading { spans, .. } | Block::Paragraph { spans } | Block::Quote { spans } => {
+            Block::Heading { spans, .. } => {
+                // Keep a heading (including wrapped heading lines) with at
+                // least one line of the block after it whenever possible.
+                let avail = (TEXT_W - st.indent).max(st.size);
+                let heading_lines =
+                    wrap_words(&split_words(spans, st.base), avail, st.base, st.size).len();
+                let next_line = blocks
+                    .get(index + 1)
+                    .map(block_style)
+                    .map_or(0.0, |next| next.before + next.leading);
+                pager.keep_together(
+                    st.before + heading_lines as f32 * st.leading + st.after + next_line,
+                );
+                flow_spans(&mut pager, spans, &st, None);
+            }
+            Block::Paragraph { spans } | Block::Quote { spans } => {
                 flow_spans(&mut pager, spans, &st, None);
             }
             Block::Bullet { spans, .. } => {
@@ -865,6 +891,49 @@ mod tests {
             .map(|f| f.text.chars().count())
             .sum();
         assert_eq!(glyphs, 500, "no character is lost by the split");
+    }
+
+    #[test]
+    fn a_heading_is_never_stranded_as_the_last_line_of_a_page() {
+        // Sweep fill depths so the heading crosses the page boundary at
+        // several of them; the keep-together rule must hold at every depth.
+        for filler in 0..80 {
+            let mut md = String::from("# Top\n\n");
+            for i in 0..filler {
+                md.push_str(&format!("Filler paragraph number {i}.\n\n"));
+            }
+            md.push_str("## Keeper\n\nfollower line\n");
+            let pages = layout(&parse(&md));
+            let orphaned = pages.iter().any(|page| {
+                page.last().is_some_and(|item| {
+                    matches!(item, Item::Text { frags, .. }
+                        if frags.iter().any(|f| f.text.contains("Keeper")))
+                })
+            });
+            assert!(
+                !orphaned,
+                "heading orphaned with {filler} filler paragraphs"
+            );
+        }
+    }
+
+    #[test]
+    fn a_heading_at_the_top_of_the_document_does_not_force_a_blank_page() {
+        let pages = layout(&parse("## Keeper\n\nfollower\n"));
+        assert_eq!(pages.len(), 1);
+    }
+
+    #[test]
+    fn an_oversized_heading_flows_across_pages_instead_of_breaking_early() {
+        // A heading taller than a page cannot be kept together with its
+        // follower; it must start in place and paginate normally.
+        let md = format!("intro paragraph\n\n## {}\n", "word ".repeat(1500));
+        let pages = layout(&parse(&md));
+        assert!(pages.len() >= 2, "a page-high heading spans pages");
+        assert!(
+            pages[0].len() > 1,
+            "the heading starts beside the intro rather than forcing a break"
+        );
     }
 
     #[test]
