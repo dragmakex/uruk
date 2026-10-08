@@ -1,4 +1,4 @@
-//! Durable run control requests shared by the CLI and the web API.
+//! Durable run control requests, issued by the web API's stop route.
 
 use crate::records::*;
 use crate::store::Store;

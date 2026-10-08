@@ -1,9 +1,9 @@
 //! Starting a run over the API: validation, record creation, and dispatch.
 //!
-//! The creation path mirrors `uruk run` for a web-scoped subset: no file
-//! inputs, no network retrieval, no tool execution, no literature search.
-//! Those grants stay CLI-only until the API has authentication to attribute
-//! them to.
+//! Web runs grant nothing with side effects: no file inputs, no network
+//! retrieval, no tool execution, no literature search. Those engine
+//! capabilities stay unavailable in the web-only product until the API can
+//! attribute an exact-payload approval to someone (docs/WEB.md).
 
 use super::AppState;
 use crate::agents::{safety, supervisor};
@@ -153,16 +153,15 @@ pub fn validate(req: StartRunRequest) -> Result<ValidatedStart> {
 }
 
 /// Persist the run, gate it on safety, plan it, and dispatch the scheduler
-/// in the background. Mirrors the CLI `run` path (SPEC §11, §12), with one
-/// addition: the run is bound to the requesting browser's [`OwnerDigest`]
-/// in the same transaction that creates it, so a crash cannot leave an
-/// unowned web run behind.
+/// in the background (SPEC §11, §12). The run is bound to the requesting
+/// browser's [`OwnerDigest`] in the same transaction that creates it, so a
+/// crash cannot leave an unowned web run behind.
 pub async fn start_run(state: &AppState, v: ValidatedStart, owner: &OwnerDigest) -> Result<RunId> {
     let store = state.store();
     let run_id = RunId::new();
     let goal_id = GoalId::new();
-    // The same derivation the CLI uses, so web and CLI runs share one
-    // project row.
+    // Derived from the canonical project directory, so every run in this
+    // project shares one project row.
     let (project_id, project_name) = store.project_identity();
 
     // Web runs grant nothing beyond provider disclosure: no paths, no
@@ -288,13 +287,12 @@ fn dispatch(state: AppState, run_id: RunId) -> bool {
 
 /// Dispatch schedulers for runs this process should be driving but is not.
 ///
-/// Two cases, both consequences of `uruk serve` owning the project
-/// scheduler lock (which locks `uruk resume` out):
+/// Two cases, both consequences of `uruk serve` being the project's only
+/// scheduler owner:
 ///
 /// - a run left `running` by an interrupted process would otherwise sit
 ///   that way forever;
-/// - a run parked `waiting-for-human` whose approvals have all been
-///   decided (`uruk approve` / `uruk deny` work from another terminal)
+/// - a run parked `waiting-for-human` with no approvals left pending
 ///   needs a scheduler to pick the released work back up.
 ///
 /// Runs already claimed by an in-process scheduler are skipped, as are
@@ -347,7 +345,7 @@ mod tests {
     }
 
     #[test]
-    fn defaults_mirror_the_cli() {
+    fn omitted_fields_get_the_documented_defaults() {
         let v = validate(request("why do the measurements disagree")).expect("valid");
         assert_eq!(v.mode, Mode::Task);
         assert_eq!(v.max_model_calls, 200);

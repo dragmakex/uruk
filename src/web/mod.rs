@@ -1,17 +1,18 @@
-//! Web API adapter (feature `web`): a thin Axum layer over the same store
-//! and runtime services the CLI uses.
+//! Web API adapter: a thin Axum layer over the engine's store and runtime
+//! services, and the product's only frontend surface.
 //!
 //! Commands are JSON over POST; live state is Server-Sent Events carrying
 //! complete run snapshots derived from SQLite (see [`view`]). The adapter
 //! holds no state of its own: every response is rebuilt from durable records,
-//! so a restarted server shows exactly what a restarted CLI would.
+//! so a restarted server shows exactly the state a fresh one derives.
 //!
 //! # Security
 //!
 //! Identity is **one anonymous persistent browser cookie** — no accounts,
 //! no login ([`owner`]). Every data route requires it and every run-scoped
 //! route enforces owner isolation: a browser only ever sees and controls
-//! the runs it created, runs without an owner record (CLI runs) are not
+//! the runs it created, runs without an owner record (created by tests or
+//! by builds that predate the web-only product) are not
 //! reachable over the web at all, and clearing the cookie permanently
 //! loses access. The cookie is a bearer token, so transport matters: the
 //! server binds `127.0.0.1` by default, and any non-loopback exposure
@@ -58,7 +59,7 @@ pub struct WebConfig {
     /// Request body cap; commands are small JSON documents.
     pub max_body_bytes: usize,
     /// How often `serve` sweeps for runs it should be driving but is not
-    /// (interrupted by a restart, or re-released by `uruk approve`).
+    /// (interrupted by a restart, or with no approvals left pending).
     pub reconcile_interval: Duration,
     /// Whether the browser-identity cookie carries the `Secure` attribute.
     /// `false` fits the documented local HTTP setup; any deployment behind
@@ -210,13 +211,11 @@ pub struct ServeOptions {
 ///
 /// Takes the project scheduler lock for its whole lifetime: runs started
 /// over the API are dispatched inside this process, and SPEC §9.2 allows one
-/// scheduler owner per project. `uruk status`, `uruk stop`, and
-/// `uruk approve` still work from another terminal; `uruk run` and
-/// `uruk resume` fail fast with a lock message while the server owns the
-/// project. Because `uruk resume` is locked out, this process also sweeps
-/// for runs it should be driving (interrupted `running` runs on startup,
-/// and runs released back to work by an approval) on
-/// [`WebConfig::reconcile_interval`].
+/// scheduler owner per project, so a second `uruk serve` on the same
+/// project fails fast with a lock message. Because this process is the
+/// only scheduler owner, it also sweeps for runs it should be driving
+/// (interrupted `running` runs on startup, and runs whose approvals are
+/// no longer pending) on [`WebConfig::reconcile_interval`].
 pub async fn serve(opts: ServeOptions) -> Result<()> {
     let _lock = ProjectLock::acquire(&opts.project)?;
     let store = Store::open(opts.project.join(STATE_DB_RELATIVE)).await?;
