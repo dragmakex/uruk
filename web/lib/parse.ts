@@ -22,12 +22,14 @@ import type {
   ReportView,
   RunMeta,
   RunOverview,
+  RunPreview,
   RunSnapshot,
   RunState,
   SourceView,
   Stats,
   TaskCounts,
   TaskFacts,
+  UploadView,
 } from "./types";
 import { RUN_STATES } from "./types";
 
@@ -339,6 +341,68 @@ export function parseReport(value: unknown): ReportView {
     run_id: str(r.run_id, "report.run_id"),
     markdown: str(r.markdown, "report.markdown"),
     manifest,
+  };
+}
+
+function parseUploadView(value: unknown, path: string): UploadView {
+  const r = record(value, path);
+  return {
+    id: str(r.id, `${path}.id`),
+    file_name: str(r.file_name, `${path}.file_name`),
+    size_bytes: num(r.size_bytes, `${path}.size_bytes`),
+    content_hash: str(r.content_hash, `${path}.content_hash`),
+    created_at: str(r.created_at, `${path}.created_at`),
+  };
+}
+
+/** Validate the `POST /api/uploads` success envelope. */
+export function parseUpload(value: unknown): UploadView {
+  const r = record(value, "upload response");
+  return parseUploadView(r.upload, "upload");
+}
+
+/** Validate the `GET /api/uploads` payload. */
+export function parseUploads(value: unknown): UploadView[] {
+  const r = record(value, "uploads response");
+  return array(r.uploads, "uploads").map((v, i) =>
+    parseUploadView(v, `uploads[${i}]`),
+  );
+}
+
+/** Validate the `dry_run: true` response of `POST /api/runs`. */
+export function parseRunPreview(value: unknown): RunPreview {
+  const r = record(value, "preview response");
+  const plan = record(r.plan, "preview.plan");
+  const permissions = record(r.permissions, "preview.permissions");
+  const budget = record(r.budget, "preview.budget");
+  return {
+    plan: {
+      roles: strArray(plan.roles, "preview.plan.roles"),
+      methods: strArray(plan.methods, "preview.plan.methods"),
+      rationale: str(plan.rationale, "preview.plan.rationale"),
+    },
+    inputs: strArray(r.inputs, "preview.inputs"),
+    permissions: {
+      network: bool(permissions.network, "preview.permissions.network"),
+      execute: bool(permissions.execute, "preview.permissions.execute"),
+      allowed_tools: strArray(
+        permissions.allowed_tools,
+        "preview.permissions.allowed_tools",
+      ),
+    },
+    budget: {
+      max_model_calls: num(budget.max_model_calls, "preview.budget.max_model_calls"),
+      max_seconds: num(budget.max_seconds, "preview.budget.max_seconds"),
+      max_iterations: num(budget.max_iterations, "preview.budget.max_iterations"),
+      max_debate_turns: num(
+        budget.max_debate_turns,
+        "preview.budget.max_debate_turns",
+      ),
+      max_acquisitions: num(
+        budget.max_acquisitions,
+        "preview.budget.max_acquisitions",
+      ),
+    },
   };
 }
 

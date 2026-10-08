@@ -24,6 +24,7 @@ mod owner;
 mod routes;
 mod sse;
 mod start;
+mod uploads;
 pub mod view;
 
 pub use error::{ApiError, ApiResult};
@@ -57,6 +58,10 @@ pub struct WebConfig {
     pub request_timeout: Duration,
     /// Request body cap; commands are small JSON documents.
     pub max_body_bytes: usize,
+    /// Body cap for `POST /api/uploads` only: one file per request.
+    pub max_upload_bytes: usize,
+    /// How many uploads one browser identity may hold at a time.
+    pub max_uploads_per_owner: usize,
     /// How often `serve` sweeps for runs it should be driving but is not
     /// (interrupted by a restart, or re-released by `uruk approve`).
     pub reconcile_interval: Duration,
@@ -73,6 +78,8 @@ impl Default for WebConfig {
             sse_poll: Duration::from_millis(750),
             request_timeout: Duration::from_secs(30),
             max_body_bytes: 64 * 1024,
+            max_upload_bytes: 16 * 1024 * 1024,
+            max_uploads_per_owner: 32,
             reconcile_interval: Duration::from_secs(5),
             cookie_secure: false,
         }
@@ -171,16 +178,30 @@ pub fn router(state: AppState) -> Router {
         ))
         .layer(CompressionLayer::new());
 
+    // Uploads carry whole files, so this route group alone gets a larger
+    // body cap (the route-level limit overrides the router-wide one).
+    let upload_routes = Router::new()
+        .route("/api/uploads", get(uploads::list).post(uploads::create))
+        .route(
+            "/api/uploads/{upload_id}",
+            axum::routing::delete(uploads::remove),
+        )
+        .layer(TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            timeout,
+        ))
+        .layer(DefaultBodyLimit::max(state.config().max_upload_bytes));
+
     let events = Router::new().route("/api/runs/{run_id}/events", get(sse::run_events));
 
-    let identified =
-        Router::new()
-            .merge(commands)
-            .merge(events)
-            .layer(axum::middleware::from_fn_with_state(
-                state.clone(),
-                owner::attach_identity,
-            ));
+    let identified = Router::new()
+        .merge(commands)
+        .merge(upload_routes)
+        .merge(events)
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            owner::attach_identity,
+        ));
 
     Router::new()
         .merge(public)

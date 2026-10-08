@@ -10,4 +10,4 @@ pub mod ingest;
 
 pub use exec::{Containment, ExecOutcome, ExecRequest, detect_containment, execute_analysis};
 pub use extract::{Coverage, Extracted};
-pub use ingest::{Ingested, MAX_RETRIEVAL_BYTES, ingest_input};
+pub use ingest::{Ingested, MAX_RETRIEVAL_BYTES, ingest_input, ingest_upload};
