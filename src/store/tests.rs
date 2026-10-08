@@ -36,6 +36,8 @@ pub(crate) fn test_run() -> (Run, Goal) {
         state: RunState::Running,
         stop_condition: None,
         iterations: 0,
+        paused_at: None,
+        paused_ms: 0,
         created_at: t,
         updated_at: t,
     };

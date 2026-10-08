@@ -12,6 +12,7 @@ use time::OffsetDateTime;
 #[serde(rename_all = "kebab-case")]
 pub enum RunState {
     Running,
+    Paused,
     WaitingForHuman,
     Blocked,
     Completed,
@@ -24,6 +25,7 @@ impl RunState {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Running => "running",
+            Self::Paused => "paused",
             Self::WaitingForHuman => "waiting-for-human",
             Self::Blocked => "blocked",
             Self::Completed => "completed",
@@ -36,6 +38,7 @@ impl RunState {
     pub fn parse(s: &str) -> Option<Self> {
         Some(match s {
             "running" => Self::Running,
+            "paused" => Self::Paused,
             "waiting-for-human" => Self::WaitingForHuman,
             "blocked" => Self::Blocked,
             "completed" => Self::Completed,
@@ -68,6 +71,12 @@ pub struct Run {
     pub stop_condition: Option<StopCondition>,
     /// Campaign iterations completed.
     pub iterations: u32,
+    /// UTC instant at which a durable browser pause began.
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub paused_at: Option<OffsetDateTime>,
+    /// Accumulated paused time, excluded from wall-clock budget accounting.
+    #[serde(default)]
+    pub paused_ms: u64,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]

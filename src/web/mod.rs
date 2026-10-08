@@ -168,6 +168,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/runs", get(routes::list_runs).post(routes::start_run))
         .route("/api/runs/{run_id}", get(routes::run_snapshot))
         .route("/api/runs/{run_id}/stop", post(routes::stop_run))
+        .route("/api/runs/{run_id}/resume", post(routes::resume_run))
+        .route("/api/runs/{run_id}/restart", post(routes::restart_run))
         .route("/api/runs/{run_id}/report", get(routes::report))
         .route("/api/runs/{run_id}/sources", get(routes::sources))
         .route("/api/runs/{run_id}/passages", get(routes::passages))

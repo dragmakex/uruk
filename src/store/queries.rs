@@ -62,7 +62,7 @@ impl Store {
     pub async fn get_run(&self, run_id: &RunId) -> Result<Run> {
         let row = sqlx::query(
             "SELECT id, schema_version, project_id, goal_id, plan_id, state, stop_condition,
-                    iterations, created_at, updated_at FROM runs WHERE id = ?",
+                    iterations, paused_at, paused_ms, created_at, updated_at FROM runs WHERE id = ?",
         )
         .bind(run_id.as_str())
         .fetch_optional(self.pool())
@@ -87,6 +87,12 @@ impl Store {
             state,
             stop_condition,
             iterations: row.get::<i64, _>("iterations") as u32,
+            paused_at: row
+                .get::<Option<String>, _>("paused_at")
+                .as_deref()
+                .map(from_rfc3339)
+                .transpose()?,
+            paused_ms: row.get::<i64, _>("paused_ms") as u64,
             created_at: from_rfc3339(&row.get::<String, _>("created_at"))?,
             updated_at: from_rfc3339(&row.get::<String, _>("updated_at"))?,
         })

@@ -238,6 +238,12 @@ pub enum DecisionKind {
     MetaFeedback,
     /// A stopping condition fired.
     Stop,
+    /// A browser paused active research without concluding it.
+    Pause,
+    /// A browser resumed a paused run.
+    Resume,
+    /// A browser created a fresh run from stored intent.
+    Restart,
 }
 
 impl DecisionKind {
@@ -251,6 +257,9 @@ impl DecisionKind {
             Self::SafetyBlock => "safety_block",
             Self::MetaFeedback => "meta_feedback",
             Self::Stop => "stop",
+            Self::Pause => "pause",
+            Self::Resume => "resume",
+            Self::Restart => "restart",
         }
     }
 }

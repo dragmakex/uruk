@@ -457,6 +457,8 @@ async fn seed(
         state: RunState::Running,
         stop_condition: None,
         iterations: 0,
+        paused_at: None,
+        paused_ms: 0,
         created_at: now,
         updated_at: now,
     };

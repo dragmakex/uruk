@@ -8,7 +8,7 @@
 //! Each public method wraps an `*_in_tx` function so the same validation runs
 //! whether a record is written alone (CLI, tests) or as part of a batch.
 
-use super::{Store, now, to_rfc3339};
+use super::{Store, from_rfc3339, now, to_rfc3339};
 use crate::records::*;
 use crate::{Error, Result};
 use sqlx::{Row, SqliteConnection};
@@ -234,14 +234,16 @@ impl Store {
     /// should let its run loop observe the cancelled state and wind down.
     pub async fn mark_run_running(&self, run_id: &RunId) -> Result<bool> {
         let mut guard = self.begin_write().await?;
-        let result =
-            sqlx::query("UPDATE runs SET state = ?, updated_at = ? WHERE id = ? AND state != ?")
-                .bind(RunState::Running.as_str())
-                .bind(to_rfc3339(now()))
-                .bind(run_id.as_str())
-                .bind(RunState::Cancelled.as_str())
-                .execute(guard.conn())
-                .await?;
+        let result = sqlx::query(
+            "UPDATE runs SET state = ?, updated_at = ? WHERE id = ? AND state NOT IN (?, ?)",
+        )
+        .bind(RunState::Running.as_str())
+        .bind(to_rfc3339(now()))
+        .bind(run_id.as_str())
+        .bind(RunState::Cancelled.as_str())
+        .bind(RunState::Paused.as_str())
+        .execute(guard.conn())
+        .await?;
         guard.commit().await?;
         Ok(result.rows_affected() > 0)
     }
@@ -269,6 +271,81 @@ impl Store {
         .await?;
         guard.commit().await?;
         Ok(result.rows_affected() > 0)
+    }
+
+    /// Durably pause active web research without cancelling queued work.
+    pub async fn try_pause_run(&self, run_id: &RunId) -> Result<bool> {
+        let mut guard = self.begin_write().await?;
+        let at = now();
+        let result = sqlx::query(
+            "UPDATE runs SET state = ?, stop_condition = NULL, paused_at = ?, updated_at = ?
+             WHERE id = ? AND state IN (?, ?)",
+        )
+        .bind(RunState::Paused.as_str())
+        .bind(to_rfc3339(at))
+        .bind(to_rfc3339(at))
+        .bind(run_id.as_str())
+        .bind(RunState::Running.as_str())
+        .bind(RunState::WaitingForHuman.as_str())
+        .execute(guard.conn())
+        .await?;
+        guard.commit().await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Resume a durable pause and account its budget-exempt duration.
+    pub async fn try_resume_run(&self, run_id: &RunId) -> Result<bool> {
+        let mut guard = self.begin_write().await?;
+        let conn = guard.conn();
+        let paused_at: Option<String> =
+            sqlx::query_scalar("SELECT paused_at FROM runs WHERE id = ? AND state = ?")
+                .bind(run_id.as_str())
+                .bind(RunState::Paused.as_str())
+                .fetch_optional(&mut *conn)
+                .await?
+                .flatten();
+        let Some(paused_at) = paused_at else {
+            guard.commit().await?;
+            return Ok(false);
+        };
+        let at = now();
+        let elapsed = (at - from_rfc3339(&paused_at)?).whole_milliseconds().max(0) as i64;
+        sqlx::query(
+            "UPDATE runs SET state = ?, paused_at = NULL, paused_ms = paused_ms + ?, updated_at = ?
+             WHERE id = ? AND state = ?",
+        )
+        .bind(RunState::Running.as_str())
+        .bind(elapsed)
+        .bind(to_rfc3339(at))
+        .bind(run_id.as_str())
+        .bind(RunState::Paused.as_str())
+        .execute(&mut *conn)
+        .await?;
+        guard.commit().await?;
+        Ok(true)
+    }
+
+    pub async fn save_web_run_config(&self, run_id: &RunId, body: &str) -> Result<()> {
+        let mut guard = self.begin_write().await?;
+        sqlx::query(
+            "INSERT INTO web_run_configs (run_id, body, created_at) VALUES (?, ?, ?)
+             ON CONFLICT(run_id) DO UPDATE SET body = excluded.body",
+        )
+        .bind(run_id.as_str())
+        .bind(body)
+        .bind(to_rfc3339(now()))
+        .execute(guard.conn())
+        .await?;
+        guard.commit().await
+    }
+
+    pub async fn web_run_config(&self, run_id: &RunId) -> Result<Option<String>> {
+        Ok(
+            sqlx::query_scalar("SELECT body FROM web_run_configs WHERE run_id = ?")
+                .bind(run_id.as_str())
+                .fetch_optional(self.pool())
+                .await?,
+        )
     }
 
     /// Reopen a finished run after a goal revision, so it can be resumed
