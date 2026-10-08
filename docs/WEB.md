@@ -164,7 +164,7 @@ does not exist.
   anything, returning the plan, inputs, permissions, and budget the
   start would use.
 
-Request bodies are capped at 64 KiB — except `POST /api/uploads`, which
+Request bodies are capped at 128 KiB — except `POST /api/uploads`, which
 carries raw file bytes under its own per-file limit (16 MiB default)
 plus a per-owner count bound (32 default) and a fixed allowlist of
 text-extractable file types. Every response carries an `x-request-id`.

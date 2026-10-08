@@ -292,7 +292,7 @@ mod creating {
 
     #[tokio::test]
     async fn uploads_larger_than_the_command_body_cap_still_fit_the_upload_cap() {
-        // Commands are capped at 64 KiB; uploads deliberately are not.
+        // Commands are capped below this size; uploads deliberately are not.
         let (app, _store, _dir) = empty_app().await;
         let response = app
             .oneshot(post_bytes(

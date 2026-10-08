@@ -54,8 +54,10 @@ use tower_http::trace::TraceLayer;
 pub struct WebConfig {
     /// How often the SSE stream re-reads SQLite for a changed snapshot.
     pub sse_poll: Duration,
-    /// Per-request deadline for everything except the SSE stream.
+    /// Per-request deadline for ordinary commands (not starts or SSE).
     pub request_timeout: Duration,
+    /// Deadline for start and preview requests, which may retrieve sources.
+    pub start_timeout: Duration,
     /// Request body cap; commands are small JSON documents.
     pub max_body_bytes: usize,
     /// Body cap for `POST /api/uploads` only: one file per request.
@@ -77,7 +79,9 @@ impl Default for WebConfig {
         Self {
             sse_poll: Duration::from_millis(750),
             request_timeout: Duration::from_secs(30),
-            max_body_bytes: 64 * 1024,
+            start_timeout: Duration::from_secs(5 * 60),
+            // Validated field maxima can produce just over 100 KiB of JSON.
+            max_body_bytes: 128 * 1024,
             max_upload_bytes: 16 * 1024 * 1024,
             max_uploads_per_owner: 32,
             reconcile_interval: Duration::from_secs(5),
@@ -160,12 +164,13 @@ impl AppState {
 /// fallback stay public and never mint a cookie.
 pub fn router(state: AppState) -> Router {
     let timeout = state.config().request_timeout;
+    let start_timeout = state.config().start_timeout;
     let body_cap = state.config().max_body_bytes;
 
     let public = Router::new().route("/api/health", get(routes::health));
 
     let commands = Router::new()
-        .route("/api/runs", get(routes::list_runs).post(routes::start_run))
+        .route("/api/runs", get(routes::list_runs))
         .route("/api/runs/{run_id}", get(routes::run_snapshot))
         .route("/api/runs/{run_id}/stop", post(routes::stop_run))
         .route("/api/runs/{run_id}/report", get(routes::report))
@@ -175,6 +180,17 @@ pub fn router(state: AppState) -> Router {
         .layer(TimeoutLayer::with_status_code(
             axum::http::StatusCode::REQUEST_TIMEOUT,
             timeout,
+        ))
+        .layer(CompressionLayer::new());
+
+    // Explicit source retrieval has its own bounded timeout and may exceed
+    // the ordinary command deadline. Do not return 408 after the run row
+    // has committed while initialization continues without a client-known id.
+    let starts = Router::new()
+        .route("/api/runs", post(routes::start_run))
+        .layer(TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            start_timeout,
         ))
         .layer(CompressionLayer::new());
 
@@ -196,6 +212,7 @@ pub fn router(state: AppState) -> Router {
 
     let identified = Router::new()
         .merge(commands)
+        .merge(starts)
         .merge(upload_routes)
         .merge(events)
         .layer(axum::middleware::from_fn_with_state(
