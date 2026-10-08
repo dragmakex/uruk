@@ -35,6 +35,17 @@ impl AccessLevel {
             Self::Unavailable => "unavailable",
         }
     }
+
+    /// Parse the snake_case form produced by [`AccessLevel::as_str`].
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "full_text" => Self::FullText,
+            "abstract_only" => Self::AbstractOnly,
+            "metadata_only" => Self::MetadataOnly,
+            "unavailable" => Self::Unavailable,
+            _ => return None,
+        })
+    }
 }
 
 /// Where a source came from.
@@ -51,6 +62,22 @@ pub enum Origin {
     Code(String),
     /// Supplied inline by the researcher (pasted text, an observation).
     Supplied,
+}
+
+impl Origin {
+    /// Every origin kind, in the serde tag spelling, for validating filters.
+    pub const KINDS: [&'static str; 5] = ["local_file", "url", "dataset", "code", "supplied"];
+
+    /// This origin's serde tag (the `kind` field of its JSON form).
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::LocalFile(_) => "local_file",
+            Self::Url(_) => "url",
+            Self::Dataset(_) => "dataset",
+            Self::Code(_) => "code",
+            Self::Supplied => "supplied",
+        }
+    }
 }
 
 /// An exact location within a source, for citation (SPEC §4.3).
@@ -132,6 +159,52 @@ impl Source {
                 .title
                 .clone()
                 .unwrap_or_else(|| self.id.as_str().to_string()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod origin_kind {
+        use super::*;
+
+        #[test]
+        fn agrees_with_the_serde_tag_for_every_variant() {
+            for origin in [
+                Origin::LocalFile("a".into()),
+                Origin::Url("u".into()),
+                Origin::Dataset("d".into()),
+                Origin::Code("c".into()),
+                Origin::Supplied,
+            ] {
+                let json = serde_json::to_value(&origin).expect("serialize");
+                assert_eq!(json["kind"], origin.kind(), "{origin:?}");
+                assert!(Origin::KINDS.contains(&origin.kind()), "{origin:?}");
+            }
+        }
+    }
+
+    mod access_level_parse {
+        use super::*;
+
+        #[test]
+        fn round_trips_every_as_str_spelling() {
+            for level in [
+                AccessLevel::FullText,
+                AccessLevel::AbstractOnly,
+                AccessLevel::MetadataOnly,
+                AccessLevel::Unavailable,
+            ] {
+                assert_eq!(AccessLevel::parse(level.as_str()), Some(level));
+            }
+        }
+
+        #[test]
+        fn rejects_unknown_spellings() {
+            assert_eq!(AccessLevel::parse("fulltext"), None);
+            assert_eq!(AccessLevel::parse(""), None);
         }
     }
 }

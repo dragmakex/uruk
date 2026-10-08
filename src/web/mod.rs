@@ -163,8 +163,18 @@ pub fn router(state: AppState) -> Router {
         .route("/api/runs/{run_id}/stop", post(routes::stop_run))
         .route("/api/runs/{run_id}/report", get(routes::report))
         .route("/api/runs/{run_id}/sources", get(routes::sources))
+        .route(
+            "/api/runs/{run_id}/sources/{source_id}",
+            get(routes::source_detail),
+        )
+        .route(
+            "/api/runs/{run_id}/sources/{source_id}/passages",
+            get(routes::source_passages),
+        )
         .route("/api/runs/{run_id}/passages", get(routes::passages))
+        .route("/api/runs/{run_id}/citations", get(routes::citations))
         .route("/api/library", get(routes::library))
+        .route("/api/library/passages", get(routes::library_passages))
         .layer(TimeoutLayer::with_status_code(
             axum::http::StatusCode::REQUEST_TIMEOUT,
             timeout,
