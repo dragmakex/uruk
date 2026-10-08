@@ -22,6 +22,7 @@ import {
   parseSources,
   parseStartedRun,
   parseUpload,
+  parseUploads,
 } from "./parse";
 import type {
   ReportView,
@@ -164,6 +165,10 @@ export async function uploadFile(file: File): Promise<UploadView> {
     },
   );
   return parseUpload(body);
+}
+
+export async function fetchUploads(): Promise<UploadView[]> {
+  return parseUploads(await request("/api/uploads"));
 }
 
 /** Remove an upload this browser owns. */
