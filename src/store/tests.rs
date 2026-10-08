@@ -369,6 +369,32 @@ async fn new_contradicting_evidence_marks_rating_stale() {
     );
 }
 
+#[tokio::test]
+async fn leaderboard_breaks_rating_ties_by_item_id() {
+    let (store, run, goal) = setup().await;
+    let plan = test_plan(&run.id, &goal.id);
+    store.insert_plan(&plan).await.unwrap();
+
+    // Insert in reverse id order. Every enrolled candidate starts at the
+    // same initial Elo, so without an explicit tiebreak the exported
+    // leaderboard order would be whatever SQLite scans first.
+    for id in ["item_c", "item_b", "item_a"] {
+        let mut item = test_item(&run.id, &goal.id, id);
+        item.id = ItemId::from_raw(id);
+        store.insert_item(&item).await.unwrap();
+        store.ensure_rating(&item.id, &plan.id).await.unwrap();
+    }
+
+    let ids: Vec<String> = store
+        .leaderboard(&run.id, &plan.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.item_id.as_str().to_string())
+        .collect();
+    assert_eq!(ids, ["item_a", "item_b", "item_c"]);
+}
+
 pub(crate) fn test_match(
     run_id: &RunId,
     a: &ItemId,
