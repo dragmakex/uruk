@@ -1,10 +1,11 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import {
   ApiFailure,
   deleteUpload,
+  fetchUploads,
   previewRun,
   startRun,
   uploadFile,
@@ -92,6 +93,7 @@ export function RunForm() {
     attach: useId(),
     network: useId(),
     search: useId(),
+    formError: useId(),
   };
 
   const [goal, setGoal] = useState("");
@@ -112,6 +114,7 @@ export function RunForm() {
   const [urls, setUrls] = useState("");
   const [uploads, setUploads] = useState<AttachedUpload[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [allowNetwork, setAllowNetwork] = useState(false);
   const [search, setSearch] = useState(false);
   const [connectors, setConnectors] = useState<string[]>(
@@ -123,6 +126,34 @@ export function RunForm() {
   const [apiError, setApiError] = useState<{ error: string; kind: string } | null>(
     null,
   );
+
+  useEffect(() => {
+    let live = true;
+    fetchUploads()
+      .then((items) => {
+        if (live && items.length > 0) {
+          setUploads((current) => {
+            const currentIds = new Set(current.map(({ upload }) => upload.id));
+            return [
+              ...items
+                .filter((upload) => !currentIds.has(upload.id))
+                .map((upload) => ({ upload, included: true })),
+              ...current,
+            ];
+          });
+        }
+      })
+      .catch((e: unknown) => {
+        if (live) {
+          setUploadError(
+            e instanceof ApiFailure ? e.message : "saved uploads could not be loaded",
+          );
+        }
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   /**
    * Validate the form into a start payload, or report the first problem.
@@ -210,6 +241,7 @@ export function RunForm() {
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (uploading || busy !== null) return;
     setApiError(null);
     setPreview(null);
     const input = buildInput();
@@ -229,6 +261,7 @@ export function RunForm() {
   }
 
   async function onPreview() {
+    if (uploading || busy !== null) return;
     setApiError(null);
     setPreview(null);
     const input = buildInput();
@@ -248,19 +281,23 @@ export function RunForm() {
   }
 
   async function onAttach(event: React.ChangeEvent<HTMLInputElement>) {
+    if (uploading || busy !== null) return;
     const files = Array.from(event.target.files ?? []);
     event.target.value = "";
+    setUploading(true);
+    const failures: string[] = [];
     for (const file of files) {
       try {
         const upload = await uploadFile(file);
         setUploads((prev) => [...prev, { upload, included: true }]);
-        setUploadError(null);
       } catch (e) {
-        setUploadError(
-          e instanceof ApiFailure ? e.message : "the upload failed unexpectedly",
+        failures.push(
+          `${file.name}: ${e instanceof ApiFailure ? e.message : "the upload failed unexpectedly"}`,
         );
       }
     }
+    setUploadError(failures.length > 0 ? failures.join("; ") : null);
+    setUploading(false);
   }
 
   async function onDeleteUpload(upload: UploadView) {
@@ -293,6 +330,13 @@ export function RunForm() {
     setAllowNetwork(granted);
     if (!granted) setSearch(false);
   }
+
+  // `buildInput` checks the goal first, so a reported error concerns the
+  // goal exactly when the goal is itself out of bounds; only then may the
+  // goal field claim the error text as its accessible description.
+  const goalInvalid =
+    fieldError !== null &&
+    (goal.trim().length === 0 || goal.trim().length > MAX_GOAL_CHARS);
 
   const budgetFields = [
     {
@@ -366,7 +410,8 @@ export function RunForm() {
           onChange={(e) => setGoal(e.target.value)}
           placeholder="Question, system, constraints, what would count as an answer."
           maxLength={MAX_GOAL_CHARS + 1}
-          aria-invalid={fieldError !== null && goal.trim().length === 0}
+          aria-invalid={goalInvalid}
+          aria-describedby={goalInvalid ? ids.formError : undefined}
         />
       </div>
 
@@ -544,6 +589,7 @@ export function RunForm() {
               type="file"
               accept={UPLOAD_ACCEPT}
               multiple
+              disabled={uploading || busy !== null}
               onChange={onAttach}
             />
             <p className="micro">Text-extractable files up to 16 MB each.</p>
@@ -564,6 +610,7 @@ export function RunForm() {
                     type="button"
                     className="btn-outline btn upload-delete"
                     onClick={() => onDeleteUpload(upload)}
+                    disabled={uploading || busy !== null}
                     aria-label={`Delete ${upload.file_name}`}
                   >
                     Delete
@@ -637,7 +684,7 @@ export function RunForm() {
 
       {fieldError !== null && (
         <div className="panel-section">
-          <p className="field-error" role="alert">
+          <p id={ids.formError} className="field-error" role="alert">
             {fieldError}
           </p>
         </div>
@@ -648,11 +695,11 @@ export function RunForm() {
           type="button"
           className="btn btn-outline"
           onClick={onPreview}
-          disabled={busy !== null}
+          disabled={busy !== null || uploading}
         >
           {busy === "preview" ? "Previewing" : "Preview plan"}
         </button>
-        <button type="submit" className="btn" disabled={busy !== null}>
+        <button type="submit" className="btn" disabled={busy !== null || uploading}>
           {busy === "start" ? "Starting run" : "Start research"}
         </button>
       </div>

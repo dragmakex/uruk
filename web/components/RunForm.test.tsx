@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiFailure } from "@/lib/api";
@@ -14,6 +14,7 @@ const startRunMock = vi.fn();
 const previewRunMock = vi.fn();
 const uploadFileMock = vi.fn();
 const deleteUploadMock = vi.fn();
+const fetchUploadsMock = vi.fn();
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
   return {
@@ -22,6 +23,7 @@ vi.mock("@/lib/api", async () => {
     previewRun: (input: unknown) => previewRunMock(input),
     uploadFile: (file: unknown) => uploadFileMock(file),
     deleteUpload: (id: unknown) => deleteUploadMock(id),
+    fetchUploads: () => fetchUploadsMock(),
   };
 });
 
@@ -31,6 +33,8 @@ beforeEach(() => {
   previewRunMock.mockReset();
   uploadFileMock.mockReset();
   deleteUploadMock.mockReset();
+  fetchUploadsMock.mockReset();
+  fetchUploadsMock.mockResolvedValue([]);
 });
 
 /** The payload an untouched form submits: visible defaults, no grants. */
@@ -69,11 +73,21 @@ const PREVIEW: RunPreview = {
 };
 
 describe("RunForm", () => {
+  it("restores retained uploads after a reload", async () => {
+    fetchUploadsMock.mockResolvedValue([UPLOAD]);
+    render(<RunForm />);
+    expect(await screen.findByText("notes.txt")).toBeInTheDocument();
+    expect(screen.getByLabelText("Include notes.txt")).toBeChecked();
+  });
+
   it("refuses to submit an empty goal and says why", async () => {
     const user = userEvent.setup();
     render(<RunForm />);
     await user.click(screen.getByRole("button", { name: "Start research" }));
     expect(screen.getByRole("alert")).toHaveTextContent(
+      "State the research goal first.",
+    );
+    expect(screen.getByLabelText("Research goal")).toHaveAccessibleDescription(
       "State the research goal first.",
     );
     expect(startRunMock).not.toHaveBeenCalled();
@@ -256,6 +270,9 @@ describe("RunForm", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(
       /Model calls must be a whole number between 1 and 100000/,
     );
+    expect(
+      screen.getByLabelText("Research goal"),
+    ).not.toHaveAccessibleDescription();
     expect(startRunMock).not.toHaveBeenCalled();
   });
 
@@ -381,8 +398,49 @@ describe("RunForm", () => {
     await user.upload(screen.getByLabelText("Attach a file"), file);
 
     expect(
-      await screen.findByText("this file type is not accepted"),
+      await screen.findByText(/this file type is not accepted/),
     ).toBeInTheDocument();
+  });
+
+  it("aggregates every failure from a multi-file upload", async () => {
+    uploadFileMock
+      .mockRejectedValueOnce(new ApiFailure("too large", "validation", 400))
+      .mockRejectedValueOnce(new ApiFailure("wrong type", "validation", 400));
+    const user = userEvent.setup({ applyAccept: false });
+    render(<RunForm />);
+
+    await user.upload(screen.getByLabelText("Attach a file"), [
+      new File(["a"], "one.bin"),
+      new File(["b"], "two.bin"),
+    ]);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "one.bin: too large; two.bin: wrong type",
+    );
+  });
+
+  it("locks run actions while an upload is in progress", async () => {
+    let finishUpload: ((upload: UploadView) => void) | undefined;
+    uploadFileMock.mockReturnValue(
+      new Promise<UploadView>((resolve) => {
+        finishUpload = resolve;
+      }),
+    );
+    const user = userEvent.setup();
+    render(<RunForm />);
+
+    await user.upload(
+      screen.getByLabelText("Attach a file"),
+      new File(["alpha"], "notes.txt", { type: "text/plain" }),
+    );
+    expect(screen.getByLabelText("Attach a file")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Preview plan" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Start research" })).toBeDisabled();
+
+    finishUpload?.(UPLOAD);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Start research" })).toBeEnabled(),
+    );
   });
 
   it("previews the plan without starting a run", async () => {
