@@ -174,7 +174,7 @@ impl<S: Send + Sync> FromRequestParts<S> for Owner {
 /// # Errors
 ///
 /// Rejects with the same non-disclosing `not_found` for a run that does
-/// not exist, a run owned by another browser, and an ownerless (CLI) run.
+/// not exist, a run owned by another browser, and an ownerless run.
 pub struct OwnedRun(pub RunId);
 
 impl FromRequestParts<AppState> for OwnedRun {

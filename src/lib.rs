@@ -14,7 +14,6 @@ pub mod runtime;
 pub mod search;
 pub mod store;
 pub mod tools;
-#[cfg(feature = "web")]
 pub mod web;
 
 /// Crate-wide error type.
@@ -63,8 +62,8 @@ impl Error {
     }
 
     /// Stable error category, so a calling agent or API client can branch
-    /// without parsing prose. The CLI `--json` output and the web API both
-    /// report this exact string as `kind`.
+    /// without parsing prose. The web API reports this exact string as
+    /// `kind` in every error body.
     pub fn kind(&self) -> &'static str {
         match self {
             Error::Storage(_) | Error::Migration(_) => "storage",

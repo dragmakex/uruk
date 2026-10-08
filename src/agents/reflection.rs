@@ -52,7 +52,7 @@ pub async fn review(
     }
     if strategy == ReviewStrategy::Researcher {
         return Err(Error::validation(
-            "a researcher review is supplied through the CLI, not generated",
+            "a researcher review is supplied by the researcher, not generated",
         ));
     }
 

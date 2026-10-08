@@ -1242,7 +1242,8 @@ async fn approved_execution_feeds_a_review_that_supports_the_claim() {
         "nothing may execute before approval"
     );
 
-    // The researcher approves the exact payload (as `uruk approve` does).
+    // The researcher approves the exact payload (the future approval UI's
+    // write path).
     f.store
         .decide_approval(&pending[0].id, true, Some(&pending[0].payload_hash), None)
         .await

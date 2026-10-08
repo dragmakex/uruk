@@ -3,9 +3,10 @@
 //!
 //! Everything runs offline: an inline TCP fixture server plays every
 //! connector (routed by path) and serves the full text; the MockProvider is
-//! anchored on the `search.plan_queries` template. The CLI opt-in contract
-//! (`--search` requires `--allow-network`; `--allow-network` alone opens
-//! zero connector connections) is exercised against the real binary.
+//! anchored on the `search.plan_queries` template. The opt-in contract
+//! (search grants require the network permission; the network permission
+//! alone opens zero connector connections) is exercised at the scheduler
+//! level.
 
 mod common;
 
@@ -188,8 +189,8 @@ fn query_plan_json() -> String {
     .to_string()
 }
 
-/// What `uruk run --allow-network --search` produces (network plus the
-/// three connector allowlist entries).
+/// A goal granted network plus the three connector allowlist entries
+/// (the engine's literature-search opt-in).
 fn search_permissions() -> Permissions {
     Permissions {
         network: true,
@@ -508,7 +509,7 @@ async fn local_passages_ground_prompts_without_network() {
 
     assert!(f.store.count_passages(&f.run_id).await.unwrap() > 0);
 
-    // Ranked local retrieval with valid byte spans (the `uruk passages` path).
+    // Ranked local retrieval with valid byte spans (the passages API path).
     let hits = f
         .store
         .search_passages(&f.run_id, "heat exchanger efficiency", 10)
@@ -624,127 +625,6 @@ async fn allow_network_without_search_schedules_nothing_and_sends_nothing() {
     assert_eq!(sources.len(), 1);
     assert_eq!(sources[0].access, AccessLevel::FullText);
     assert!(f2.store.count_passages(&f2.run_id).await.unwrap() > 0);
-}
-
-/// Focused CLI contract: `--search` without `--allow-network` is a
-/// validation error, reported with the stable `validation` kind, before any
-/// run is created.
-#[test]
-fn cli_search_without_allow_network_is_a_validation_error() {
-    let dir = tempfile::tempdir().unwrap();
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_uruk"))
-        .args([
-            "--json",
-            "--project",
-            dir.path().to_str().unwrap(),
-            "run",
-            "--goal",
-            "what is known about x",
-            "--search",
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        !out.status.success(),
-        "stdout: {}",
-        String::from_utf8_lossy(&out.stdout)
-    );
-    let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(body["ok"], false);
-    assert_eq!(body["kind"], "validation", "{body}");
-    assert!(
-        body["error"]
-            .as_str()
-            .unwrap()
-            .contains("--search requires --allow-network"),
-        "{body}"
-    );
-    assert!(
-        !dir.path().join(".uruk").exists(),
-        "validation must precede any state creation"
-    );
-
-    // --search-connectors without --search is refused the same way.
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_uruk"))
-        .args([
-            "--json",
-            "--project",
-            dir.path().to_str().unwrap(),
-            "run",
-            "--goal",
-            "what is known about x",
-            "--allow-network",
-            "--search-connectors",
-            "openalex",
-        ])
-        .output()
-        .unwrap();
-    assert!(!out.status.success());
-    let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(body["kind"], "validation", "{body}");
-    assert!(
-        body["error"]
-            .as_str()
-            .unwrap()
-            .contains("requires --search"),
-        "{body}"
-    );
-}
-
-/// Focused CLI contract: `--allow-network` without `--search` runs the real
-/// binary end to end, fetches only the supplied URL, and opens zero
-/// connector connections even with connector base URLs pointing at a live
-/// fixture server.
-#[tokio::test(flavor = "multi_thread")]
-async fn cli_allow_network_without_search_opens_no_connector_connection() {
-    let server = spawn_connector_server().await;
-    let dir = tempfile::tempdir().unwrap();
-
-    let out = tokio::task::spawn_blocking({
-        let base = server.base.clone();
-        let project = dir.path().to_str().unwrap().to_string();
-        move || {
-            std::process::Command::new(env!("CARGO_BIN_EXE_uruk"))
-                // Child-process env only: no global env mutation, and the
-                // bases point at the fixture server so any connector call
-                // would be visible in its hit log.
-                .env("URUK_OPENALEX_BASE", format!("{base}/openalex"))
-                .env("URUK_CROSSREF_BASE", format!("{base}/crossref"))
-                .env("URUK_ARXIV_BASE", format!("{base}/arxiv"))
-                .args([
-                    "--json",
-                    "--project",
-                    &project,
-                    "run",
-                    "--goal",
-                    "summarise the supplied article",
-                    "--allow-network",
-                    "--input",
-                    &format!("{base}/article"),
-                ])
-                .output()
-                .unwrap()
-        }
-    })
-    .await
-    .unwrap();
-
-    assert!(
-        out.status.success(),
-        "stdout: {}\nstderr: {}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(body["ok"], true, "{body}");
-    assert_eq!(body["run"]["state"], "completed", "{body}");
-
-    assert_eq!(
-        server.hit_log(),
-        vec!["/article".to_string()],
-        "--allow-network alone must fetch only the supplied URL"
-    );
-    assert!(server.connector_hits().is_empty());
 }
 
 /// An acquire task for `work_key`, shaped like the ones the discover task

@@ -389,7 +389,8 @@ async fn check_3b_uncertain_external_effects_are_surfaced() {
 }
 
 /// §9.3(3), continued: a second process writing to the same store (as
-/// `uruk approve` does during a run) queues rather than failing.
+/// a durable control request does during a run) queues rather than
+/// failing.
 #[tokio::test]
 async fn check_3c_cross_process_writers_queue() {
     let f = fixture(Mode::Campaign, MockProvider::new()).await;
@@ -573,8 +574,8 @@ async fn check_5b_cancellation_terminates_subprocess() {
     );
 }
 
-/// A `uruk stop` from another process is observed by a running scheduler:
-/// the run ends Cancelled and stays Cancelled.
+/// A durable stop request from another process is observed by a running
+/// scheduler: the run ends Cancelled and stays Cancelled.
 #[tokio::test]
 async fn stop_request_is_observed_by_a_running_scheduler() {
     let provider = MockProvider::new()
@@ -597,7 +598,7 @@ async fn stop_request_is_observed_by_a_running_scheduler() {
     let handle = tokio::spawn(async move { scheduler.run(&run_id).await });
 
     tokio::time::sleep(Duration::from_millis(150)).await;
-    // Exactly what `uruk stop` does.
+    // Exactly what the web API's stop route does.
     other.cancel_pending_tasks(&f.run_id).await.unwrap();
     other
         .set_run_state(

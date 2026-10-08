@@ -1,8 +1,8 @@
 //! Stable JSON error bodies for the API.
 //!
 //! Every error response is `{"ok": false, "error": <prose>, "kind": <kind>}`
-//! with the same `kind` strings the CLI's `--json` mode emits
-//! ([`crate::Error::kind`]), so a client can branch without parsing prose.
+//! with the stable `kind` strings of [`crate::Error::kind`], so a client
+//! can branch without parsing prose.
 
 use crate::Error;
 use axum::Json;
@@ -135,7 +135,7 @@ mod tests {
 
     #[test]
     fn caller_mistake_prose_is_kept() {
-        // 4xx prose is the same text the CLI prints (kind-prefixed Display).
+        // 4xx prose is the error's own kind-prefixed Display text.
         let body = error_body(&Error::validation("goal must not be empty"));
         assert_eq!(body["kind"], "validation");
         let message = body["error"].as_str().expect("error prose");
