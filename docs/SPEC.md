@@ -3,7 +3,7 @@
 **Purpose:** An autonomous research engine for any stage of research. Its output is evidence-backed findings; researchers set goals, approve side effects, and steer, but are not required to do the work.  
 **Foundation:** Gottweis et al., *Towards an AI co-scientist* (2025), supplied as [`pre_coscientist.pdf`](pre_coscientist.pdf), and *Accelerating scientific discovery with Co-Scientist* (2026), supplied as [`coscientist.pdf`](coscientist.pdf).  
 **Scope:** Domain-independent research reasoning, grounded in sources and connected to tools.  
-**Implementation:** Rust throughout Uruk, including orchestration, agents, storage, tool adapters, CLI, and later add-ons.  
+**Implementation:** Rust throughout Uruk, including orchestration, agents, storage, tool adapters, the web API, and later add-ons.  
 **Status:** Product specification, not an implemented system. Both Co-Scientist papers inform the research architecture; Rust-native execution is required (see §9). Published prompt examples and Uruk adaptation rules are included in §15.
 
 This specification defines Uruk's behavior. It does not claim to reproduce Google's private implementation or to validate Uruk across every scientific discipline. Defaults identified as Uruk choices are not claims about either paper.
@@ -122,7 +122,7 @@ A literature-only request must work without a repository or execution tool. An a
 
 Keep the research-policy code independent of runtime-specific types. This is an ownership boundary, not a requirement to implement multiple backends or a generic runtime plugin system.
 
-Start with one Rust Cargo package, a library and CLI binary, and ordinary modules for research policy, agents, runtime, storage, tools, and reporting. Split crates only when an actual reuse or dependency boundary needs it. All Uruk-owned implementation code is Rust; do not introduce a Node, Python, or other application service to implement a subsystem.
+Start with one Rust Cargo package, a library and a server-launcher binary, and ordinary modules for research policy, agents, runtime, storage, tools, and reporting. Split crates only when an actual reuse or dependency boundary needs it. All Uruk-owned implementation code is Rust; do not introduce a Node, Python, or other application service to implement a subsystem.
 
 Researcher-supplied scripts, notebooks, existing scientific binaries, and remote model APIs may be external inputs/tools. Their adapters, permission enforcement, process supervision, and evidence ingestion remain Rust. Supporting an external research tool does not make it a second orchestration runtime.
 
@@ -400,14 +400,14 @@ An external experimental result records its contributor, protocol version, colle
 | Durable state | SQLite through `sqlx`, transactional task/research records, schema migrations, unique IDs |
 | Models and retrieval | Rust HTTP/provider adapters, bounded retries/timeouts, cancellation, usage accounting |
 | External tools | Rust process/API adapters, isolated workspaces, explicit permissions, bounded output capture |
-| CLI and reporting | Rust command handling and deterministic exports; reports do not require a model call |
+| Interface and reporting | Rust web API handling and deterministic exports; reports do not require a model call |
 | Optional market | A later Rust module using the same task admission path and SQLite transactions |
 
 Use `serde` for persisted and provider-facing data, but also validate semantic constraints at trust boundaries. Use typed `Result` errors; no panic/`unwrap` on I/O, model, or tool failure paths. Keep blocking/CPU-heavy work off async executor threads, and do not hold state locks across model or subprocess waits. Pin the Rust toolchain and commit `Cargo.lock`.
 
 ### 9.2 Persistence and recovery
 
-- One scheduler process owns a project at a time, enforced by an OS-held project lock. Other CLI invocations may inspect state or submit durable control requests; they must not start a competing scheduler. This is a single-machine v1 design, not a distributed execution guarantee.
+- One scheduler process owns a project at a time, enforced by an OS-held project lock. Other processes may inspect state or submit durable control requests; they must not start a competing scheduler. This is a single-machine v1 design, not a distributed execution guarantee.
 - Store research records, task attempts, approvals, budget reservations, and scheduling decisions in `.uruk/state.sqlite`. The persisted task set is the queue's source of truth; in-memory ready lists are rebuildable. No message broker or second writable research store.
 - Persist task identity, versioned inputs, permission envelope, selected strategy, and budget reservation before dispatch. Record nondeterministic scheduling choices rather than drawing new ones during recovery.
 - On completion, validate outputs and commit the task outcome, referenced research records, budget settlement, and any applicable rating update atomically. Unique task/match/settlement keys make duplicate result delivery harmless. Short serialized transactions must not span external calls.
@@ -447,24 +447,29 @@ Profiles are optional configuration over the same Rust implementation. A general
 
 ## 11. Researcher interface and outputs
 
-Begin with a local CLI and file-based inputs/outputs. A chat or graphical interface may later expose the same operations; it is not a v1 prerequisite.
+The researcher interface is the local web console (docs/WEB.md): a Rust JSON/SSE API served by the `uruk` binary, whose single command is `uruk serve`, plus the Next.js frontend under `web/`. The product surface is web-only; there is no per-run CLI.
 
-Proposed interface for the Rust `uruk` binary, **not yet implemented**:
+Implemented interface:
 
 ```text
-uruk run --goal <text> --mode task|campaign [--input <path-or-url> ...] [--profile <name>]
-uruk resume --run-id <id>
-uruk status --run-id <id>
-uruk feedback --run-id <id> --file <path>
-uruk approve --run-id <id> --request-id <id>
-uruk deny --run-id <id> --request-id <id>
-uruk stop --run-id <id>
-uruk report --run-id <id>
+uruk serve [--bind <addr>] [--project <dir>]   # the only command
+
+POST /api/runs                      # start a run: goal, mode, ranking, rubric, budgets
+GET  /api/runs                      # this browser's runs
+GET  /api/runs/{id}                 # complete run snapshot
+GET  /api/runs/{id}/events          # live snapshots over SSE
+POST /api/runs/{id}/stop            # durable stop request
+GET  /api/runs/{id}/report          # exported REPORT.md + manifest
+GET  /api/runs/{id}/sources         # recorded sources
+GET  /api/runs/{id}/passages?q=…    # offline FTS5 passage search
+GET  /api/library                   # sources across this browser's runs
 ```
+
+Web runs grant no permissions beyond provider disclosure. In particular, computational execution is unavailable in the web-only product: execution requires an approval bound to the exact payload hash, and until the console has an exact-payload approval UI, no such approval can be granted.
 
 Store the normalized goal, effective configuration, permissions, budgets, model/tool/prompt versions, and input hashes for every run. Approval references an immutable request identifying the exact action, inputs, scope, and limits. Changing that payload requires a new approval.
 
-`status` shows the current goal revision, completed/running/blocked work, human requests, resource use, evidence changes, and leading candidates where applicable. No finding, null result, and no available tool are distinct outcomes. “No discovery” is not an execution error.
+The run snapshot shows the current goal revision, completed/running/blocked work, human requests, resource use, evidence changes, and leading candidates where applicable. No finding, null result, and no available tool are distinct outcomes. “No discovery” is not an execution error.
 
 A run exports only applicable artifacts under `runs/<run-id>/`:
 
@@ -494,7 +499,7 @@ Writing/grant/manuscript tasks use only recorded sources and results. Never inve
 - Treat PDFs, retrieved pages, datasets, repositories, and tool output as untrusted data, not authority to change instructions or grant permissions.
 - Keep raw inputs read-only; write to task-owned workspaces. External writes, messaging, uploads, paid service usage beyond the approved budget, and publication require explicit authorization.
 - Separate retrieval access from provider disclosure. “No web search” does not mean “no data leaves the machine.” Local-only data must never reach remote models, embeddings, telemetry, or caches.
-- Literature-search disclosure is explicit opt-in, not implicit. Only `--search` (which requires `--allow-network`) enables the connectors, as allowlist entries `search:openalex`, `search:crossref`, `search:arxiv` on top of the network permission; `--allow-network` alone retains URL-fetch-only behavior and sends zero connector traffic. With search enabled, the data transmitted to each operator is exactly: query text, year filters, and the configured contact email (`URUK_CONTACT_EMAIL`) — never source contents, never the goal record. Every transmitted query is persisted verbatim in a `SearchRecord` and printed in the report, so the disclosure is auditable after the fact. Acquisition fetches only URLs a connector designates as legal open-access locations; works without one are recorded as abstract-only or unavailable, never obtained by bypassing a paywall.
+- Literature-search disclosure is explicit opt-in, not implicit. Only an explicit search grant enables the connectors, as allowlist entries `search:openalex`, `search:crossref`, `search:arxiv` on top of the network permission; the network permission alone retains URL-fetch-only behavior and sends zero connector traffic. (Neither grant is available from the web surface yet.) With search enabled, the data transmitted to each operator is exactly: query text, year filters, and the configured contact email (`URUK_CONTACT_EMAIL`) — never source contents, never the goal record. Every transmitted query is persisted verbatim in a `SearchRecord` and printed in the report, so the disclosure is auditable after the fact. Acquisition fetches only URLs a connector designates as legal open-access locations; works without one are recorded as abstract-only or unavailable, never obtained by bypassing a paywall.
 - Minimize/redact sensitive content before logs and model requests. Credentials are injected through approved runtime mechanisms, never embedded in research records.
 - High-stakes biomedical, human-subject, animal, hazardous, or dual-use work requires qualified oversight and applicable institutional approvals. Unsupported or unsafe requests are blocked; a generic user approval does not waive these constraints.
 - Following 2025 §6, check the initial goal, generated/evolved candidates, and emerging research directions separately. A safe goal is not blanket approval for unsafe intermediate work. Record a scoped refusal/need-for-review decision without continuing a blocked candidate through the tournament.
@@ -506,10 +511,10 @@ Writing/grant/manuscript tasks use only recorded sources and results. Never inve
 ### First usable version
 
 1. Establish one Rust Cargo package with shared records, SQLite persistence, and the minimal Tokio runtime. Pass the recovery/cancellation checks in §9 with mock agents/tools.
-2. Add source/artifact ingestion, grounded task mode, basic Reflection/Meta-review, versioned prompt rendering/validation, and the Rust CLI/report exporter.
+2. Add source/artifact ingestion, grounded task mode, basic Reflection/Meta-review, versioned prompt rendering/validation, and the Rust report exporter.
 3. Add the campaign roles and adapted §15 strategies, bounded adaptive scheduling/debates, Proximity, evidence-aware comparisons, immutable Evolution, and feedback.
 4. Add an approved local computational tool and reproducibility/result ingestion. External experimental results can be supplied manually.
-5. Add literature search (implemented, opt-in via `--search`): local FTS5 passage retrieval over every ingested text artifact, federated discovery against the free scholarly APIs (OpenAlex, Crossref, arXiv), RRF fusion with DOI/arXiv/PMID/title-fingerprint dedup, and open-access acquisition through the ordinary ingestion pipeline, resolved locally from discovery data (arXiv PDF → OpenAlex `best_oa_location`/`oa_url`), with the audit trail (verbatim queries, per-connector ranks and raw-response hashes in each work record, unavailable works) persisted and reported. Unpaywall and PubMed/PMC are not implemented.
+5. Add literature search (implemented in the engine, opt-in via the search grants; not yet reachable from the web surface): local FTS5 passage retrieval over every ingested text artifact, federated discovery against the free scholarly APIs (OpenAlex, Crossref, arXiv), RRF fusion with DOI/arXiv/PMID/title-fingerprint dedup, and open-access acquisition through the ordinary ingestion pipeline, resolved locally from discovery data (arXiv PDF → OpenAlex `best_oa_location`/`oa_url`), with the audit trail (verbatim queries, per-connector ranks and raw-response hashes in each work record, unavailable works) persisted and reported. Unpaywall and PubMed/PMC are not implemented.
 
 Start with supplied documents plus one retrieval route and one configured model provider. Keep model selection outside research policy; add providers and specialized integrations when required. No mandatory market, vector database, hosted UI, laboratory connector, or general-purpose workflow framework.
 
