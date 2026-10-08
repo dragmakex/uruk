@@ -5,5 +5,7 @@
 //! labelled partial report.
 
 mod export;
+mod pdf;
 
-pub use export::{Export, export_run};
+pub use export::{Export, REPORT_SECTIONS, REPORT_TEMPLATE_VERSION, export_run};
+pub use pdf::render_report_pdf;

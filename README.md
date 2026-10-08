@@ -137,6 +137,7 @@ the new revision.
 <project>/runs/<run-id>/
   manifest.json     identity, versions, providers, permissions, usage, artifact hashes
   REPORT.md         the deliverable with claim provenance, or a labelled partial result
+  REPORT.pdf        the same report rendered deterministically to PDF, no model call
   research.jsonl    items, evidence, reviews, decisions, experiments, lineage
   sources.jsonl     source provenance, citation locators, and search records
   works.jsonl       every work found by --search, with RRF score and per-connector ranks
