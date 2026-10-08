@@ -121,7 +121,9 @@ cannot quietly skip the check.
 | `GET /api/runs` | this browser's runs, with goal and state |
 | `POST /api/runs` | start a run owned by this browser: `{goal, mode?, ranking?, …}` |
 | `GET /api/runs/{id}` | complete run snapshot (view model) |
-| `POST /api/runs/{id}/stop` | durable stop request |
+| `POST /api/runs/{id}/stop` | durable, resumable pause (see "Run lifecycle") |
+| `POST /api/runs/{id}/resume` | resume a paused run |
+| `POST /api/runs/{id}/restart` | fresh run from the original start configuration |
 | `GET /api/runs/{id}/events` | SSE stream of snapshots |
 | `GET /api/runs/{id}/report` | exported `REPORT.md` + `manifest.json` |
 | `GET /api/runs/{id}/sources` | the run's recorded sources |
@@ -168,6 +170,49 @@ Request bodies are capped at 64 KiB — except `POST /api/uploads`, which
 carries raw file bytes under its own per-file limit (16 MiB default)
 plus a per-owner count bound (32 default) and a fixed allowlist of
 text-extractable file types. Every response carries an `x-request-id`.
+
+## Run lifecycle
+
+Web stop is deliberately **not** the CLI's terminal cancel: an anonymous
+browser pausing its own run must be able to change its mind.
+
+- **Stop is a durable pause.** `POST /api/runs/{id}/stop` moves a
+  `running` or `waiting-for-human` run to `paused`: in-flight work is
+  cancelled (partial artifacts are retained and labelled), queued work
+  stays queued, and nothing is concluded — the run records no stopping
+  condition. The pause survives a server restart (the reconcile sweep
+  skips paused runs) and the SSE stream stays open, because a paused run
+  can come back. Repeating the request is a no-op; stopping a finished
+  run is refused with its final state kept. Each effective pause records
+  one `pause` decision. A terminal cancel remains available as
+  `uruk stop` on the CLI.
+- **Resume picks up where the pause left off.** `POST
+  /api/runs/{id}/resume` returns the run to `running`, records a
+  `resume` decision, and dispatches a scheduler, which reconciles
+  interrupted work first (SPEC §9.2). Time spent paused is accounted on
+  the run (`paused_ms` in the snapshot) and **excluded from the
+  wall-clock budget**, so pausing never burns the deadline; model-call
+  and token budgets are unaffected because a paused run consumes
+  nothing. Resuming a run that is already running is a no-op; resuming a
+  finished run is refused.
+- **Restart is a clean fresh run, not a reopening.** `POST
+  /api/runs/{id}/restart` replays the exact original start request
+  (persisted verbatim at creation in `web_run_configs`, migration 0006)
+  through the normal start path: new run and goal identity, same
+  owner, uploads re-ingested from the owner's upload store, and none of
+  the original's items, reviews, or ratings. Both runs record a
+  `restart` decision naming the other (`restarted_as`/`restarted_from`),
+  the original is left exactly as it was, and the response carries the
+  new run id. A restart is refused while the original is still actively
+  working (pause it or let it finish first — otherwise it would silently
+  double the spend), when an original upload has since been deleted, and
+  for runs that have no stored request (CLI runs are unreachable anyway;
+  web runs from before this feature simply cannot be replayed).
+
+Steering over the web is exactly these three verbs plus starting runs;
+the web surface has no goal revision, no approval decisions, and no
+execution grants — those remain CLI actions, where a person can be held
+to an exact payload.
 
 ## Local development
 
@@ -273,7 +318,11 @@ nothing here has been deployed.
   and path-shaped name refusal. `tests/web_start_config.rs` covers the
   full start configuration: goal-record round-trips, grant semantics,
   upload ingestion, dry-run previews, and the refusal of execution and
-  path fields. Everything is offline.
+  path fields. `tests/web_lifecycle.rs` covers the lifecycle above:
+  pause durability and idempotency, scheduler wind-down and race
+  behavior under pause, paused-time budget accounting, resume to
+  completion, and restart lineage, freshness, and refusals. Everything
+  is offline.
 - Frontend: `cd web && bun run check` runs ESLint, `tsc --noEmit`, Vitest
   (runtime parsers, formatting, the SSE reducer, form validation, agent
   cards, the live run view with a scripted EventSource), and the
