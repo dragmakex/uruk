@@ -33,4 +33,31 @@ describe("ReportMarkdown", () => {
     expect(container).toHaveTextContent("before");
     expect(container).toHaveTextContent("after");
   });
+
+  it("blocks active URLs and passive remote-image requests", () => {
+    const { container } = render(
+      <ReportMarkdown
+        markdown={
+          "[bad](javascript:alert(document.domain)) ![tracker](https://attacker.invalid/pixel) [safe](https://example.com/)"
+        }
+      />,
+    );
+
+    expect(container.querySelector("img")).toBeNull();
+    // With its javascript: href stripped the anchor loses the implicit
+    // link role, so it is found by text instead.
+    const bad = Array.from(container.querySelectorAll("a")).find(
+      (a) => a.textContent === "bad",
+    );
+    expect(bad).toBeDefined();
+    expect(bad).not.toHaveAttribute("href");
+    expect(screen.getByRole("link", { name: "safe" })).toHaveAttribute(
+      "href",
+      "https://example.com/",
+    );
+    expect(screen.getByRole("link", { name: "safe" })).toHaveAttribute(
+      "rel",
+      "noreferrer noopener",
+    );
+  });
 });
