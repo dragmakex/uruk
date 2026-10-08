@@ -75,9 +75,12 @@ fn validate_file_name(name: Option<&str>) -> Result<String> {
              no \"..\", no control characters",
         ));
     }
-    let extension = name
-        .rsplit_once('.')
-        .map(|(_, ext)| ext.to_ascii_lowercase());
+    // Match the extractor's Path::extension semantics: `.txt` is a
+    // dotfile, not a text file with an extension.
+    let extension = std::path::Path::new(name)
+        .extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .map(str::to_ascii_lowercase);
     match extension {
         Some(ext) if ALLOWED_EXTENSIONS.contains(&ext.as_str()) => Ok(name.to_string()),
         _ => Err(Error::validation(format!(
@@ -245,7 +248,13 @@ mod tests {
 
         #[test]
         fn rejects_disallowed_and_missing_extensions() {
-            for bad in ["payload.exe", "archive.zip", "noextension", "trailingdot."] {
+            for bad in [
+                "payload.exe",
+                "archive.zip",
+                "noextension",
+                "trailingdot.",
+                ".txt",
+            ] {
                 let err = validate_file_name(Some(bad)).expect_err("rejected");
                 assert!(err.to_string().contains("pdf"), "names the allowed set");
             }

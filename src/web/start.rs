@@ -163,11 +163,13 @@ fn bounded<T: PartialOrd + std::fmt::Display + Copy>(
 /// is rejected outright; files reach a web run only as owner-bound
 /// uploads.
 fn clean_input_urls(values: Vec<String>) -> Result<Vec<String>> {
-    let cleaned: Vec<String> = values
+    let mut cleaned: Vec<String> = values
         .into_iter()
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
         .collect();
+    let mut seen = std::collections::HashSet::new();
+    cleaned.retain(|value| seen.insert(value.clone()));
     if cleaned.len() > MAX_INPUT_URLS {
         return Err(Error::validation(format!(
             "input_urls: at most {MAX_INPUT_URLS} entries, got {}",
@@ -196,11 +198,13 @@ fn clean_input_urls(values: Vec<String>) -> Result<Vec<String>> {
 /// Validate the referenced upload ids: shape only, ownership is checked
 /// against the store when the run starts.
 fn clean_upload_ids(values: Vec<String>) -> Result<Vec<UploadId>> {
-    let cleaned: Vec<String> = values
+    let mut cleaned: Vec<String> = values
         .into_iter()
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
         .collect();
+    let mut seen = std::collections::HashSet::new();
+    cleaned.retain(|value| seen.insert(value.clone()));
     if cleaned.len() > MAX_UPLOAD_IDS {
         return Err(Error::validation(format!(
             "upload_ids: at most {MAX_UPLOAD_IDS} entries, got {}",
@@ -520,6 +524,11 @@ pub async fn preview(
 /// browser's [`OwnerDigest`] in the same transaction that creates it, so
 /// a crash cannot leave an unowned web run behind.
 pub async fn start_run(state: &AppState, v: ValidatedStart, owner: &OwnerDigest) -> Result<RunId> {
+    if v.dry_run {
+        return Err(Error::validation(
+            "a dry run must use preview; it cannot be dispatched",
+        ));
+    }
     let store = state.store();
     let inputs = resolve_inputs(store, &v, owner).await?;
 
@@ -697,6 +706,41 @@ mod tests {
         assert!(validate(request("   \n\t ")).is_err());
     }
 
+    /// The route layer diverts `dry_run` to [`preview`], so this guard is
+    /// defense in depth: any future caller of [`start_run`] must get a
+    /// refusal, never a dispatched run, from a dry-run request.
+    #[tokio::test]
+    async fn start_run_refuses_a_dry_run_and_persists_nothing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = Store::open(dir.path().join(".uruk/state.sqlite"))
+            .await
+            .expect("open store");
+        let state = AppState::new(
+            store,
+            std::sync::Arc::new(crate::provider::MockProvider::new()),
+            crate::web::WebConfig::default(),
+        );
+        let v = validate(StartRunRequest {
+            dry_run: true,
+            ..request("q")
+        })
+        .expect("valid");
+        let owner = OwnerDigest::from_token("browser-token");
+
+        let err = start_run(&state, v, &owner).await.expect_err("refused");
+
+        assert!(matches!(err, Error::Validation(_)), "got {err:?}");
+        assert!(
+            state
+                .store()
+                .list_run_overviews()
+                .await
+                .expect("list runs")
+                .is_empty(),
+            "a refused dry run must not leave a run behind"
+        );
+    }
+
     #[test]
     fn defaults_mirror_the_cli() {
         let v = validate(request("why do the measurements disagree")).expect("valid");
@@ -866,6 +910,7 @@ mod tests {
         let ok = validate(StartRunRequest {
             input_urls: vec![
                 "  https://example.org/paper.pdf ".into(),
+                "https://example.org/paper.pdf".into(),
                 "http://example.org/data.csv".into(),
                 "".into(),
             ],
@@ -909,7 +954,7 @@ mod tests {
             .is_err()
         );
         let v = validate(StartRunRequest {
-            upload_ids: vec!["  upl_a ".into(), "".into()],
+            upload_ids: vec!["  upl_a ".into(), "upl_a".into(), "".into()],
             ..request("q")
         })
         .expect("valid");
