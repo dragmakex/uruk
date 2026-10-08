@@ -120,14 +120,38 @@ cannot quietly skip the check.
 | `GET /api/runs/{id}/events` | SSE stream of snapshots |
 | `GET /api/runs/{id}/report` | exported `REPORT.md` + `manifest.json` |
 | `GET /api/runs/{id}/sources` | the run's recorded sources |
+| `GET /api/runs/{id}/sources/{sid}` | one source with its indexed passage count |
+| `GET /api/runs/{id}/sources/{sid}/passages` | browse (`offset`/`limit`) or search (`q`) one source's passages |
 | `GET /api/runs/{id}/passages?q=…` | local FTS5 passage search |
-| `GET /api/library` | all sources across this browser's runs |
+| `GET /api/runs/{id}/citations` | every persisted citation with its honest resolution |
+| `GET /api/library` | all sources across this browser's runs; filters `access`, `origin`, `q` |
+| `GET /api/library/passages?q=…` | BM25 passage search across every owned run |
 
 Every route except `/api/health` requires the browser identity: a request
 without a valid `uruk_browser` cookie gets one minted (and used for that
 same request) via `Set-Cookie`. All `{id}` routes are owner-checked; a
 run belonging to another browser is answered exactly like a run that
-does not exist.
+does not exist. Source-scoped routes additionally require the source to
+belong to that run — both constraints live in the SQL queries themselves
+(and in the `OwnedSource` extractor), never in a post-fetch check, so a
+foreign run, a foreign source, and a nonexistent one are indistinguishable.
+
+### The library explorer and honest citations
+
+The library pages (`/library`, `/library/search`, and the per-source page
+under each run) expose only recorded facts: the provenance a run stored
+for each source, and the passages chunked from the extracted-text
+artifact with their exact byte offsets into the canonical UTF-8 text.
+`GET /api/runs/{id}/citations` resolves every persisted citation —
+deliverable claim groundings and review observations — into exactly one
+of three honest shapes: a `span` whose bytes are served only after the
+artifact still matches its recorded content hash and the offsets fall on
+character boundaries; a `source_locator` when the citation names a
+recorded source at a coarse locator (a page, a section); or `unresolved`
+with the reason stated plainly (unknown source id, drifted artifact,
+out-of-bounds or mid-character span). Nothing is approximated or
+repaired, and all byte slicing happens in Rust — the frontend renders
+resolved text, it never slices offsets itself (`src/report/citations.rs`).
 
 `POST /api/runs` accepts `mode` (`task` default, `campaign`) and `ranking`
 (`simple` default, `tournament`). Both ranking options keep the Elo
