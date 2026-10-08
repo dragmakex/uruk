@@ -98,6 +98,12 @@ export default async function ReportPage({
       <div className="page-head">
         <h1>Report, run {shortRunId(report.run_id)}</h1>
         <Link
+          href={`/runs/${encodeURIComponent(report.run_id)}/citations`}
+          className="btn btn-outline"
+        >
+          Inspect citations
+        </Link>
+        <Link
           href={`/runs/${encodeURIComponent(report.run_id)}`}
           className="btn btn-outline"
         >

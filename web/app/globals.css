@@ -937,6 +937,134 @@ details.legend-fold .legend-line {
   color: var(--muted);
 }
 
+/* ---------- library explorer ---------- */
+
+.filter-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 16px 20px;
+  margin-bottom: 28px;
+  border: var(--hairline) solid var(--line);
+  background: var(--surface);
+}
+
+.filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.filter-field label {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+}
+
+.filter-field select,
+.filter-field input {
+  border: var(--hairline) solid var(--line-soft);
+  background: var(--surface-raised);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  padding: 7px 10px;
+}
+
+.filter-field select:focus,
+.filter-field input:focus {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.filter-grow {
+  flex: 1;
+  min-width: 200px;
+}
+
+.hit-list,
+.cite-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  border: var(--hairline) solid var(--line);
+  background: var(--surface);
+}
+
+.hit-row,
+.cite-item {
+  padding: 16px 20px;
+  border-bottom: var(--hairline) solid var(--line-soft);
+}
+
+.hit-row:last-child,
+.cite-item:last-child {
+  border-bottom: 0;
+}
+
+.hit-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.hit-snippet {
+  margin: 8px 0 0;
+  font-size: 14.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.fact-mono {
+  font-family: var(--font-mono);
+  word-break: break-all;
+}
+
+.cite-claim {
+  margin: 8px 0 4px;
+  font-size: 15.5px;
+  font-weight: 650;
+}
+
+.cite-quote {
+  margin: 10px 0 0;
+  padding: 10px 16px;
+  border-left: 3px solid var(--line);
+  background: var(--surface-raised);
+}
+
+.cite-quote p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.cite-quote footer {
+  margin-top: 6px;
+}
+
+.cite-unresolved {
+  margin: 8px 0 0;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--danger-ink);
+}
+
 /* ---------- states ---------- */
 
 .empty-state,
