@@ -12,14 +12,16 @@ mod search;
 mod tasks;
 #[cfg(test)]
 mod tests;
+mod uploads;
 mod writes;
 
 pub use lock::ProjectLock;
-pub use owners::OwnerDigest;
-pub use passages::{PassageHit, sanitize_match_query};
+pub use owners::{OwnerDigest, SourceFilter};
+pub use passages::{OwnedPassageHit, PassageHit, StoredPassage, sanitize_match_query};
 pub use queries::{ItemSummary, RunOverview};
 pub use search::StoredWork;
 pub use tasks::BudgetUsage;
+pub use uploads::Upload;
 pub use writes::RecordBatch;
 
 use crate::records::RunId;

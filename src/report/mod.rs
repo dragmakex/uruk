@@ -4,6 +4,10 @@
 //! persisted records, so budget exhaustion or a crash still permits a clearly
 //! labelled partial report.
 
+mod citations;
 mod export;
+mod pdf;
 
-pub use export::{Export, export_run};
+pub use citations::{CitationOrigin, CitationRecord, CitationResolution, collect_citations};
+pub use export::{Export, REPORT_SECTIONS, REPORT_TEMPLATE_VERSION, export_run};
+pub use pdf::render_report_pdf;
