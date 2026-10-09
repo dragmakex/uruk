@@ -1218,6 +1218,36 @@ details.legend-fold .legend-line {
   text-align: center;
 }
 
+@media (min-width: 1024px) {
+  .landing {
+    max-width: 1080px;
+    padding-top: clamp(112px, 12vh, 160px);
+  }
+
+  .landing h1 {
+    font-size: clamp(72px, 6vw, 88px);
+    line-height: 1;
+  }
+
+  .landing p.lede {
+    max-width: 62ch;
+    margin: 32px 0 48px;
+    font-size: clamp(22px, 1.65vw, 26px);
+    line-height: 1.55;
+  }
+
+  .landing-actions {
+    gap: 20px;
+  }
+
+  .landing-action {
+    min-width: 184px;
+    min-height: 56px;
+    padding: 15px 32px;
+    font-size: 17px;
+  }
+}
+
 @media (max-width: 640px) {
   .landing {
     padding-top: 48px;
