@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ApiDown } from "@/components/ApiDown";
+import { ReportMarkdown } from "@/components/ReportMarkdown";
 import { ApiFailure, fetchReport } from "@/lib/api";
 import { shortRunId } from "@/lib/format";
 import { identityCookieHeader } from "@/lib/server-identity";
@@ -47,10 +48,12 @@ function manifestFacts(
 }
 
 /**
- * The exported report, served verbatim. The markdown is rendered as
- * preformatted text: the report is the scientific record, so this page
- * shows exactly the bytes the engine exported rather than a lossy
- * reinterpretation (web/README.md documents this choice).
+ * The exported report, rendered for reading. The report is the
+ * scientific record, so the canonical bytes remain available unmodified:
+ * Download Markdown serves `REPORT.md` verbatim and Download PDF serves
+ * its deterministic PDF twin, both straight from the engine. The
+ * rendering below is a readable view of those bytes, never a substitute
+ * for them (web/README.md documents this choice).
  */
 export default async function ReportPage({
   params,
@@ -97,18 +100,32 @@ export default async function ReportPage({
     <div className="canvas canvas-narrow">
       <div className="page-head">
         <h1>Report, run {shortRunId(report.run_id)}</h1>
-        <Link
-          href={`/runs/${encodeURIComponent(report.run_id)}/citations`}
-          className="btn btn-outline"
-        >
-          Inspect citations
-        </Link>
-        <Link
-          href={`/runs/${encodeURIComponent(report.run_id)}`}
-          className="btn btn-outline"
-        >
-          Back to the run
-        </Link>
+        <div className="report-actions">
+          <Link
+            href={`/runs/${encodeURIComponent(report.run_id)}/citations`}
+            className="btn btn-outline"
+          >
+            Inspect citations
+          </Link>
+          <a
+            href={`/api/runs/${encodeURIComponent(report.run_id)}/report.pdf`}
+            className="btn btn-outline"
+          >
+            Download PDF
+          </a>
+          <a
+            href={`/api/runs/${encodeURIComponent(report.run_id)}/report.md`}
+            className="btn btn-outline"
+          >
+            Download Markdown
+          </a>
+          <Link
+            href={`/runs/${encodeURIComponent(report.run_id)}`}
+            className="btn btn-outline"
+          >
+            Back to the run
+          </Link>
+        </div>
       </div>
 
       {facts.length > 0 && (
@@ -123,7 +140,7 @@ export default async function ReportPage({
       )}
 
       <div className="panel">
-        <pre className="report-pre">{report.markdown}</pre>
+        <ReportMarkdown markdown={report.markdown} />
       </div>
     </div>
   );

@@ -270,8 +270,62 @@ export interface ApiErrorBody {
   kind: string;
 }
 
+/**
+ * Everything `POST /api/runs` accepts (`src/web/start.rs`). Only `goal`,
+ * `mode`, and `ranking` are always sent; the rest ride along when the
+ * form sets them. There is deliberately no field here for a filesystem
+ * path or an execution grant — files travel as owner-bound uploads and
+ * the web surface never grants execution.
+ */
 export interface StartRunInput {
   goal: string;
   mode: "task" | "campaign";
   ranking: "simple" | "tournament";
+  profile?: string;
+  deliverables?: string[];
+  preferences?: string[];
+  attributes?: string[];
+  constraints?: string[];
+  max_model_calls?: number;
+  max_seconds?: number;
+  max_iterations?: number;
+  max_debate_turns?: number;
+  max_acquisitions?: number;
+  input_urls?: string[];
+  upload_ids?: string[];
+  allow_network?: boolean;
+  search?: boolean;
+  search_connectors?: string[];
+  dry_run?: boolean;
+}
+
+/** An owner-bound upload as the API reports it; storage stays server-side. */
+export interface UploadView {
+  id: string;
+  file_name: string;
+  size_bytes: number;
+  content_hash: string;
+  created_at: string;
+}
+
+/** The `dry_run: true` response: the plan a start would dispatch. */
+export interface RunPreview {
+  plan: {
+    roles: string[];
+    methods: string[];
+    rationale: string;
+  };
+  inputs: string[];
+  permissions: {
+    network: boolean;
+    execute: boolean;
+    allowed_tools: string[];
+  };
+  budget: {
+    max_model_calls: number;
+    max_seconds: number;
+    max_iterations: number;
+    max_debate_turns: number;
+    max_acquisitions: number;
+  };
 }

@@ -109,7 +109,7 @@ impl Store {
 
     pub async fn list_tasks(&self, run_id: &RunId) -> Result<Vec<Task>> {
         let rows: Vec<String> =
-            sqlx::query_scalar("SELECT body FROM tasks WHERE run_id = ? ORDER BY created_at")
+            sqlx::query_scalar("SELECT body FROM tasks WHERE run_id = ? ORDER BY created_at, id")
                 .bind(run_id.as_str())
                 .fetch_all(self.pool())
                 .await?;
