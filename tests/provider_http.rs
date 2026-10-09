@@ -239,6 +239,49 @@ fn from_env_requires_a_model_when_a_url_is_set() {
     unsafe { std::env::remove_var(uruk::provider::ENV_REASONING) };
 
     // FIXME: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::set_var(uruk::provider::ENV_RPM, "20") };
+    assert_eq!(
+        HttpProvider::from_env()
+            .unwrap()
+            .unwrap()
+            .requests_per_minute(),
+        Some(20),
+        "{} opts any provider in to pacing",
+        uruk::provider::ENV_RPM
+    );
+
+    // FIXME: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::set_var(uruk::provider::ENV_URL, "https://api.swissai.cscs.ch/v1") };
+    // FIXME: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::set_var(uruk::provider::ENV_RPM, "0") };
+    assert_eq!(
+        HttpProvider::from_env()
+            .unwrap()
+            .unwrap()
+            .requests_per_minute(),
+        None,
+        "0 disables pacing, including the SwissAI default"
+    );
+    // FIXME: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::remove_var(uruk::provider::ENV_RPM) };
+    assert_eq!(
+        HttpProvider::from_env()
+            .unwrap()
+            .unwrap()
+            .requests_per_minute(),
+        Some(14),
+        "a SwissAI URL defaults to 14 requests/minute without any RPM setting"
+    );
+    // FIXME: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::set_var(uruk::provider::ENV_RPM, "not-a-number") };
+    assert!(
+        HttpProvider::from_env().is_err(),
+        "an unparseable RPM is a misconfiguration, not a silent default"
+    );
+    // FIXME: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::remove_var(uruk::provider::ENV_RPM) };
+
+    // FIXME: Audit that the environment access only happens in single-threaded code.
     unsafe { std::env::remove_var(uruk::provider::ENV_URL) };
     assert!(
         HttpProvider::from_env().unwrap().is_none(),
