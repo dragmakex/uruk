@@ -25,7 +25,7 @@ pub struct AgentContext {
     pub permissions: Permissions,
     /// Meta-review feedback supplied to this task, if any.
     pub feedback: Option<Feedback>,
-    /// Researcher feedback recorded through the CLI, newest last, attributed.
+    /// Researcher feedback on record for this run, newest last, attributed.
     pub human_feedback: Vec<String>,
     /// Underexplored directions from the latest research overview, fed back
     /// to Generation (SPEC §5 Meta-review).

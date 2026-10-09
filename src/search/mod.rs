@@ -2,9 +2,9 @@
 //! freely accessible public scholarly APIs (OpenAlex, Crossref, arXiv).
 //!
 //! Uruk runs none of these operators' code: the connectors consume hosted
-//! APIs. Search is an explicit opt-in (`--search`, which requires
-//! `--allow-network`); `--allow-network` alone retains URL-fetch-only
-//! behavior and sends zero connector traffic. With search enabled, query
+//! APIs. Search is an explicit opt-in (the `search:*` allowlist grants,
+//! which require the network permission); the network permission alone
+//! retains URL-fetch-only behavior and sends zero connector traffic. With search enabled, query
 //! text, year filters, and the configured contact email are the only data
 //! transmitted — never source contents, never the full goal record — and
 //! every transmitted query is persisted verbatim in a `SearchRecord` so the
@@ -395,7 +395,7 @@ mod tests {
         };
         assert!(
             discovery_connectors(&network_only).is_empty(),
-            "--allow-network alone enables nothing without --search's allowlist entries"
+            "the network permission alone enables nothing without the search allowlist entries"
         );
         assert!(!any_connector_enabled(&network_only));
 

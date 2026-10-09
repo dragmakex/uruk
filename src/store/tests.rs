@@ -1071,7 +1071,8 @@ async fn concurrent_writers_do_not_collide() {
 }
 
 /// Two `Store` handles on one file behave like two processes: a scheduler
-/// and a `uruk approve` writing at once must queue, not fail (SPEC §9.2).
+/// and another writer (e.g. a stop request) writing at once must queue,
+/// not fail (SPEC §9.2).
 #[tokio::test]
 async fn concurrent_writers_across_stores_do_not_collide() {
     let dir = tempfile::tempdir().unwrap();

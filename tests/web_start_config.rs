@@ -11,7 +11,6 @@
 //!
 //! Everything runs offline against temporary SQLite stores through
 //! `tower::ServiceExt::oneshot`.
-#![cfg(feature = "web")]
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};

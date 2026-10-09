@@ -1,7 +1,7 @@
 //! Single-writer project lock (SPEC §9.2).
 //!
 //! "One scheduler process owns a project at a time, enforced by an OS-held
-//! project lock. Other CLI invocations may inspect state or submit durable
+//! project lock. Other processes may inspect state or submit durable
 //! control requests; they must not start a competing scheduler."
 
 use crate::{Error, Result};
@@ -23,7 +23,8 @@ impl ProjectLock {
     /// Try to acquire the scheduler lock for `project_dir`.
     ///
     /// Returns `Err(Error::Permission)` if another process holds it, rather
-    /// than blocking, so a second `uruk run` fails fast with a clear message.
+    /// than blocking, so a second `uruk serve` fails fast with a clear
+    /// message.
     pub fn acquire(project_dir: impl AsRef<Path>) -> Result<Self> {
         let dir = project_dir.as_ref().join(".uruk");
         std::fs::create_dir_all(&dir)?;
@@ -54,7 +55,7 @@ impl ProjectLock {
             {
                 Err(Error::permission(format!(
                     "another Uruk scheduler already owns this project (lock: {}). \
-                     Use `uruk status` to inspect, or stop the running scheduler.",
+                     Stop the other `uruk serve` process, or serve a different project.",
                     path.display()
                 )))
             }

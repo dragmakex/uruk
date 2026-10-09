@@ -226,8 +226,8 @@ pub trait Provider: Send + Sync + std::fmt::Debug {
 ///
 /// With `URUK_PROVIDER_URL` and `URUK_MODEL` set, any OpenAI-compatible
 /// endpoint is used. Without them the run proceeds offline against a
-/// stand-in that says plainly that nothing was analysed. The CLI and the web
-/// API share this exact selection.
+/// stand-in that says plainly that nothing was analysed. Every run the web
+/// API dispatches goes through this exact selection.
 pub fn from_env_or_offline() -> Result<std::sync::Arc<dyn Provider>> {
     if let Some(http) = HttpProvider::from_env()? {
         tracing::info!(

@@ -92,12 +92,13 @@ impl Store {
         let opts = SqliteConnectOptions::from_str(&format!("sqlite://{}", absolute.display()))
             .map_err(Error::Storage)?
             .create_if_missing(true)
-            // WAL keeps readers (`uruk status`) from blocking the scheduler.
+            // WAL keeps readers (API snapshots, SSE) from blocking the
+            // scheduler.
             .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
             .synchronous(sqlx::sqlite::SqliteSynchronous::Full)
             .foreign_keys(true)
-            // Another process (`uruk approve`, `uruk stop`) may write at
-            // the same time. Write transactions begin with `BEGIN IMMEDIATE`
+            // Another writer (a stop request, another store handle) may
+            // write at the same time. Write transactions begin with `BEGIN IMMEDIATE`
             // (see `begin_write`) so a second writer waits on this timeout
             // instead of failing with SQLITE_BUSY_SNAPSHOT after reading.
             .busy_timeout(std::time::Duration::from_secs(30));
@@ -162,9 +163,9 @@ impl Store {
     }
 
     /// Stable project identity: the id is derived from the canonical
-    /// project directory (as resolved by [`Store::open`]), so the CLI and
-    /// the web API agree on which project row a run belongs to regardless
-    /// of how the path was spelled on the command line.
+    /// project directory (as resolved by [`Store::open`]), so every caller
+    /// agrees on which project row a run belongs to regardless of how the
+    /// path was spelled on the command line.
     pub fn project_identity(&self) -> (crate::records::ProjectId, String) {
         let name = self.project_dir.to_string_lossy().into_owned();
         let id = crate::records::ProjectId::from_raw(format!(

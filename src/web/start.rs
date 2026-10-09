@@ -1,11 +1,11 @@
 //! Starting a run over the API: validation, record creation, and dispatch.
 //!
-//! The creation path mirrors `uruk run` for everything an anonymous
-//! browser can be answerable for: mode, profile, deliverables, the
+//! The creation path supports everything an anonymous browser can be
+//! answerable for: mode, profile, deliverables, the
 //! rubric, budgets, URL inputs, owner-bound uploads, network retrieval,
-//! and opt-in literature search. Two grants stay CLI-only on purpose —
-//! local subprocess execution and arbitrary tool names — because the web
-//! surface has no exact-payload approve/deny step to bind them to, and
+//! and opt-in literature search. Local subprocess execution and arbitrary
+//! tool names remain unavailable because the web surface has no
+//! exact-payload approve/deny step to bind them to, and
 //! no request field here ever names a server filesystem path: files
 //! reach a run only through the owner-bound upload store.
 
@@ -361,7 +361,7 @@ pub fn validate(req: StartRunRequest) -> Result<ValidatedStart> {
 /// The permissions a web-started run gets: exactly what the request
 /// granted, plus provider disclosure, and never execution — the web
 /// surface has no exact-payload approval step for an anonymous cookie to
-/// answer, so grants with local side effects stay CLI-only (SPEC §12).
+/// answer, so grants with local side effects remain unavailable (SPEC §12).
 fn permissions_for(v: &ValidatedStart, read_paths: Vec<String>) -> Permissions {
     Permissions {
         read_paths,
@@ -519,8 +519,8 @@ pub async fn preview(
 }
 
 /// Persist the run, gate it on safety, ingest its inputs, plan it, and
-/// dispatch the scheduler in the background. Mirrors the CLI `run` path
-/// (SPEC §11, §12), with one addition: the run is bound to the requesting
+/// dispatch the scheduler in the background (SPEC §11, §12). The run is
+/// bound to the requesting
 /// browser's [`OwnerDigest`] in the same transaction that creates it, so
 /// a crash cannot leave an unowned web run behind.
 pub async fn start_run(state: &AppState, v: ValidatedStart, owner: &OwnerDigest) -> Result<RunId> {
@@ -534,8 +534,8 @@ pub async fn start_run(state: &AppState, v: ValidatedStart, owner: &OwnerDigest)
 
     let run_id = RunId::new();
     let goal_id = GoalId::new();
-    // The same derivation the CLI uses, so web and CLI runs share one
-    // project row.
+    // Derived from the canonical project directory, so every run in this
+    // project shares one project row.
     let (project_id, project_name) = store.project_identity();
 
     let goal = build_goal(&v, &run_id, &goal_id, &inputs);
@@ -639,13 +639,12 @@ fn dispatch(state: AppState, run_id: RunId) -> bool {
 
 /// Dispatch schedulers for runs this process should be driving but is not.
 ///
-/// Two cases, both consequences of `uruk serve` owning the project
-/// scheduler lock (which locks `uruk resume` out):
+/// Two cases, both consequences of `uruk serve` being the project's only
+/// scheduler owner:
 ///
 /// - a run left `running` by an interrupted process would otherwise sit
 ///   that way forever;
-/// - a run parked `waiting-for-human` whose approvals have all been
-///   decided (`uruk approve` / `uruk deny` work from another terminal)
+/// - a run parked `waiting-for-human` with no approvals left pending
 ///   needs a scheduler to pick the released work back up.
 ///
 /// Runs already claimed by an in-process scheduler are skipped, as are
@@ -742,7 +741,7 @@ mod tests {
     }
 
     #[test]
-    fn defaults_mirror_the_cli() {
+    fn omitted_fields_get_the_documented_defaults() {
         let v = validate(request("why do the measurements disagree")).expect("valid");
         assert_eq!(v.mode, Mode::Task);
         assert_eq!(v.max_model_calls, 200);

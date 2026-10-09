@@ -11,8 +11,8 @@
 //! - **The raw token is never persisted.** Only its SHA-256 digest reaches
 //!   SQLite, so a copy of the database does not grant access to anyone's
 //!   runs.
-//! - **Web access fails closed.** A run without an owner row (every CLI
-//!   run, and every run created before ownership existed) is reported as
+//! - **Web access fails closed.** A run without an owner row (created by
+//!   an engine caller outside the web API, or before ownership existed) is reported as
 //!   `not_found` by the owner-scoped reads — exactly like a run that does
 //!   not exist — never adopted by or exposed to a web visitor.
 
@@ -92,8 +92,8 @@ impl Store {
     ///
     /// Returns [`Error::NotFound`] with the same message for a run that
     /// does not exist, a run owned by a different browser, and a run with
-    /// no owner at all (CLI runs), so the web API cannot disclose which of
-    /// those a probed id is.
+    /// no owner at all, so the web API cannot disclose which of those a
+    /// probed id is.
     pub async fn get_run_owned(&self, run_id: &RunId, owner: &OwnerDigest) -> Result<Run> {
         let owned: Option<i64> =
             sqlx::query_scalar("SELECT 1 FROM run_owners WHERE run_id = ? AND owner_digest = ?")
@@ -109,7 +109,7 @@ impl Store {
     }
 
     /// The owner-scoped run listing: newest first, ties broken by id, runs
-    /// of other owners and ownerless (CLI) runs excluded.
+    /// of other owners and ownerless runs excluded.
     pub async fn list_run_overviews_owned(&self, owner: &OwnerDigest) -> Result<Vec<RunOverview>> {
         let rows = sqlx::query(
             "SELECT r.id, r.state, r.stop_condition, r.iterations, r.created_at, r.updated_at,

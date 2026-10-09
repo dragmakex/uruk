@@ -20,7 +20,7 @@ macro_rules! id_type {
                 Self(format!("{}_{}", $prefix, uuid::Uuid::new_v4().simple()))
             }
 
-            /// Wrap an existing string (e.g. read back from storage or CLI input).
+            /// Wrap an existing string (e.g. read back from storage or API input).
             pub fn from_raw(s: impl Into<String>) -> Self {
                 Self(s.into())
             }

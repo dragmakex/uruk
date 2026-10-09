@@ -38,9 +38,10 @@ function cleanFilter(params: {
 /**
  * Every source recorded across this browser's runs, with the provenance
  * facts the engine stores: how it was obtained, how much was readable,
- * and the content hash pinning exactly what was read. Sources from CLI
- * runs belong to the terminal, not to any browser workspace, so they do
- * not appear here. The metadata filters are applied by the API itself.
+ * and the content hash pinning exactly what was read. Ownerless runs
+ * (from builds that predate the web-only product) belong to no browser
+ * workspace, so their sources do not appear here. The metadata filters
+ * are applied by the API itself.
  */
 export default async function LibraryPage({
   searchParams,
@@ -135,10 +136,8 @@ export default async function LibraryPage({
             <h2>No sources in this browser&apos;s runs</h2>
             <p>
               Sources are recorded when a run ingests files or URLs or
-              acquires literature. Web-started runs grant no inputs yet, and
-              CLI-run sources belong to the terminal rather than to this
-              anonymous browser workspace, so this library stays empty for
-              now.
+              acquires literature. Start a run with uploads, URLs, or
+              literature search to populate this library.
             </p>
             <Link href="/runs" className="btn btn-outline">
               View runs
