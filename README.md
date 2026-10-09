@@ -74,9 +74,20 @@ URUK_PROVIDER_URL=http://localhost:11434/v1   # Ollama; or https://api.openai.co
 URUK_MODEL=qwen3.5:9b
 URUK_API_KEY=...                              # optional for local servers
 URUK_REASONING_EFFORT=none                    # optional; stops reasoning models thinking at length
+URUK_PROVIDER_RPM=14                          # optional; paces request starts (0 disables)
 ```
 
 A variable exported in the shell overrides the file.
+
+`URUK_PROVIDER_RPM` spaces out request *starts* (one per `60/RPM` seconds,
+shared across all workers in the process) without limiting how many requests
+may be in flight at once; retries are paced the same way, and a 429
+`Retry-After` is honored on top. SwissAI endpoints (any `swissai` host, e.g.
+`https://api.swissai.cscs.ch/v1`) default to the platform's published limit
+of 14 requests/minute; every other endpoint is unpaced unless the variable
+is set. `URUK_PROVIDER_RPM=0` switches pacing off, including that default.
+One endpoint gets exactly one schedule per process: if differently-configured
+handles ever target the same endpoint, the strictest rate binds them all.
 
 Without these, a run proceeds offline against a stand-in that performs no
 analysis. The report says so plainly rather than fabricating results.
