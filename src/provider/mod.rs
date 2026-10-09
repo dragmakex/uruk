@@ -10,9 +10,13 @@
 
 mod http;
 mod mock;
+mod pacing;
 
-pub use http::{ENV_KEY, ENV_MODEL, ENV_REASONING, ENV_URL, HttpProvider};
+pub use http::{
+    ENV_KEY, ENV_MODEL, ENV_REASONING, ENV_RPM, ENV_URL, HttpProvider, SWISSAI_DEFAULT_RPM,
+};
 pub use mock::{MockProvider, MockRule, Reply};
+pub use pacing::StartPacer;
 
 use crate::Result;
 use crate::records::CostActual;
