@@ -101,6 +101,12 @@ export default async function ReportPage({
       <div className="page-head">
         <h1>Report, run {shortRunId(report.run_id)}</h1>
         <div className="report-actions">
+          <Link
+            href={`/runs/${encodeURIComponent(report.run_id)}/citations`}
+            className="btn btn-outline"
+          >
+            Inspect citations
+          </Link>
           <a
             href={`/api/runs/${encodeURIComponent(report.run_id)}/report.pdf`}
             className="btn btn-outline"

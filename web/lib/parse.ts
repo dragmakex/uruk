@@ -15,9 +15,15 @@ import type {
   Assignment,
   BudgetUsage,
   BudgetView,
+  CitationOriginView,
+  CitationResolutionView,
+  CitationView,
   GoalView,
   ItemCard,
   Leader,
+  LibraryPassageHit,
+  PassagePage,
+  PassageView,
   PlanView,
   ReportView,
   RunMeta,
@@ -25,6 +31,8 @@ import type {
   RunPreview,
   RunSnapshot,
   RunState,
+  SourceDetail,
+  SourcePassageHit,
   SourceView,
   Stats,
   TaskCounts,
@@ -301,31 +309,146 @@ export function parseRunOverviews(value: unknown): RunOverview[] {
   });
 }
 
+function parseSource(value: unknown, path: string): SourceView {
+  const s = record(value, path);
+  const origin = record(s.origin, `${path}.origin`);
+  return {
+    id: str(s.id, `${path}.id`),
+    run_id: str(s.run_id, `${path}.run_id`),
+    origin: {
+      kind: str(origin.kind, `${path}.origin.kind`),
+      at: strOrNull(origin.at, `${path}.origin.at`),
+    },
+    title: strOrNull(s.title, `${path}.title`),
+    authors: strOrNull(s.authors, `${path}.authors`),
+    date: strOrNull(s.date, `${path}.date`),
+    identifier: strOrNull(s.identifier, `${path}.identifier`),
+    retrieved_at: str(s.retrieved_at, `${path}.retrieved_at`),
+    content_hash: str(s.content_hash, `${path}.content_hash`),
+    access: str(s.access, `${path}.access`),
+    access_limitations: strOrNull(
+      s.access_limitations,
+      `${path}.access_limitations`,
+    ),
+    text_artifact: strOrNull(s.text_artifact, `${path}.text_artifact`),
+  };
+}
+
 /** Validate a sources payload (per-run sources and the library). */
 export function parseSources(value: unknown): SourceView[] {
   const r = record(value, "sources response");
-  return array(r.sources, "sources").map((v, i) => {
-    const s = record(v, `sources[${i}]`);
-    const origin = record(s.origin, `sources[${i}].origin`);
+  return array(r.sources, "sources").map((v, i) =>
+    parseSource(v, `sources[${i}]`),
+  );
+}
+
+/** Validate the source detail payload. */
+export function parseSourceDetail(value: unknown): SourceDetail {
+  const r = record(value, "source response");
+  return {
+    run_id: str(r.run_id, "source response.run_id"),
+    source: parseSource(r.source, "source response.source"),
+    passage_count: num(r.passage_count, "source response.passage_count"),
+  };
+}
+
+function parsePassage(value: unknown, path: string): PassageView {
+  const p = record(value, path);
+  return {
+    seq: num(p.seq, `${path}.seq`),
+    byte_start: num(p.byte_start, `${path}.byte_start`),
+    byte_end: num(p.byte_end, `${path}.byte_end`),
+    text: str(p.text, `${path}.text`),
+  };
+}
+
+/** Validate a browse page of a source's passages. */
+export function parsePassagePage(value: unknown): PassagePage {
+  const r = record(value, "passages response");
+  return {
+    total: num(r.total, "passages response.total"),
+    offset: num(r.offset, "passages response.offset"),
+    limit: num(r.limit, "passages response.limit"),
+    passages: array(r.passages, "passages").map((p, i) =>
+      parsePassage(p, `passages[${i}]`),
+    ),
+  };
+}
+
+function parseHit(value: unknown, path: string): SourcePassageHit {
+  const h = record(value, path);
+  return {
+    ...parsePassage(value, path),
+    source_id: str(h.source_id, `${path}.source_id`),
+    snippet: str(h.snippet, `${path}.snippet`),
+    score: num(h.score, `${path}.score`),
+  };
+}
+
+/** Validate ranked hits of a within-source passage search. */
+export function parseSourcePassageHits(value: unknown): SourcePassageHit[] {
+  const r = record(value, "passages response");
+  return array(r.passages, "passages").map((h, i) =>
+    parseHit(h, `passages[${i}]`),
+  );
+}
+
+/** Validate ranked hits of the owner-wide passage search. */
+export function parseLibraryPassageHits(value: unknown): LibraryPassageHit[] {
+  const r = record(value, "passages response");
+  return array(r.passages, "passages").map((v, i) => {
+    const h = record(v, `passages[${i}]`);
     return {
-      id: str(s.id, `sources[${i}].id`),
-      run_id: str(s.run_id, `sources[${i}].run_id`),
-      origin: {
-        kind: str(origin.kind, `sources[${i}].origin.kind`),
-        at: strOrNull(origin.at, `sources[${i}].origin.at`),
-      },
-      title: strOrNull(s.title, `sources[${i}].title`),
-      authors: strOrNull(s.authors, `sources[${i}].authors`),
-      date: strOrNull(s.date, `sources[${i}].date`),
-      identifier: strOrNull(s.identifier, `sources[${i}].identifier`),
-      retrieved_at: str(s.retrieved_at, `sources[${i}].retrieved_at`),
-      content_hash: str(s.content_hash, `sources[${i}].content_hash`),
-      access: str(s.access, `sources[${i}].access`),
-      access_limitations: strOrNull(
-        s.access_limitations,
-        `sources[${i}].access_limitations`,
-      ),
-      text_artifact: strOrNull(s.text_artifact, `sources[${i}].text_artifact`),
+      ...parseHit(v, `passages[${i}]`),
+      run_id: str(h.run_id, `passages[${i}].run_id`),
+      source_title: strOrNull(h.source_title, `passages[${i}].source_title`),
+    };
+  });
+}
+
+function parseCitationOrigin(value: unknown, path: string): CitationOriginView {
+  const o = record(value, path);
+  const kind = str(o.kind, `${path}.kind`);
+  if (kind === "deliverable_claim") {
+    return { kind, basis: str(o.basis, `${path}.basis`) };
+  }
+  if (kind === "review_observation") {
+    return { kind, review_id: str(o.review_id, `${path}.review_id`) };
+  }
+  throw new ParseError(path, "deliverable_claim | review_observation", kind);
+}
+
+function parseResolution(value: unknown, path: string): CitationResolutionView {
+  const r = record(value, path);
+  const kind = str(r.kind, `${path}.kind`);
+  if (kind === "span") {
+    return {
+      kind,
+      start: num(r.start, `${path}.start`),
+      end: num(r.end, `${path}.end`),
+      text: str(r.text, `${path}.text`),
+      truncated: bool(r.truncated, `${path}.truncated`),
+    };
+  }
+  if (kind === "source_locator") return { kind };
+  if (kind === "unresolved") {
+    return { kind, reason: str(r.reason, `${path}.reason`) };
+  }
+  throw new ParseError(path, "span | source_locator | unresolved", kind);
+}
+
+/** Validate the citations payload; unknown shapes fail, never guess. */
+export function parseCitations(value: unknown): CitationView[] {
+  const r = record(value, "citations response");
+  return array(r.citations, "citations").map((v, i) => {
+    const c = record(v, `citations[${i}]`);
+    return {
+      origin: parseCitationOrigin(c.origin, `citations[${i}].origin`),
+      claim: str(c.claim, `citations[${i}].claim`),
+      source_id: str(c.source_id, `citations[${i}].source_id`),
+      source_title: strOrNull(c.source_title, `citations[${i}].source_title`),
+      locator: strOrNull(c.locator, `citations[${i}].locator`),
+      resolution: parseResolution(c.resolution, `citations[${i}].resolution`),
     };
   });
 }
