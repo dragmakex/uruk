@@ -551,6 +551,17 @@ pub async fn seed_review(f: &Fixture, item: &ResearchItem) -> Review {
 
 /// Insert a source with extracted text, for grounded-review tests.
 pub async fn seed_source(f: &Fixture, name: &str, text: &str) -> Source {
+    seed_source_adjusted(f, name, text, |_| {}).await
+}
+
+/// Insert a source with extracted text, adjusting its recorded facts
+/// (origin, access, limitations, …) before it is persisted.
+pub async fn seed_source_adjusted(
+    f: &Fixture,
+    name: &str,
+    text: &str,
+    adjust: impl FnOnce(&mut Source),
+) -> Source {
     let artifact_path = f.dir.path().join(format!("{name}.txt"));
     tokio::fs::write(&artifact_path, text).await.unwrap();
 
@@ -571,7 +582,7 @@ pub async fn seed_source(f: &Fixture, name: &str, text: &str) -> Source {
     };
     f.store.insert_artifact(&artifact).await.unwrap();
 
-    let source = Source {
+    let mut source = Source {
         id: SourceId::new(),
         schema_version: SCHEMA_VERSION,
         run_id: f.run_id.clone(),
@@ -586,8 +597,72 @@ pub async fn seed_source(f: &Fixture, name: &str, text: &str) -> Source {
         access_limitations: None,
         text_artifact: Some(artifact.id),
     };
+    adjust(&mut source);
     f.store.insert_source(&source).await.unwrap();
     source
+}
+
+/// Persist a review carrying observation citations, the way the Reflection
+/// observation strategy records them (SPEC §15.4: one locator per
+/// observation).
+pub async fn seed_observation_review(
+    f: &Fixture,
+    item: &ResearchItem,
+    observations: Vec<ObservationNote>,
+) -> Review {
+    let review = Review {
+        id: ReviewId::new(),
+        schema_version: SCHEMA_VERSION,
+        run_id: f.run_id.clone(),
+        item_id: item.id.clone(),
+        item_hash: item.content_hash.clone(),
+        strategy: ReviewStrategy::Observation,
+        assessment_text: "observation review".into(),
+        proposed_assessment: Assessment::Untested,
+        evidence: vec![],
+        objections: vec![],
+        unknowns: vec![],
+        next_actions: vec![],
+        execution_requests: vec![],
+        observations,
+        explanatory_label: None,
+        score: None,
+        author: Author::Agent {
+            role: "reflection".into(),
+            strategy: "observation".into(),
+        },
+        produced_by: None,
+        created_at: OffsetDateTime::now_utc(),
+    };
+    f.store.insert_review(&review).await.unwrap();
+    review
+}
+
+/// Write and record the synthesis deliverable artifact exactly as the
+/// executor stores it: a JSON artifact labelled "deliverable with claim
+/// provenance" (see `src/runtime/executor.rs`).
+pub async fn seed_deliverable(f: &Fixture, output: &serde_json::Value) -> Artifact {
+    let json = serde_json::to_string_pretty(output).unwrap();
+    let path = f.dir.path().join("deliverable.json");
+    tokio::fs::write(&path, &json).await.unwrap();
+
+    let artifact = Artifact {
+        id: ArtifactId::new(),
+        schema_version: SCHEMA_VERSION,
+        run_id: f.run_id.clone(),
+        media_type: "application/json".into(),
+        content_hash: ContentHash::of_str(&json),
+        size_bytes: json.len() as u64,
+        storage_path: path.to_string_lossy().into_owned(),
+        produced_by: None,
+        access: AccessClass::Open,
+        label: Some("deliverable with claim provenance".into()),
+        supersedes: None,
+        superseded_reason: None,
+        created_at: OffsetDateTime::now_utc(),
+    };
+    f.store.insert_artifact(&artifact).await.unwrap();
+    artifact
 }
 
 /// Whether a test that needs OS containment can run on this host.

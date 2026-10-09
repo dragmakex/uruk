@@ -195,6 +195,28 @@ impl Store {
         bodies(rows).await
     }
 
+    /// Fetch a source if — and only if — `run_id` recorded it.
+    ///
+    /// The run constraint lives in the SQL, not in a post-fetch check, so
+    /// this is safe for owner-scoped web reads (the caller authorizes the
+    /// run; this query cannot reach past it).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotFound`] with the same message for a source that
+    /// does not exist and one recorded by a different run, so a probing
+    /// caller cannot distinguish the two.
+    pub async fn get_source_in_run(&self, run_id: &RunId, id: &SourceId) -> Result<Source> {
+        let body: Option<String> =
+            sqlx::query_scalar("SELECT body FROM sources WHERE id = ? AND run_id = ?")
+                .bind(id.as_str())
+                .bind(run_id.as_str())
+                .fetch_optional(self.pool())
+                .await?;
+        let body = body.ok_or_else(|| Error::not_found(format!("source {id}")))?;
+        Ok(serde_json::from_str(&body)?)
+    }
+
     pub async fn get_source(&self, id: &SourceId) -> Result<Source> {
         let body: String = sqlx::query_scalar("SELECT body FROM sources WHERE id = ?")
             .bind(id.as_str())

@@ -459,7 +459,10 @@ pub async fn export_run(store: &Store, run_id: &RunId) -> Result<Export> {
 }
 
 /// The structured deliverable, if the run produced one.
-async fn load_deliverable(store: &Store, artifacts: &[Artifact]) -> Option<SynthesisOutput> {
+pub(super) async fn load_deliverable(
+    store: &Store,
+    artifacts: &[Artifact],
+) -> Option<SynthesisOutput> {
     let artifact = artifacts
         .iter()
         .rev()

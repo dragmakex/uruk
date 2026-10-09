@@ -193,6 +193,12 @@ export function LiveRun({
             </p>
             <Link href={`/runs/${encodeURIComponent(run.id)}/report`} className="btn">
               Read the report
+            </Link>{" "}
+            <Link
+              href={`/runs/${encodeURIComponent(run.id)}/citations`}
+              className="btn btn-outline"
+            >
+              Inspect citations
             </Link>
           </div>
         )}
