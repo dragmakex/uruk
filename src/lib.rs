@@ -35,6 +35,8 @@ pub enum Error {
     Assessment(#[from] records::AssessmentError),
     #[error("validation: {0}")]
     Validation(String),
+    #[error("conflict: {0}")]
+    Conflict(String),
     #[error("permission denied: {0}")]
     Permission(String),
     #[error("budget exhausted: {0}")]
@@ -52,6 +54,10 @@ pub enum Error {
 impl Error {
     pub fn validation(msg: impl Into<String>) -> Self {
         Self::Validation(msg.into())
+    }
+
+    pub fn conflict(msg: impl Into<String>) -> Self {
+        Self::Conflict(msg.into())
     }
 
     pub fn permission(msg: impl Into<String>) -> Self {
@@ -72,6 +78,7 @@ impl Error {
             Error::Json(_) => "serialization",
             Error::Assessment(_) => "assessment_rejected",
             Error::Validation(_) => "validation",
+            Error::Conflict(_) => "conflict",
             Error::Permission(_) => "permission",
             Error::Budget(_) => "budget",
             Error::NotFound(_) => "not_found",

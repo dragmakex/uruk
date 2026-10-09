@@ -9,6 +9,7 @@ use crate::records::*;
 use crate::store::{RecordBatch, Store};
 use crate::{Error, Result};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use time::OffsetDateTime;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
@@ -70,13 +71,27 @@ pub struct Scheduler {
 struct StopWatcher(tokio::task::JoinHandle<()>);
 
 impl StopWatcher {
-    fn spawn(store: Store, run_id: RunId, cancel: CancellationToken) -> Self {
+    fn spawn(
+        store: Store,
+        run_id: RunId,
+        cancel: CancellationToken,
+        pause_seen: Arc<AtomicBool>,
+    ) -> Self {
         Self(tokio::spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_millis(250)).await;
                 match store.get_run(&run_id).await {
-                    Ok(run) if run.state == RunState::Cancelled => {
-                        tracing::warn!("stop request observed; cancelling in-flight work");
+                    Ok(run) if matches!(run.state, RunState::Cancelled | RunState::Paused) => {
+                        tracing::warn!(
+                            state = run.state.as_str(),
+                            "control request observed; cancelling in-flight work"
+                        );
+                        if run.state == RunState::Paused {
+                            // Remember why the token fired: a pause may be
+                            // resumed before the scheduler finishes winding
+                            // down, and must not then read as a cancel.
+                            pause_seen.store(true, Ordering::Release);
+                        }
                         cancel.cancel();
                         return;
                     }
@@ -85,6 +100,33 @@ impl StopWatcher {
                 }
             }
         }))
+    }
+}
+
+/// What a scheduler whose cancellation token fired should do, given the
+/// durable run state it re-reads and whether the token fired because the
+/// stop watcher observed a pause.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WindDown {
+    /// Leave the paused state untouched; queued work waits for a resume.
+    Paused,
+    /// The pause was already resumed: exit without any terminal write so a
+    /// fresh scheduler (the serve reconcile sweep, or the resume dispatch)
+    /// takes the run over.
+    HandBack,
+    /// A genuine cancel request (durable `cancelled` state, or a direct
+    /// token cancel such as the CLI's Ctrl-C): finalize as cancelled.
+    Cancel,
+}
+
+fn wind_down(state: RunState, pause_seen: bool) -> WindDown {
+    match state {
+        RunState::Paused => WindDown::Paused,
+        // Only a resume moves a paused run back to `running`, so a cancelled
+        // token plus a running state after an observed pause means the
+        // researcher changed their mind, not that they asked for a cancel.
+        RunState::Running if pause_seen => WindDown::HandBack,
+        _ => WindDown::Cancel,
     }
 }
 
@@ -152,12 +194,34 @@ impl Scheduler {
 
         // The wall clock runs from the run's creation, not from this process
         // start, so a restart cannot extend the deadline (SPEC §6).
-        let deadline = run.created_at + time::Duration::seconds(goal.budget.wall_clock_secs as i64);
-        let _watcher = StopWatcher::spawn(self.store.clone(), run_id.clone(), self.cancel.clone());
+        let deadline = run.created_at
+            + time::Duration::milliseconds(run.paused_ms as i64)
+            + time::Duration::seconds(goal.budget.wall_clock_secs as i64);
+        let pause_seen = Arc::new(AtomicBool::new(false));
+        let _watcher = StopWatcher::spawn(
+            self.store.clone(),
+            run_id.clone(),
+            self.cancel.clone(),
+            pause_seen.clone(),
+        );
         let stop_condition: StopCondition;
 
         loop {
             if self.cancel.is_cancelled() {
+                let current = self.store.get_run(run_id).await?;
+                match wind_down(current.state, pause_seen.load(Ordering::Acquire)) {
+                    WindDown::Paused => {
+                        return self
+                            .summarize(run_id, RunState::Paused, None, uncertain, None)
+                            .await;
+                    }
+                    WindDown::HandBack => {
+                        return self
+                            .summarize(run_id, RunState::Running, None, uncertain, None)
+                            .await;
+                    }
+                    WindDown::Cancel => {}
+                }
                 stop_condition = StopCondition::Cancelled;
                 break;
             }
@@ -168,6 +232,12 @@ impl Scheduler {
                 self.cancel.cancel();
                 stop_condition = StopCondition::Cancelled;
                 break;
+            }
+            if run.state == RunState::Paused {
+                self.cancel.cancel();
+                return self
+                    .summarize(run_id, RunState::Paused, None, uncertain, None)
+                    .await;
             }
 
             let usage = self.store.budget_usage(run_id).await?;
@@ -821,5 +891,24 @@ mod tests {
 
         let c = derive_seed("plan:generation:literature::iter2");
         assert_ne!(a, c, "a later trial must not reuse the seed");
+    }
+
+    #[test]
+    fn wind_down_leaves_a_durable_pause_untouched() {
+        assert_eq!(wind_down(RunState::Paused, true), WindDown::Paused);
+        assert_eq!(wind_down(RunState::Paused, false), WindDown::Paused);
+    }
+
+    #[test]
+    fn wind_down_hands_a_resumed_pause_back_instead_of_cancelling() {
+        assert_eq!(wind_down(RunState::Running, true), WindDown::HandBack);
+    }
+
+    #[test]
+    fn wind_down_treats_a_direct_token_cancel_as_a_cancel_request() {
+        // The CLI's Ctrl-C cancels the token without a durable state change.
+        assert_eq!(wind_down(RunState::Running, false), WindDown::Cancel);
+        assert_eq!(wind_down(RunState::Cancelled, true), WindDown::Cancel);
+        assert_eq!(wind_down(RunState::Cancelled, false), WindDown::Cancel);
     }
 }

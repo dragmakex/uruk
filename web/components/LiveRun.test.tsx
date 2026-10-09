@@ -1,8 +1,21 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { snapshotFixture } from "@/lib/fixtures";
 import { parseRunSnapshot } from "@/lib/parse";
+import { resumeRun, restartRun, stopRun } from "@/lib/api";
 import { LiveRun } from "./LiveRun";
+
+const pushMock = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: pushMock }),
+}));
+
+vi.mock("@/lib/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api")>()),
+  stopRun: vi.fn(async () => {}),
+  resumeRun: vi.fn(async () => {}),
+  restartRun: vi.fn(async () => "run_fresh"),
+}));
 
 /**
  * jsdom has no EventSource; this stand-in records instances so tests can
@@ -49,11 +62,19 @@ const initial = parseRunSnapshot(snapshotFixture());
 beforeEach(() => {
   FakeEventSource.instances = [];
   vi.stubGlobal("EventSource", FakeEventSource);
+  vi.clearAllMocks();
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
 });
+
+function pausedSnapshot() {
+  const paused = snapshotFixture() as { run: Record<string, unknown> };
+  paused.run.state = "paused";
+  paused.run.paused_ms = 30_000;
+  return parseRunSnapshot(paused);
+}
 
 describe("LiveRun", () => {
   it("renders the header facts and topology from the initial snapshot", () => {
@@ -65,7 +86,7 @@ describe("LiveRun", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("tournament")).toBeInTheDocument();
     expect(screen.getAllByText("round 2 of 4").length).toBeGreaterThan(0);
-    expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Pause" })).toBeInTheDocument();
 
     // Topology: supervisor and generation panels from the snapshot.
     expect(screen.getByRole("heading", { name: "Supervisor" })).toBeInTheDocument();
@@ -100,11 +121,56 @@ describe("LiveRun", () => {
     expect(
       screen.getByText(/Run completed \(deliverable satisfied\)/),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Pause" })).not.toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: "Read the report" }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Restart" }),
+    ).toBeInTheDocument();
     expect(source!.closed).toBe(true);
+  });
+
+  it("shows a paused run with resume and restart instead of pause", () => {
+    render(<LiveRun runId="run_0412aa" initial={pausedSnapshot()} />);
+
+    expect(screen.getByRole("heading", { name: "Run paused" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Resume" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Restart" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Pause" })).not.toBeInTheDocument();
+  });
+
+  it("pause asks for confirmation and calls the stop endpoint", async () => {
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    render(<LiveRun runId="run_0412aa" initial={initial} />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Pause" }));
+    });
+
+    expect(vi.mocked(stopRun)).toHaveBeenCalledWith("run_0412aa");
+  });
+
+  it("resume calls the resume endpoint without a confirmation gate", async () => {
+    render(<LiveRun runId="run_0412aa" initial={pausedSnapshot()} />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+    });
+
+    expect(vi.mocked(resumeRun)).toHaveBeenCalledWith("run_0412aa");
+  });
+
+  it("restart confirms, then navigates to the fresh run", async () => {
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    render(<LiveRun runId="run_0412aa" initial={pausedSnapshot()} />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Restart" }));
+    });
+
+    expect(vi.mocked(restartRun)).toHaveBeenCalledWith("run_0412aa");
+    expect(pushMock).toHaveBeenCalledWith("/runs/run_fresh");
   });
 
   it("shows a reconnecting note when the stream drops", async () => {

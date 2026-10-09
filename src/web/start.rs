@@ -19,7 +19,7 @@ use crate::{Error, Result, report};
 use time::OffsetDateTime;
 
 /// Body of `POST /api/runs`.
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StartRunRequest {
     /// The research question: what would count as an answer.
@@ -539,6 +539,7 @@ pub async fn start_run(state: &AppState, v: ValidatedStart, owner: &OwnerDigest)
     let (project_id, project_name) = store.project_identity();
 
     let goal = build_goal(&v, &run_id, &goal_id, &inputs);
+    let now = OffsetDateTime::now_utc();
     let run = Run {
         id: run_id.clone(),
         schema_version: SCHEMA_VERSION,
@@ -548,7 +549,9 @@ pub async fn start_run(state: &AppState, v: ValidatedStart, owner: &OwnerDigest)
         state: RunState::Running,
         stop_condition: None,
         iterations: 0,
-        created_at: OffsetDateTime::now_utc(),
+        paused_at: None,
+        paused_ms: 0,
+        created_at: now,
         updated_at: OffsetDateTime::now_utc(),
     };
 
@@ -609,7 +612,7 @@ pub async fn start_run(state: &AppState, v: ValidatedStart, owner: &OwnerDigest)
 /// [`AppState`] for the scheduler's lifetime so the reconcile sweep never
 /// starts a second scheduler for it; returns whether this call took the
 /// claim.
-fn dispatch(state: AppState, run_id: RunId) -> bool {
+pub(super) fn dispatch(state: AppState, run_id: RunId) -> bool {
     if !state.claim_run(&run_id) {
         return false;
     }
@@ -635,6 +638,24 @@ fn dispatch(state: AppState, run_id: RunId) -> bool {
         state.release_run(&run_id);
     });
     true
+}
+
+/// Resume can race the scheduler that is winding down after observing the
+/// pause. Retry the in-process claim until that old scheduler releases it.
+pub(super) fn dispatch_when_available(state: AppState, run_id: RunId) {
+    tokio::spawn(async move {
+        loop {
+            if dispatch(state.clone(), run_id.clone()) {
+                return;
+            }
+            match state.store().get_run(&run_id).await {
+                Ok(run) if run.state == RunState::Running => {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+                _ => return,
+            }
+        }
+    });
 }
 
 /// Dispatch schedulers for runs this process should be driving but is not.

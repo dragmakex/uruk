@@ -436,6 +436,8 @@ async fn dispatch(cli: Cli) -> Result<Output> {
                 state: RunState::Running,
                 stop_condition: None,
                 iterations: 0,
+                paused_at: None,
+                paused_ms: 0,
                 created_at: OffsetDateTime::now_utc(),
                 updated_at: OffsetDateTime::now_utc(),
             };

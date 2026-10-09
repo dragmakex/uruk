@@ -112,6 +112,7 @@ function parseRunMeta(value: unknown, path: string): RunMeta {
     state: runState(r.state, `${path}.state`),
     stop_condition: strOrNull(r.stop_condition, `${path}.stop_condition`),
     iterations: num(r.iterations, `${path}.iterations`),
+    paused_ms: num(r.paused_ms, `${path}.paused_ms`),
     created_at: str(r.created_at, `${path}.created_at`),
     updated_at: str(r.updated_at, `${path}.updated_at`),
   };

@@ -6,6 +6,7 @@ export function snapshotFixture(): unknown {
       state: "running",
       stop_condition: null,
       iterations: 1,
+      paused_ms: 0,
       created_at: "2026-10-04T14:00:00Z",
       updated_at: "2026-10-04T14:04:17Z",
     },

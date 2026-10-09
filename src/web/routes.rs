@@ -4,8 +4,7 @@
 use super::error::{ApiError, ApiResult, rejection_to_error};
 use super::owner::{OwnedRun, Owner};
 use super::{AppState, start, view};
-use crate::records::RunId;
-use crate::runtime;
+use crate::records::{Actor, Decision, DecisionId, DecisionKind, RunId, RunState, SCHEMA_VERSION};
 use crate::{Error, Result};
 use axum::Json;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
@@ -67,6 +66,7 @@ async fn create_or_preview(
     request: start::StartRunRequest,
     owner: &crate::store::OwnerDigest,
 ) -> Result<StartOutcome> {
+    let stored = serde_json::to_string(&request)?;
     let validated = start::validate(request)?;
     if validated.dry_run {
         // A dry run persists nothing: the serve process auto-resumes every
@@ -76,21 +76,162 @@ async fn create_or_preview(
             start::preview(state, validated, owner).await?,
         ));
     }
-    Ok(StartOutcome::Created(
-        start::start_run(state, validated, owner).await?,
-    ))
+    let run_id = start::start_run(state, validated, owner).await?;
+    state.store().save_web_run_config(&run_id, &stored).await?;
+    Ok(StartOutcome::Created(run_id))
 }
 
 pub async fn stop_run(
     State(state): State<AppState>,
     OwnedRun(run_id): OwnedRun,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let outcome = runtime::request_stop(state.store(), &run_id).await?;
-    Ok(Json(serde_json::json!({
-        "ok": true,
-        "run_id": outcome.run_id.as_str(),
-        "cancelled_tasks": outcome.cancelled_tasks,
-    })))
+    let paused = serde_json::json!({
+        "ok": true, "run_id": run_id.as_str(), "state": "paused",
+    });
+    if state.store().try_pause_run(&run_id).await? {
+        record_lifecycle(
+            state.store(),
+            &run_id,
+            DecisionKind::Pause,
+            "research paused",
+            vec![],
+            serde_json::json!({}),
+        )
+        .await?;
+        return Ok(Json(paused));
+    }
+    // The guarded transition refused: answer from the state that won, so a
+    // stop racing another stop (or the run finishing) stays idempotent.
+    let current = state.store().get_run(&run_id).await?;
+    if current.state == RunState::Paused {
+        return Ok(Json(paused));
+    }
+    if current.state.is_terminal() {
+        return Err(ApiError(Error::validation(
+            "a finished run cannot be paused",
+        )));
+    }
+    Err(ApiError(Error::conflict(
+        "only a running or waiting run can be paused",
+    )))
+}
+
+pub async fn resume_run(
+    State(state): State<AppState>,
+    OwnedRun(run_id): OwnedRun,
+) -> ApiResult<Json<serde_json::Value>> {
+    if state.store().try_resume_run(&run_id).await? {
+        record_lifecycle(
+            state.store(),
+            &run_id,
+            DecisionKind::Resume,
+            "research resumed",
+            vec![],
+            serde_json::json!({}),
+        )
+        .await?;
+        start::dispatch_when_available(state.clone(), run_id.clone());
+        return Ok(Json(serde_json::json!({
+            "ok": true, "run_id": run_id.as_str(), "state": "running", "resumed": true,
+        })));
+    }
+    // The guarded transition refused: answer from the state that won.
+    let current = state.store().get_run(&run_id).await?;
+    if current.state == RunState::Running {
+        return Ok(Json(serde_json::json!({
+            "ok": true, "run_id": run_id.as_str(), "state": "running", "resumed": false,
+        })));
+    }
+    if current.state.is_terminal() {
+        return Err(ApiError(Error::validation(
+            "a finished run cannot be resumed",
+        )));
+    }
+    Err(ApiError(Error::conflict(
+        "only a paused run can be resumed",
+    )))
+}
+
+pub async fn restart_run(
+    State(state): State<AppState>,
+    Owner(owner): Owner,
+    OwnedRun(old_id): OwnedRun,
+) -> ApiResult<(StatusCode, Json<serde_json::Value>)> {
+    let body = state
+        .store()
+        .web_run_config(&old_id)
+        .await?
+        .ok_or_else(|| {
+            ApiError(Error::validation(
+                "this run has no saved browser start configuration",
+            ))
+        })?;
+    // Restarting a run that is still working would silently double its
+    // spend; it must pause or finish first. (The missing-configuration
+    // check comes first because that condition is permanent.)
+    let original = state.store().get_run(&old_id).await?;
+    if matches!(
+        original.state,
+        RunState::Running | RunState::WaitingForHuman
+    ) {
+        return Err(ApiError(Error::conflict(
+            "the run is still active; pause it or let it finish before restarting",
+        )));
+    }
+    let mut request: start::StartRunRequest = serde_json::from_str(&body).map_err(Error::from)?;
+    request.dry_run = false;
+    let new_id = start::start_run(&state, start::validate(request.clone())?, &owner).await?;
+    let encoded = serde_json::to_string(&request).map_err(Error::from)?;
+    state.store().save_web_run_config(&new_id, &encoded).await?;
+    record_lifecycle(
+        state.store(),
+        &old_id,
+        DecisionKind::Restart,
+        "fresh run created from saved intent",
+        vec![new_id.to_string()],
+        serde_json::json!({ "restarted_as": new_id.as_str() }),
+    )
+    .await?;
+    record_lifecycle(
+        state.store(),
+        &new_id,
+        DecisionKind::Restart,
+        "fresh run created from saved intent",
+        vec![old_id.to_string()],
+        serde_json::json!({ "restarted_from": old_id.as_str() }),
+    )
+    .await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({
+            "ok": true,
+            "run_id": new_id.as_str(),
+            "restarted_from": old_id.as_str(),
+        })),
+    ))
+}
+
+async fn record_lifecycle(
+    store: &crate::store::Store,
+    run_id: &RunId,
+    kind: DecisionKind,
+    reason: &str,
+    referenced: Vec<String>,
+    payload: serde_json::Value,
+) -> Result<()> {
+    store
+        .insert_decision(&Decision {
+            id: DecisionId::new(),
+            schema_version: SCHEMA_VERSION,
+            run_id: run_id.clone(),
+            kind,
+            actor: Actor::Researcher,
+            reason: reason.into(),
+            referenced,
+            payload,
+            created_at: time::OffsetDateTime::now_utc(),
+        })
+        .await
 }
 
 pub async fn report(

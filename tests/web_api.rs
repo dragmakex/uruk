@@ -227,7 +227,9 @@ async fn run_snapshot_ranks_items_by_rating_and_counts_reviews() {
 }
 
 #[tokio::test]
-async fn stop_marks_the_run_cancelled_and_records_the_decision() {
+async fn stop_pauses_the_run_and_records_a_pause_decision() {
+    // Web stop is a durable, resumable pause — deliberately not the CLI's
+    // terminal cancel. The full contract lives in tests/web_lifecycle.rs.
     let (app, fixture) = seeded_app(Mode::Campaign).await;
     let uri = format!("/api/runs/{}/stop", fixture.run_id);
     let response = app
@@ -238,16 +240,24 @@ async fn stop_marks_the_run_cancelled_and_records_the_decision() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = body_json(response).await;
     assert_eq!(body["ok"], true);
+    assert_eq!(body["state"], "paused");
 
     let run = fixture.store.get_run(&fixture.run_id).await.unwrap();
-    assert_eq!(run.state, RunState::Cancelled);
+    assert_eq!(run.state, RunState::Paused);
+    assert_eq!(run.stop_condition, None);
 
-    let decisions = fixture
+    let pauses = fixture
+        .store
+        .list_decisions_of_kind(&fixture.run_id, uruk::records::DecisionKind::Pause)
+        .await
+        .unwrap();
+    assert_eq!(pauses.len(), 1);
+    let stops = fixture
         .store
         .list_decisions_of_kind(&fixture.run_id, uruk::records::DecisionKind::Stop)
         .await
         .unwrap();
-    assert_eq!(decisions.len(), 1);
+    assert!(stops.is_empty(), "a pause is not a stop fact");
 }
 
 #[tokio::test]

@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { ApiFailure, stopRun } from "@/lib/api";
+import { ApiFailure, restartRun, resumeRun, stopRun } from "@/lib/api";
 import {
   elapsedBetween,
   formatClock,
@@ -32,24 +33,34 @@ function connectionNote(status: StreamStatus): string | null {
   }
 }
 
-/** Elapsed run seconds: live runs tick against now, finished runs freeze. */
+/**
+ * Elapsed *active* seconds: live runs tick against now, paused and
+ * finished runs freeze at their last recorded instant. Time spent paused
+ * is subtracted, matching the wall-clock budget, which excludes it.
+ */
 function useElapsedSeconds(snapshot: RunSnapshot | null): number | null {
   const [now, setNow] = useState(() => Date.now());
-  const running = snapshot !== null && !isTerminal(snapshot.run.state);
+  const ticking =
+    snapshot !== null &&
+    !isTerminal(snapshot.run.state) &&
+    snapshot.run.state !== "paused";
 
   useEffect(() => {
-    if (!running) return;
+    if (!ticking) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
-  }, [running]);
+  }, [ticking]);
 
   if (snapshot === null) return null;
-  if (!running) {
-    return elapsedBetween(snapshot.run.created_at, snapshot.run.updated_at);
+  const pausedSecs = Math.floor(snapshot.run.paused_ms / 1000);
+  if (!ticking) {
+    // For a paused run `updated_at` is the pause instant.
+    const frozen = elapsedBetween(snapshot.run.created_at, snapshot.run.updated_at);
+    return frozen === null ? null : Math.max(0, frozen - pausedSecs);
   }
   const started = Date.parse(snapshot.run.created_at);
   if (Number.isNaN(started)) return null;
-  return Math.max(0, Math.floor((now - started) / 1000));
+  return Math.max(0, Math.floor((now - started) / 1000) - pausedSecs);
 }
 
 /**
@@ -65,11 +76,14 @@ export function LiveRun({
   runId: string;
   initial: RunSnapshot | null;
 }) {
+  const router = useRouter();
   const stream = useRunStream(runId, initial);
   const snapshot = stream.snapshot;
   const elapsed = useElapsedSeconds(snapshot);
-  const [stopping, setStopping] = useState(false);
-  const [stopError, setStopError] = useState<string | null>(null);
+  const [acting, setActing] = useState<"pause" | "resume" | "restart" | null>(
+    null,
+  );
+  const [actionError, setActionError] = useState<string | null>(null);
 
   // Announce state transitions politely, not every snapshot.
   const [announcement, setAnnouncement] = useState("");
@@ -83,18 +97,47 @@ export function LiveRun({
     }
   }, [snapshot]);
 
-  async function onStop() {
-    if (!window.confirm("Stop this run? Pending work is cancelled.")) return;
-    setStopping(true);
-    setStopError(null);
+  async function act(
+    kind: "pause" | "resume" | "restart",
+    call: () => Promise<void>,
+  ) {
+    setActing(kind);
+    setActionError(null);
     try {
-      await stopRun(runId);
-      // The stream reports the cancelled state; nothing else to do here.
+      await call();
     } catch (e) {
-      setStopError(e instanceof ApiFailure ? e.message : "stop request failed");
+      setActionError(
+        e instanceof ApiFailure ? e.message : `${kind} request failed`,
+      );
     } finally {
-      setStopping(false);
+      setActing(null);
     }
+  }
+
+  async function onPause() {
+    const sure = window.confirm(
+      "Pause this run? Queued work waits, paused time does not count " +
+        "against the wall-clock budget, and you can resume any time.",
+    );
+    if (!sure) return;
+    // The stream reports the paused state; nothing else to do here.
+    await act("pause", () => stopRun(runId));
+  }
+
+  async function onResume() {
+    await act("resume", () => resumeRun(runId));
+  }
+
+  async function onRestart() {
+    const sure = window.confirm(
+      "Start a fresh run from this run's original configuration? " +
+        "It begins with none of this run's results and spends its own budget.",
+    );
+    if (!sure) return;
+    await act("restart", async () => {
+      const freshId = await restartRun(runId);
+      router.push(`/runs/${encodeURIComponent(freshId)}`);
+    });
   }
 
   if (snapshot === null) {
@@ -134,6 +177,7 @@ export function LiveRun({
 
   const { run, goal, stats, agents, items, usage } = snapshot;
   const terminal = isTerminal(run.state);
+  const paused = run.state === "paused";
   const note = connectionNote(stream.status);
   const method = rankingMethod(goal.budget.max_debate_turns);
 
@@ -152,14 +196,24 @@ export function LiveRun({
             {elapsed !== null ? formatClock(elapsed) : "--:--"}
           </span>
           {note !== null && <span className="conn-note">{note}</span>}
-          {!terminal && (
+          {!terminal && !paused && (
             <button
               type="button"
               className="btn btn-outline"
-              onClick={onStop}
-              disabled={stopping}
+              onClick={onPause}
+              disabled={acting !== null}
             >
-              {stopping ? "Stopping" : "Stop"}
+              {acting === "pause" ? "Pausing" : "Pause"}
+            </button>
+          )}
+          {paused && (
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={onResume}
+              disabled={acting !== null}
+            >
+              {acting === "resume" ? "Resuming" : "Resume"}
             </button>
           )}
         </div>
@@ -170,10 +224,29 @@ export function LiveRun({
           {announcement}
         </p>
 
-        {stopError !== null && (
+        {actionError !== null && (
           <div className="error-box" role="alert" style={{ marginBottom: 24 }}>
-            <h2>Stop failed</h2>
-            <p>{stopError}</p>
+            <h2>Request failed</h2>
+            <p>{actionError}</p>
+          </div>
+        )}
+
+        {paused && (
+          <div className="empty-state" style={{ marginBottom: 32, maxWidth: "none" }}>
+            <h2>Run paused</h2>
+            <p>
+              Queued work is waiting, and paused time does not count against
+              the wall-clock budget. Resume to continue, or restart to begin
+              a fresh run from the same configuration.
+            </p>
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={onRestart}
+              disabled={acting !== null}
+            >
+              {acting === "restart" ? "Restarting" : "Restart"}
+            </button>
           </div>
         )}
 
@@ -193,7 +266,15 @@ export function LiveRun({
             </p>
             <Link href={`/runs/${encodeURIComponent(run.id)}/report`} className="btn">
               Read the report
-            </Link>
+            </Link>{" "}
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={onRestart}
+              disabled={acting !== null}
+            >
+              {acting === "restart" ? "Restarting" : "Restart"}
+            </button>
           </div>
         )}
 

@@ -35,7 +35,9 @@ rustls for the model provider and retrieval, `pdf_oxide` for PDF text, and
 the on-by-default `web` cargo feature), and `web/` holds a separate Next.js
 frontend for it: full run specification (goal, rubric, budgets, source
 URLs, file uploads, explicit network and literature-search grants, and a
-dry-run plan preview), a live agent-topology view, reports, and the
+dry-run plan preview), a live agent-topology view, run lifecycle
+control (stop as a durable resumable pause, resume, and restart as a
+clean fresh run from the original configuration), reports, and the
 source library. Identity is one anonymous persistent browser
 cookie — no accounts or login: each browser sees and controls only the
 runs it started, CLI runs are never exposed over the web, and clearing

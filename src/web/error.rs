@@ -28,7 +28,7 @@ fn status_for(kind: &str) -> StatusCode {
         "validation" => StatusCode::BAD_REQUEST,
         "not_found" => StatusCode::NOT_FOUND,
         "permission" => StatusCode::FORBIDDEN,
-        "budget" | "cancelled" => StatusCode::CONFLICT,
+        "budget" | "cancelled" | "conflict" => StatusCode::CONFLICT,
         "assessment_rejected" => StatusCode::UNPROCESSABLE_ENTITY,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     }
