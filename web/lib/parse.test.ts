@@ -5,9 +5,12 @@ import {
   parseApiError,
   parseReport,
   parseRunOverviews,
+  parseRunPreview,
   parseRunSnapshot,
   parseSources,
   parseStartedRun,
+  parseUpload,
+  parseUploads,
 } from "./parse";
 
 describe("parseRunSnapshot", () => {
@@ -163,5 +166,87 @@ describe("parseStartedRun and parseApiError", () => {
       expect(err.kind).toBe("unknown");
       expect(err.error).toBe("unrecognized error response");
     }
+  });
+});
+
+describe("parseUpload and parseUploads", () => {
+  const uploadWire = {
+    id: "upl_1",
+    file_name: "notes.txt",
+    size_bytes: 9,
+    content_hash: "abc123",
+    created_at: "2026-10-08T10:00:00Z",
+  };
+
+  it("parses a single upload from the create envelope", () => {
+    const upload = parseUpload({ ok: true, upload: uploadWire });
+    expect(upload).toEqual(uploadWire);
+  });
+
+  it("parses the uploads listing", () => {
+    const uploads = parseUploads({ ok: true, uploads: [uploadWire] });
+    expect(uploads).toHaveLength(1);
+    expect(uploads[0]?.id).toBe("upl_1");
+  });
+
+  it("rejects an upload without an id or with a non-numeric size", () => {
+    expect(() =>
+      parseUpload({ ok: true, upload: { ...uploadWire, id: undefined } }),
+    ).toThrow(/id/);
+    expect(() =>
+      parseUpload({ ok: true, upload: { ...uploadWire, size_bytes: "9" } }),
+    ).toThrow(/size_bytes/);
+  });
+
+  it("rejects a listing without an uploads array", () => {
+    expect(() => parseUploads({ ok: true })).toThrow(ParseError);
+  });
+});
+
+describe("parseRunPreview", () => {
+  const previewWire = {
+    ok: true,
+    dry_run: true,
+    plan: {
+      roles: ["generation", "reflection"],
+      methods: ["grounded hypothesis generation", "source-grounded review"],
+      rationale: "task mode uses only the necessary roles",
+    },
+    inputs: ["https://example.org/a.pdf", "notes.txt"],
+    permissions: {
+      network: true,
+      execute: false,
+      allowed_tools: ["search:arxiv"],
+    },
+    budget: {
+      max_model_calls: 200,
+      max_seconds: 3600,
+      max_iterations: 10,
+      max_debate_turns: 1,
+      max_acquisitions: 8,
+    },
+  };
+
+  it("keeps the plan, inputs, permissions, and budget facts", () => {
+    const preview = parseRunPreview(previewWire);
+    expect(preview.plan.roles).toEqual(["generation", "reflection"]);
+    expect(preview.plan.rationale).toMatch(/necessary roles/);
+    expect(preview.inputs).toHaveLength(2);
+    expect(preview.permissions.network).toBe(true);
+    expect(preview.permissions.execute).toBe(false);
+    expect(preview.permissions.allowed_tools).toEqual(["search:arxiv"]);
+    expect(preview.budget.max_debate_turns).toBe(1);
+  });
+
+  it("rejects a preview without a plan", () => {
+    expect(() => parseRunPreview({ ok: true, dry_run: true })).toThrow(/plan/);
+  });
+
+  it("rejects non-boolean permissions instead of coercing", () => {
+    const bad = {
+      ...previewWire,
+      permissions: { ...previewWire.permissions, execute: "no" },
+    };
+    expect(() => parseRunPreview(bad)).toThrow(/execute/);
   });
 });

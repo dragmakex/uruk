@@ -93,11 +93,16 @@ a lock message until the server stops. Because `uruk resume` is locked
 out, the serve process sweeps every few seconds for runs it should be
 driving: runs left `running` by an interrupted process are resumed on
 startup, and runs parked `waiting-for-human` are picked back up once
-their approvals are decided. Web-started runs grant no permissions
-beyond provider disclosure: no file inputs, no network retrieval, no
-execution, no literature search. Grants with real side effects stay
-CLI-only; an anonymous cookie identifies a browser, not a person who
-can be held to an approval.
+their approvals are decided. Web-started runs accept the full research
+configuration — rubric guidance, budgets, source URLs, file inputs, and
+the explicit network and literature-search grants — but two grants stay
+CLI-only on purpose: local subprocess execution and arbitrary tool
+names. The web surface has no exact-payload approve/deny step to bind
+them to; an anonymous cookie identifies a browser, not a person who can
+be held to an approval. No request field ever names a server filesystem
+path: files enter web runs only through owner-bound uploads
+(`POST /api/uploads`), stored under a server-chosen location that never
+crosses the wire.
 
 Ownership lives in one additive table, `run_owners` (migration 0004):
 `run_id → owner_digest`, written in the same transaction that creates a
@@ -122,6 +127,9 @@ cannot quietly skip the check.
 | `GET /api/runs/{id}/sources` | the run's recorded sources |
 | `GET /api/runs/{id}/passages?q=…` | local FTS5 passage search |
 | `GET /api/library` | all sources across this browser's runs |
+| `POST /api/uploads?name=…` | store raw request bytes as an owner-bound file |
+| `GET /api/uploads` | this browser's uploads, newest first |
+| `DELETE /api/uploads/{id}` | remove an upload this browser owns |
 
 Every route except `/api/health` requires the browser identity: a request
 without a valid `uruk_browser` cookie gets one minted (and used for that
@@ -129,12 +137,37 @@ same request) via `Set-Cookie`. All `{id}` routes are owner-checked; a
 run belonging to another browser is answered exactly like a run that
 does not exist.
 
-`POST /api/runs` accepts `mode` (`task` default, `campaign`) and `ranking`
-(`simple` default, `tournament`). Both ranking options keep the Elo
-tournament; the stored difference is the §7 debate turn cap (1 versus 5),
-which is what "single-turn comparison" versus "multi-turn scientific
-debate" means in this engine. Request bodies are capped at 64 KiB and
-validated; every response carries an `x-request-id`.
+`POST /api/runs` accepts the full safe start configuration
+(`src/web/start.rs` is the authority):
+
+- `mode` (`task` default, `campaign`) and `ranking` (`simple` default,
+  `tournament`). Both ranking options keep the Elo tournament; the
+  stored difference is the §7 debate turn cap, which is what
+  "single-turn comparison" versus "multi-turn scientific debate" means
+  in this engine. `max_debate_turns` (2–10, default 5) therefore only
+  combines with `tournament`.
+- `profile`, `deliverables`, `preferences`, `attributes`, `constraints`:
+  the goal record and rubric, as on the CLI.
+- Budgets: `max_model_calls`, `max_seconds`, `max_iterations`,
+  `max_acquisitions`, each validated against the same bounds the CLI
+  enforces.
+- Sources: `input_urls` (`http(s)` only — a path-like value is refused)
+  and `upload_ids` referencing this browser's uploads. A foreign and an
+  unknown upload id get one identical validation error.
+- Grants, all off by default: `allow_network` permits retrieval of the
+  supplied URLs; `search` opts into federated literature search
+  (OpenAlex, Crossref, arXiv) and requires `allow_network` because it
+  transmits goal-derived queries to those operators;
+  `search_connectors` narrows the connector set. Execution is never
+  grantable; unknown fields are refused outright.
+- `dry_run: true` validates, safety-checks, and plans without creating
+  anything, returning the plan, inputs, permissions, and budget the
+  start would use.
+
+Request bodies are capped at 128 KiB — except `POST /api/uploads`, which
+carries raw file bytes under its own per-file limit (16 MiB default)
+plus a per-owner count bound (32 default) and a fixed allowlist of
+text-extractable file types. Every response carries an `x-request-id`.
 
 ## Local development
 
@@ -235,7 +268,12 @@ nothing here has been deployed.
   and attributes, malformed-cookie replacement, cross-browser isolation
   on every run-scoped route including SSE and stop, foreign/unknown
   indistinguishability, CLI-run invisibility, restart persistence, and
-  digest-only storage. Everything is offline.
+  digest-only storage. `tests/web_uploads.rs` covers the upload store:
+  creation, listing, deletion, owner isolation, size/count/type bounds,
+  and path-shaped name refusal. `tests/web_start_config.rs` covers the
+  full start configuration: goal-record round-trips, grant semantics,
+  upload ingestion, dry-run previews, and the refusal of execution and
+  path fields. Everything is offline.
 - Frontend: `cd web && bun run check` runs ESLint, `tsc --noEmit`, Vitest
   (runtime parsers, formatting, the SSE reducer, form validation, agent
   cards, the live run view with a scripted EventSource), and the

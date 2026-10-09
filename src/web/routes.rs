@@ -46,23 +46,39 @@ pub async fn start_run(
         Ok(json) => json,
         Err(rejection) => return rejection_to_error(rejection),
     };
-    match create_and_dispatch(&state, request, &owner).await {
-        Ok(run_id) => (
+    match create_or_preview(&state, request, &owner).await {
+        Ok(StartOutcome::Created(run_id)) => (
             StatusCode::CREATED,
             Json(serde_json::json!({"ok": true, "run_id": run_id.as_str()})),
         )
             .into_response(),
+        Ok(StartOutcome::Preview(preview)) => (StatusCode::OK, Json(preview)).into_response(),
         Err(e) => ApiError(e).into_response(),
     }
 }
 
-async fn create_and_dispatch(
+enum StartOutcome {
+    Created(RunId),
+    Preview(serde_json::Value),
+}
+
+async fn create_or_preview(
     state: &AppState,
     request: start::StartRunRequest,
     owner: &crate::store::OwnerDigest,
-) -> Result<RunId> {
+) -> Result<StartOutcome> {
     let validated = start::validate(request)?;
-    start::start_run(state, validated, owner).await
+    if validated.dry_run {
+        // A dry run persists nothing: the serve process auto-resumes every
+        // persisted `running` run, so a parked-but-created run (the CLI's
+        // dry-run shape) would dispatch itself seconds later.
+        return Ok(StartOutcome::Preview(
+            start::preview(state, validated, owner).await?,
+        ));
+    }
+    Ok(StartOutcome::Created(
+        start::start_run(state, validated, owner).await?,
+    ))
 }
 
 pub async fn stop_run(
