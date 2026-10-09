@@ -8,7 +8,6 @@
 //!
 //! Everything runs offline against temporary SQLite stores and the mock
 //! provider, through `tower::ServiceExt::oneshot`.
-#![cfg(feature = "web")]
 
 mod common;
 

@@ -208,8 +208,11 @@ export function LiveRun({
             <h2>Waiting for you</h2>
             <p>
               {stats.pending_approvals} approval request
-              {stats.pending_approvals === 1 ? "" : "s"} pending. Decide with:
-              uruk approve (or deny) on the command line.
+              {stats.pending_approvals === 1 ? "" : "s"} pending. Approvals
+              cannot be decided in the web console yet: an approval binds to
+              the exact payload being granted, and this console has no UI
+              that shows that payload. The run stays paused; computational
+              execution is unavailable until that approval UI exists.
             </p>
           </div>
         )}

@@ -9,7 +9,6 @@
 //! Everything runs offline against temporary SQLite stores through
 //! `tower::ServiceExt::oneshot`, with cookies carried by hand: each
 //! distinct token below is an independent "browser".
-#![cfg(feature = "web")]
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};

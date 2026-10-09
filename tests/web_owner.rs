@@ -8,7 +8,6 @@
 //! Everything runs offline against temporary SQLite stores through
 //! `tower::ServiceExt::oneshot`, with cookies carried by hand: each
 //! distinct token below is an independent "browser".
-#![cfg(feature = "web")]
 
 mod common;
 

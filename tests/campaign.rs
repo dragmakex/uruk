@@ -313,7 +313,7 @@ async fn project_lock_admits_one_scheduler() {
     let message = second.unwrap_err().to_string();
     assert!(message.contains("already owns this project"), "{message}");
 
-    // Inspection does not need the lock: `uruk status` opens the store
+    // Inspection does not need the lock: API reads open the store
     // directly while a scheduler runs.
     let store = uruk::store::Store::open(dir.path().join(".uruk/state.sqlite"))
         .await

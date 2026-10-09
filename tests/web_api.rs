@@ -2,7 +2,6 @@
 //!
 //! Everything runs offline against a temporary SQLite store and the mock
 //! provider, through `tower::ServiceExt::oneshot` (no sockets).
-#![cfg(feature = "web")]
 
 mod common;
 
@@ -722,8 +721,8 @@ async fn web_started_runs_share_the_cli_project_identity() {
 #[tokio::test]
 async fn interrupted_runs_resume_when_the_server_starts() {
     // A run left `running` by a killed process: the serve-side reconciler
-    // must pick it up, because `uruk resume` is locked out while `uruk
-    // serve` holds the project lock.
+    // must pick it up, because `uruk serve` is the project's only
+    // scheduler owner.
     let provider = MockProvider::new()
         .rule("Requested deliverable:", common::synthesis_json())
         .default_reply(common::review_json("inconclusive", "mock resume", false));

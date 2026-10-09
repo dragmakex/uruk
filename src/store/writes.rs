@@ -6,7 +6,7 @@
 //! its outcome and settlement in one transaction through [`RecordBatch`].
 //!
 //! Each public method wraps an `*_in_tx` function so the same validation runs
-//! whether a record is written alone (CLI, tests) or as part of a batch.
+//! whether a record is written alone or as part of a batch.
 
 use super::{Store, now, to_rfc3339};
 use crate::records::*;
@@ -227,8 +227,8 @@ impl Store {
 
     /// Transition a run to `Running` for a (re)starting scheduler, refusing
     /// to overwrite a durable stop request (SPEC §9.2): a run that is
-    /// already `cancelled` stays cancelled, so `uruk stop` cannot lose the
-    /// race against a scheduler that is just starting up.
+    /// already `cancelled` stays cancelled, so a stop request cannot lose
+    /// the race against a scheduler that is just starting up.
     ///
     /// Returns whether the transition happened; when it did not, the caller
     /// should let its run loop observe the cancelled state and wind down.
@@ -478,8 +478,9 @@ impl Store {
 }
 
 /// Insert a run and its first goal revision inside an open transaction.
-/// Shared by [`Store::create_run`] (CLI) and [`Store::create_run_owned`]
-/// (web), so an owned run can never be committed without its owner row.
+/// Shared by [`Store::create_run`] (ownerless engine callers and tests)
+/// and [`Store::create_run_owned`] (web), so an owned run can never be
+/// committed without its owner row.
 pub(crate) async fn insert_run_and_goal_in_tx(
     conn: &mut SqliteConnection,
     run: &Run,

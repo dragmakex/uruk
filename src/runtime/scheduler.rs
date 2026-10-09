@@ -65,8 +65,9 @@ pub struct Scheduler {
     cancel: CancellationToken,
 }
 
-/// Watches the persisted run state so a `uruk stop` from another process
-/// reaches in-flight work through the cancellation token (SPEC §9.2).
+/// Watches the persisted run state so a durable stop request (the web
+/// API's stop route) reaches in-flight work through the cancellation
+/// token (SPEC §9.2).
 struct StopWatcher(tokio::task::JoinHandle<()>);
 
 impl StopWatcher {
