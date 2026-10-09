@@ -471,6 +471,7 @@ A run exports only applicable artifacts under `runs/<run-id>/`:
 ```text
 manifest.json          # identity, versions, permissions, state, artifact hashes
 REPORT.md              # requested deliverable or clearly marked partial result
+REPORT.pdf             # the same report, rendered deterministically to PDF
 research.jsonl         # items, evidence, reviews, decisions, lineage
 sources.jsonl          # source provenance and citation locators
 artifacts/             # protocols, data derivatives, code, logs, figures
