@@ -630,41 +630,39 @@ export function RunForm() {
       <div className="panel-section">
         <span className="section-label">Network</span>
         <div className="field-stack">
-          <div className="check-line">
+          <label className="check-line">
             <input
               id={ids.network}
               type="checkbox"
+              aria-label="Allow network retrieval"
               checked={allowNetwork}
               onChange={(e) => setNetwork(e.target.checked)}
             />
             <span>
-              <label className="check-name" htmlFor={ids.network}>
-                Allow network retrieval
-              </label>
+              <span className="check-name">Allow network retrieval</span>
               <span className="check-desc">
                 Permit fetching the source URLs. Off by default: a run without
                 this grant reads only attached files.
               </span>
             </span>
-          </div>
-          <div className="check-line">
+          </label>
+          <label className="check-line">
             <input
               id={ids.search}
               type="checkbox"
+              aria-label="Literature search"
               checked={search}
               disabled={!allowNetwork}
               onChange={(e) => setSearch(e.target.checked)}
             />
             <span>
-              <label className="check-name" htmlFor={ids.search}>
-                Literature search
-              </label>
+              <span className="check-name">Literature search</span>
               <span className="check-desc">
                 Query open scholarly indexes. Sends goal-derived search terms to
                 their operators, so it needs the network grant.
               </span>
             </span>
-          </div>
+          </label>
           {allowNetwork && search && (
             <div className="conn-row">
               {CONNECTORS.map((connector) => (
