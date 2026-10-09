@@ -20,11 +20,14 @@ import {
   parsePassagePage,
   parseReport,
   parseRunOverviews,
+  parseRunPreview,
   parseRunSnapshot,
   parseSourceDetail,
   parseSourcePassageHits,
   parseSources,
   parseStartedRun,
+  parseUpload,
+  parseUploads,
 } from "./parse";
 import type {
   CitationView,
@@ -33,11 +36,13 @@ import type {
   PassagePage,
   ReportView,
   RunOverview,
+  RunPreview,
   RunSnapshot,
   SourceDetail,
   SourcePassageHit,
   SourceView,
   StartRunInput,
+  UploadView,
 } from "./types";
 
 export class ApiFailure extends Error {
@@ -225,6 +230,47 @@ export async function startRun(input: StartRunInput): Promise<string> {
     body: JSON.stringify(input),
   });
   return parseStartedRun(body);
+}
+
+/**
+ * Validate and plan a start without creating anything: the same payload
+ * as [`startRun`] sent with `dry_run: true`.
+ */
+export async function previewRun(input: StartRunInput): Promise<RunPreview> {
+  const body = await request("/api/runs", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...input, dry_run: true }),
+  });
+  return parseRunPreview(body);
+}
+
+/**
+ * Store a file as an owner-bound upload. The bytes travel as the raw
+ * body; the file name rides in the query string and is display text and
+ * an extractor hint on the server, never a path.
+ */
+export async function uploadFile(file: File): Promise<UploadView> {
+  const body = await request(
+    `/api/uploads?name=${encodeURIComponent(file.name)}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream" },
+      body: file,
+    },
+  );
+  return parseUpload(body);
+}
+
+export async function fetchUploads(): Promise<UploadView[]> {
+  return parseUploads(await request("/api/uploads"));
+}
+
+/** Remove an upload this browser owns. */
+export async function deleteUpload(uploadId: string): Promise<void> {
+  await request(`/api/uploads/${encodeURIComponent(uploadId)}`, {
+    method: "DELETE",
+  });
 }
 
 export async function stopRun(runId: string): Promise<void> {

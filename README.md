@@ -33,8 +33,10 @@ rustls for the model provider and retrieval, `pdf_oxide` for PDF text, and
 
 `uruk serve` starts a local JSON/SSE API on `127.0.0.1:7913` (axum, behind
 the on-by-default `web` cargo feature), and `web/` holds a separate Next.js
-frontend for it: run specification, a live agent-topology view, reports,
-and the source library. Identity is one anonymous persistent browser
+frontend for it: full run specification (goal, rubric, budgets, source
+URLs, file uploads, explicit network and literature-search grants, and a
+dry-run plan preview), a live agent-topology view, reports, and the
+source library. Identity is one anonymous persistent browser
 cookie — no accounts or login: each browser sees and controls only the
 runs it started, CLI runs are never exposed over the web, and clearing
 site data permanently loses access. The cookie is a bearer token, so keep
@@ -137,6 +139,7 @@ the new revision.
 <project>/runs/<run-id>/
   manifest.json     identity, versions, providers, permissions, usage, artifact hashes
   REPORT.md         the deliverable with claim provenance, or a labelled partial result
+  REPORT.pdf        the same report rendered deterministically to PDF, no model call
   research.jsonl    items, evidence, reviews, decisions, experiments, lineage
   sources.jsonl     source provenance, citation locators, and search records
   works.jsonl       every work found by --search, with RRF score and per-connector ranks

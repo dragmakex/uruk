@@ -53,6 +53,18 @@ const MAX_COOKIE_HEADER_BYTES: usize = 8 * 1024;
 /// in a query or echoed into an error message.
 const MAX_RUN_ID_CHARS: usize = 128;
 
+/// IDs accepted from URL path segments. This deliberately permits legacy
+/// human-readable IDs used by imports while excluding separators, controls,
+/// quoting, and whitespace before a value reaches SQL, a filesystem path, an
+/// error body, or a Content-Disposition filename.
+fn is_safe_run_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.chars().count() <= MAX_RUN_ID_CHARS
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+}
+
 /// Mint a fresh opaque token: 256 bits from the OS CSPRNG, lowercase hex.
 fn mint_token() -> String {
     let mut bytes = [0u8; TOKEN_HEX_LEN / 2];
@@ -189,8 +201,8 @@ impl FromRequestParts<AppState> for OwnedRun {
             .extract::<Path<String>>()
             .await
             .map_err(|rejection| ApiError(Error::validation(rejection.body_text())))?;
-        if raw.chars().count() > MAX_RUN_ID_CHARS {
-            // Bounded echo: an absurd path segment is not reflected back.
+        if !is_safe_run_id(&raw) {
+            // Invalid path/header material is never reflected back.
             return Err(ApiError(Error::not_found("no such run")));
         }
         let run_id = RunId::from_raw(raw);
@@ -303,6 +315,31 @@ mod tests {
             for bad in ["", "abc", &"A".repeat(64), &"g".repeat(64), &"a".repeat(65)] {
                 assert!(!is_valid_token(bad), "must reject {bad:?}");
             }
+        }
+    }
+
+    mod is_safe_run_id {
+        use super::*;
+
+        #[test]
+        fn accepts_generated_and_legacy_ids() {
+            assert!(is_safe_run_id("run_0123456789abcdef"));
+            assert!(is_safe_run_id("run-missing"));
+        }
+
+        #[test]
+        fn rejects_path_and_header_metacharacters() {
+            for bad in [
+                "",
+                "../secret",
+                "run/secret",
+                "run\\secret",
+                "run\".pdf",
+                "run\r\nx:1",
+            ] {
+                assert!(!is_safe_run_id(bad), "must reject {bad:?}");
+            }
+            assert!(!is_safe_run_id(&"a".repeat(MAX_RUN_ID_CHARS + 1)));
         }
     }
 
