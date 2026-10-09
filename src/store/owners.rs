@@ -41,6 +41,11 @@ impl OwnerDigest {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// Wrap a digest read back from storage (already the one-way form).
+    pub(crate) fn from_digest(digest: String) -> Self {
+        Self(digest)
+    }
 }
 
 impl Store {

@@ -90,16 +90,7 @@ async fn ingest_file(
         .unwrap_or(&input.locator)
         .to_string();
 
-    let extracted = match extension.as_str() {
-        "txt" | "md" | "csv" | "json" | "tsv" | "rs" | "py" | "r" | "jsonl" => {
-            Extracted::plain(String::from_utf8_lossy(&bytes).into_owned())
-        }
-        "pdf" => extract::pdf(bytes.clone()).await?,
-        "html" | "htm" => extract::html(&String::from_utf8_lossy(&bytes), None),
-        other => Extracted::none(format!(
-            "no text extractor for .{other} files; only metadata was recorded"
-        )),
-    };
+    let extracted = extract_by_extension(&extension, bytes).await?;
 
     let mut source = describe(
         run_id,
@@ -109,6 +100,53 @@ async fn ingest_file(
     );
     if source.title.is_none() {
         source.title = Some(file_name);
+    }
+    finish(store, run_id, source, extracted).await
+}
+
+/// Extract text from file bytes by extension: the dispatch shared by
+/// researcher-supplied local files and web uploads.
+async fn extract_by_extension(extension: &str, bytes: Vec<u8>) -> Result<Extracted> {
+    Ok(match extension {
+        "txt" | "md" | "csv" | "json" | "tsv" | "rs" | "py" | "r" | "jsonl" => {
+            Extracted::plain(String::from_utf8_lossy(&bytes).into_owned())
+        }
+        "pdf" => extract::pdf(bytes).await?,
+        "html" | "htm" => extract::html(&String::from_utf8_lossy(&bytes), None),
+        other => Extracted::none(format!(
+            "no text extractor for .{other} files; only metadata was recorded"
+        )),
+    })
+}
+
+/// Ingest a web-uploaded file whose bytes the server already holds.
+///
+/// Unlike [`ingest_input`], no path allowlist applies: the storage
+/// location was chosen by the server, never by the client. The
+/// researcher-facing `file_name` becomes the recorded locator, so the
+/// server's storage layout never appears in a source record.
+pub async fn ingest_upload(
+    store: &Store,
+    run_id: &RunId,
+    file_name: &str,
+    bytes: Vec<u8>,
+) -> Result<Ingested> {
+    let content_hash = ContentHash::of_bytes(&bytes);
+    let extension = Path::new(file_name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let extracted = extract_by_extension(&extension, bytes).await?;
+
+    let mut source = describe(
+        run_id,
+        Origin::LocalFile(file_name.to_string()),
+        &extracted,
+        content_hash,
+    );
+    if source.title.is_none() {
+        source.title = Some(file_name.to_string());
     }
     finish(store, run_id, source, extracted).await
 }

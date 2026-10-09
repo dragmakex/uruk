@@ -603,6 +603,81 @@ async fn a_request_timeout_still_gets_the_stable_json_error_body() {
 }
 
 #[tokio::test]
+async fn starts_use_their_own_bounded_timeout() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = uruk::store::Store::open(dir.path().join(".uruk/state.sqlite"))
+        .await
+        .expect("open store");
+    let state = AppState::new(
+        store,
+        Arc::new(MockProvider::new()),
+        WebConfig {
+            request_timeout: std::time::Duration::ZERO,
+            start_timeout: std::time::Duration::from_secs(30),
+            ..WebConfig::default()
+        },
+    );
+    let response = router(state)
+        .oneshot(post_json(
+            "/api/runs",
+            serde_json::json!({"goal": "preview me", "dry_run": true}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = uruk::store::Store::open(dir.path().join(".uruk/state.sqlite"))
+        .await
+        .expect("open store");
+    let state = AppState::new(
+        store,
+        Arc::new(MockProvider::new()),
+        WebConfig {
+            start_timeout: std::time::Duration::ZERO,
+            ..WebConfig::default()
+        },
+    );
+    let response = router(state)
+        .oneshot(post_json(
+            "/api/runs",
+            serde_json::json!({"goal": "start me"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
+    let body = body_json(response).await;
+    assert_eq!(body["kind"], "timeout");
+}
+
+#[tokio::test]
+async fn a_maximum_sized_valid_start_body_is_accepted() {
+    let (app, _dir) = empty_app().await;
+    let list: Vec<String> = (0..32)
+        .map(|i| format!("{i:02}{}", "x".repeat(498)))
+        .collect();
+    let urls: Vec<String> = (0..16)
+        .map(|i| format!("https://example.org/{i:02}/{}", "x".repeat(1975)))
+        .collect();
+    let body = serde_json::json!({
+        "goal": "g".repeat(8_000),
+        "deliverables": list,
+        "preferences": list,
+        "attributes": list,
+        "constraints": list,
+        "input_urls": urls,
+        "allow_network": true,
+        "dry_run": true
+    });
+    assert!(
+        body.to_string().len() > 64 * 1024,
+        "exercises the raised cap"
+    );
+    let response = app.oneshot(post_json("/api/runs", body)).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
 async fn an_unparsable_passages_query_is_a_json_validation_error() {
     let (app, fixture) = seeded_app(Mode::Task).await;
     let uri = format!("/api/runs/{}/passages?q=x&limit=abc", fixture.run_id);
