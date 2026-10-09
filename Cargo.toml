@@ -44,6 +44,9 @@ tokio = { version = "1", features = ["test-util"] }
 # `ServiceExt::oneshot` for exercising the web router without a socket.
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
+# The report-PDF tests re-extract rendered text through the same parser the
+# ingest tool uses, closing the loop without a second PDF stack.
+pdf_oxide = { version = "0.3", default-features = false, features = ["legacy-crypto"] }
 
 [profile.release]
 strip = true

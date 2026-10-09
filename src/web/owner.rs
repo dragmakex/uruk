@@ -24,7 +24,7 @@
 use super::AppState;
 use super::error::ApiError;
 use crate::Error;
-use crate::records::RunId;
+use crate::records::{RunId, Source, SourceId};
 use crate::store::OwnerDigest;
 use axum::RequestPartsExt;
 use axum::extract::{FromRequestParts, Path, Request, State};
@@ -52,6 +52,18 @@ const MAX_COOKIE_HEADER_BYTES: usize = 8 * 1024;
 /// Upper bound on a run id taken from the request path before it is used
 /// in a query or echoed into an error message.
 const MAX_RUN_ID_CHARS: usize = 128;
+
+/// IDs accepted from URL path segments. This deliberately permits legacy
+/// human-readable IDs used by imports while excluding separators, controls,
+/// quoting, and whitespace before a value reaches SQL, a filesystem path, an
+/// error body, or a Content-Disposition filename.
+fn is_safe_run_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.chars().count() <= MAX_RUN_ID_CHARS
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+}
 
 /// Mint a fresh opaque token: 256 bits from the OS CSPRNG, lowercase hex.
 fn mint_token() -> String {
@@ -189,13 +201,58 @@ impl FromRequestParts<AppState> for OwnedRun {
             .extract::<Path<String>>()
             .await
             .map_err(|rejection| ApiError(Error::validation(rejection.body_text())))?;
-        if raw.chars().count() > MAX_RUN_ID_CHARS {
-            // Bounded echo: an absurd path segment is not reflected back.
+        if !is_safe_run_id(&raw) {
+            // Invalid path/header material is never reflected back.
             return Err(ApiError(Error::not_found("no such run")));
         }
         let run_id = RunId::from_raw(raw);
         state.store().get_run_owned(&run_id, &owner).await?;
         Ok(Self(run_id))
+    }
+}
+
+/// A `{run_id}/{source_id}` path pair, **already authorized**: the run
+/// belongs to the requesting browser and the source was recorded by that
+/// run (both constraints live in owner-scoped SQL, never in a post-fetch
+/// check). Source-scoped handlers take this instead of raw path params,
+/// so a new handler cannot quietly skip either check.
+///
+/// # Errors
+///
+/// Rejects with the same non-disclosing `not_found` for an unknown run, a
+/// foreign run, an ownerless (CLI) run, an unknown source, and a source
+/// recorded by a different run.
+pub struct OwnedSource {
+    pub run_id: RunId,
+    pub source: Source,
+}
+
+impl FromRequestParts<AppState> for OwnedSource {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> std::result::Result<Self, Self::Rejection> {
+        let Owner(owner) = parts.extract_with_state::<Owner, _>(state).await?;
+        let Path((raw_run, raw_source)) = parts
+            .extract::<Path<(String, String)>>()
+            .await
+            .map_err(|rejection| ApiError(Error::validation(rejection.body_text())))?;
+        if raw_run.chars().count() > MAX_RUN_ID_CHARS {
+            // Bounded echo: an absurd path segment is not reflected back.
+            return Err(ApiError(Error::not_found("no such run")));
+        }
+        if raw_source.chars().count() > MAX_RUN_ID_CHARS {
+            return Err(ApiError(Error::not_found("no such source")));
+        }
+        let run_id = RunId::from_raw(raw_run);
+        state.store().get_run_owned(&run_id, &owner).await?;
+        let source = state
+            .store()
+            .get_source_in_run(&run_id, &SourceId::from_raw(raw_source))
+            .await?;
+        Ok(Self { run_id, source })
     }
 }
 
@@ -258,6 +315,31 @@ mod tests {
             for bad in ["", "abc", &"A".repeat(64), &"g".repeat(64), &"a".repeat(65)] {
                 assert!(!is_valid_token(bad), "must reject {bad:?}");
             }
+        }
+    }
+
+    mod is_safe_run_id {
+        use super::*;
+
+        #[test]
+        fn accepts_generated_and_legacy_ids() {
+            assert!(is_safe_run_id("run_0123456789abcdef"));
+            assert!(is_safe_run_id("run-missing"));
+        }
+
+        #[test]
+        fn rejects_path_and_header_metacharacters() {
+            for bad in [
+                "",
+                "../secret",
+                "run/secret",
+                "run\\secret",
+                "run\".pdf",
+                "run\r\nx:1",
+            ] {
+                assert!(!is_safe_run_id(bad), "must reject {bad:?}");
+            }
+            assert!(!is_safe_run_id(&"a".repeat(MAX_RUN_ID_CHARS + 1)));
         }
     }
 

@@ -898,15 +898,95 @@ details.legend-fold .legend-line {
 
 /* ---------- report ---------- */
 
-.report-pre {
+.report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.report-body {
+  padding: 28px 32px;
+  font-size: 14.5px;
+  line-height: 1.65;
+  overflow-wrap: break-word;
+}
+
+.report-body h1,
+.report-body h2,
+.report-body h3,
+.report-body h4 {
+  margin: 1.6em 0 0.5em;
+  line-height: 1.25;
+}
+
+.report-body h1 {
+  margin-top: 0;
+  font-size: 24px;
+}
+
+.report-body h2 {
+  font-size: 19px;
+  padding-bottom: 6px;
+  border-bottom: var(--hairline) solid var(--line-soft);
+}
+
+.report-body h3 {
+  font-size: 16px;
+}
+
+.report-body h4 {
+  font-size: 14.5px;
+}
+
+.report-body p,
+.report-body ul,
+.report-body ol {
+  margin: 0 0 0.9em;
+}
+
+.report-body ul,
+.report-body ol {
+  padding-left: 1.4em;
+}
+
+.report-body li {
+  margin-bottom: 0.3em;
+}
+
+.report-body blockquote {
+  margin: 0 0 1em;
+  padding: 10px 16px;
+  border-left: 3px solid var(--line);
+  background: var(--surface-raised);
+}
+
+.report-body blockquote p {
   margin: 0;
-  padding: 28px;
-  overflow-x: auto;
+}
+
+.report-body code {
   font-family: var(--font-mono);
-  font-size: 13px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-word;
+  font-size: 0.9em;
+  background: var(--surface-raised);
+  padding: 1px 4px;
+}
+
+.report-body pre {
+  overflow-x: auto;
+  padding: 14px 16px;
+  background: var(--surface-raised);
+  border: var(--hairline) solid var(--line-soft);
+}
+
+.report-body pre code {
+  padding: 0;
+  background: none;
+}
+
+.report-body hr {
+  margin: 1.6em 0;
+  border: 0;
+  border-top: var(--hairline) solid var(--line-soft);
 }
 
 .manifest-grid {
@@ -935,6 +1015,134 @@ details.legend-fold .legend-line {
   font-size: 11.5px;
   letter-spacing: 0.03em;
   color: var(--muted);
+}
+
+/* ---------- library explorer ---------- */
+
+.filter-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 16px 20px;
+  margin-bottom: 28px;
+  border: var(--hairline) solid var(--line);
+  background: var(--surface);
+}
+
+.filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.filter-field label {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+}
+
+.filter-field select,
+.filter-field input {
+  border: var(--hairline) solid var(--line-soft);
+  background: var(--surface-raised);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  padding: 7px 10px;
+}
+
+.filter-field select:focus,
+.filter-field input:focus {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.filter-grow {
+  flex: 1;
+  min-width: 200px;
+}
+
+.hit-list,
+.cite-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  border: var(--hairline) solid var(--line);
+  background: var(--surface);
+}
+
+.hit-row,
+.cite-item {
+  padding: 16px 20px;
+  border-bottom: var(--hairline) solid var(--line-soft);
+}
+
+.hit-row:last-child,
+.cite-item:last-child {
+  border-bottom: 0;
+}
+
+.hit-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.hit-snippet {
+  margin: 8px 0 0;
+  font-size: 14.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.fact-mono {
+  font-family: var(--font-mono);
+  word-break: break-all;
+}
+
+.cite-claim {
+  margin: 8px 0 4px;
+  font-size: 15.5px;
+  font-weight: 650;
+}
+
+.cite-quote {
+  margin: 10px 0 0;
+  padding: 10px 16px;
+  border-left: 3px solid var(--line);
+  background: var(--surface-raised);
+}
+
+.cite-quote p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.cite-quote footer {
+  margin-top: 6px;
+}
+
+.cite-unresolved {
+  margin: 8px 0 0;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--danger-ink);
 }
 
 /* ---------- states ---------- */
@@ -1045,4 +1253,141 @@ details.legend-fold .legend-line {
 
 .page-head h1 {
   font-size: 28px;
+}
+
+/* ---------- run specification form ---------- */
+
+.bare-fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.field-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.num-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 14px;
+}
+
+.num-field {
+  display: grid;
+  gap: 6px;
+}
+
+.num-field > label {
+  color: var(--ink);
+}
+
+.num-input,
+.text-input,
+.list-input {
+  width: 100%;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  color: var(--ink);
+  background: transparent;
+  border: var(--hairline) solid var(--line);
+  padding: 8px 10px;
+}
+
+.list-input {
+  resize: vertical;
+  min-height: 48px;
+}
+
+.num-input:focus,
+.text-input:focus,
+.list-input:focus {
+  outline: var(--hairline) solid var(--ink);
+  outline-offset: -1px;
+}
+
+.debate-turns {
+  margin-top: 14px;
+  max-width: 220px;
+}
+
+.check-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.check-line input {
+  margin-top: 3px;
+}
+
+.check-line input:disabled {
+  cursor: not-allowed;
+}
+
+.check-line:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.check-name {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.check-desc {
+  display: block;
+  font-size: 13px;
+  color: var(--muted);
+  max-width: 52ch;
+}
+
+.conn-row {
+  display: flex;
+  gap: 22px;
+  flex-wrap: wrap;
+  padding-left: 26px;
+}
+
+.upload-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.upload-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: var(--hairline) solid var(--line);
+  padding: 8px 10px;
+}
+
+.upload-name {
+  font-size: 14px;
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.upload-delete {
+  font-size: 12px;
+  padding: 4px 12px;
+}
+
+.preview-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 18px;
+  margin: 12px 0;
+}
+
+.preview-grid dd {
+  margin: 0;
+  font-size: 14px;
 }

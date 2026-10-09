@@ -90,6 +90,8 @@ id_type!(/// Identifies a meta-review feedback version.
     FeedbackId, "fb");
 id_type!(/// Identifies one executed literature search (connector × query).
     SearchId, "sch");
+id_type!(/// Identifies a web-uploaded input file, owned by one browser.
+    UploadId, "upl");
 
 /// A SHA-256 content hash, rendered lowercase hex.
 ///

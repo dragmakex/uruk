@@ -3,11 +3,19 @@ import { snapshotFixture } from "./fixtures";
 import {
   ParseError,
   parseApiError,
+  parseCitations,
+  parseLibraryPassageHits,
+  parsePassagePage,
   parseReport,
   parseRunOverviews,
+  parseRunPreview,
   parseRunSnapshot,
+  parseSourceDetail,
+  parseSourcePassageHits,
   parseSources,
   parseStartedRun,
+  parseUpload,
+  parseUploads,
 } from "./parse";
 
 describe("parseRunSnapshot", () => {
@@ -163,5 +171,318 @@ describe("parseStartedRun and parseApiError", () => {
       expect(err.kind).toBe("unknown");
       expect(err.error).toBe("unrecognized error response");
     }
+  });
+});
+
+function sourcePayload(): Record<string, unknown> {
+  return {
+    id: "src_1",
+    run_id: "run_1",
+    origin: { kind: "url", at: "https://example.org/p" },
+    title: "A paper",
+    authors: null,
+    date: null,
+    identifier: null,
+    retrieved_at: "2026-10-04T14:00:00Z",
+    content_hash: "abc123",
+    access: "full_text",
+    access_limitations: null,
+    text_artifact: "art_1",
+  };
+}
+
+describe("parseSourceDetail", () => {
+  it("parses the source record with its passage count", () => {
+    const detail = parseSourceDetail({
+      ok: true,
+      run_id: "run_1",
+      source: sourcePayload(),
+      passage_count: 12,
+    });
+    expect(detail.run_id).toBe("run_1");
+    expect(detail.source.id).toBe("src_1");
+    expect(detail.passage_count).toBe(12);
+  });
+
+  it("rejects a non-numeric passage count", () => {
+    expect(() =>
+      parseSourceDetail({
+        ok: true,
+        run_id: "run_1",
+        source: sourcePayload(),
+        passage_count: "12",
+      }),
+    ).toThrow(/passage_count/);
+  });
+});
+
+describe("parsePassagePage", () => {
+  it("parses a browse page with its totals and byte offsets", () => {
+    const page = parsePassagePage({
+      ok: true,
+      run_id: "run_1",
+      source_id: "src_1",
+      total: 40,
+      offset: 20,
+      limit: 20,
+      passages: [{ seq: 20, byte_start: 100, byte_end: 180, text: "…" }],
+    });
+    expect(page.total).toBe(40);
+    expect(page.offset).toBe(20);
+    expect(page.passages[0]?.byte_end).toBe(180);
+  });
+
+  it("rejects a passage without byte offsets", () => {
+    expect(() =>
+      parsePassagePage({
+        ok: true,
+        total: 1,
+        offset: 0,
+        limit: 20,
+        passages: [{ seq: 0, text: "x" }],
+      }),
+    ).toThrow(/byte_start/);
+  });
+});
+
+describe("parseSourcePassageHits", () => {
+  it("parses ranked hits with snippet and score", () => {
+    const hits = parseSourcePassageHits({
+      ok: true,
+      query: "heat",
+      passages: [
+        {
+          source_id: "src_1",
+          seq: 3,
+          byte_start: 10,
+          byte_end: 90,
+          text: "full passage",
+          snippet: "…heat…",
+          score: 1.25,
+        },
+      ],
+    });
+    expect(hits[0]?.score).toBeCloseTo(1.25);
+    expect(hits[0]?.snippet).toContain("heat");
+  });
+});
+
+describe("parseLibraryPassageHits", () => {
+  it("parses owner-wide hits naming run and source", () => {
+    const hits = parseLibraryPassageHits({
+      ok: true,
+      query: "heat",
+      passages: [
+        {
+          run_id: "run_1",
+          source_id: "src_1",
+          source_title: "A paper",
+          seq: 3,
+          byte_start: 10,
+          byte_end: 90,
+          text: "full passage",
+          snippet: "…heat…",
+          score: 1.25,
+        },
+      ],
+    });
+    expect(hits[0]?.run_id).toBe("run_1");
+    expect(hits[0]?.source_title).toBe("A paper");
+  });
+
+  it("tolerates an untitled source", () => {
+    const hits = parseLibraryPassageHits({
+      ok: true,
+      query: "x",
+      passages: [
+        {
+          run_id: "run_1",
+          source_id: "src_1",
+          source_title: null,
+          seq: 0,
+          byte_start: 0,
+          byte_end: 5,
+          text: "x",
+          snippet: "x",
+          score: 0.5,
+        },
+      ],
+    });
+    expect(hits[0]?.source_title).toBeNull();
+  });
+});
+
+describe("parseCitations", () => {
+  it("parses each of the three honest resolution shapes", () => {
+    const citations = parseCitations({
+      ok: true,
+      run_id: "run_1",
+      citations: [
+        {
+          origin: { kind: "deliverable_claim", basis: "source_reported" },
+          claim: "the alloy melts at 900K",
+          source_id: "src_1",
+          source_title: "A paper",
+          locator: "chars 10..90",
+          resolution: {
+            kind: "span",
+            start: 10,
+            end: 90,
+            text: "the exact cited bytes",
+            truncated: false,
+          },
+        },
+        {
+          origin: { kind: "review_observation", review_id: "rev_1" },
+          claim: "figure 3 contradicts this",
+          source_id: "src_1",
+          source_title: null,
+          locator: "p. 4",
+          resolution: { kind: "source_locator" },
+        },
+        {
+          origin: { kind: "deliverable_claim", basis: "model_asserted" },
+          claim: "ghost claim",
+          source_id: "src_404",
+          source_title: null,
+          locator: null,
+          resolution: {
+            kind: "unresolved",
+            reason: "the cited source src_404 is not recorded by this run",
+          },
+        },
+      ],
+    });
+    expect(citations).toHaveLength(3);
+    expect(citations[0]?.resolution).toEqual({
+      kind: "span",
+      start: 10,
+      end: 90,
+      text: "the exact cited bytes",
+      truncated: false,
+    });
+    expect(citations[1]?.origin).toEqual({
+      kind: "review_observation",
+      review_id: "rev_1",
+    });
+    expect(citations[2]?.resolution.kind).toBe("unresolved");
+  });
+
+  it("rejects an unknown resolution kind instead of guessing", () => {
+    expect(() =>
+      parseCitations({
+        ok: true,
+        citations: [
+          {
+            origin: { kind: "deliverable_claim", basis: "source_reported" },
+            claim: "c",
+            source_id: "s",
+            source_title: null,
+            locator: null,
+            resolution: { kind: "approximate", text: "fabricated" },
+          },
+        ],
+      }),
+    ).toThrow(/resolution/);
+  });
+
+  it("rejects an unknown origin kind", () => {
+    expect(() =>
+      parseCitations({
+        ok: true,
+        citations: [
+          {
+            origin: { kind: "vibes" },
+            claim: "c",
+            source_id: "s",
+            source_title: null,
+            locator: null,
+            resolution: { kind: "source_locator" },
+          },
+        ],
+      }),
+    ).toThrow(/origin/);
+  });
+});
+
+describe("parseUpload and parseUploads", () => {
+  const uploadWire = {
+    id: "upl_1",
+    file_name: "notes.txt",
+    size_bytes: 9,
+    content_hash: "abc123",
+    created_at: "2026-10-08T10:00:00Z",
+  };
+
+  it("parses a single upload from the create envelope", () => {
+    const upload = parseUpload({ ok: true, upload: uploadWire });
+    expect(upload).toEqual(uploadWire);
+  });
+
+  it("parses the uploads listing", () => {
+    const uploads = parseUploads({ ok: true, uploads: [uploadWire] });
+    expect(uploads).toHaveLength(1);
+    expect(uploads[0]?.id).toBe("upl_1");
+  });
+
+  it("rejects an upload without an id or with a non-numeric size", () => {
+    expect(() =>
+      parseUpload({ ok: true, upload: { ...uploadWire, id: undefined } }),
+    ).toThrow(/id/);
+    expect(() =>
+      parseUpload({ ok: true, upload: { ...uploadWire, size_bytes: "9" } }),
+    ).toThrow(/size_bytes/);
+  });
+
+  it("rejects a listing without an uploads array", () => {
+    expect(() => parseUploads({ ok: true })).toThrow(ParseError);
+  });
+});
+
+describe("parseRunPreview", () => {
+  const previewWire = {
+    ok: true,
+    dry_run: true,
+    plan: {
+      roles: ["generation", "reflection"],
+      methods: ["grounded hypothesis generation", "source-grounded review"],
+      rationale: "task mode uses only the necessary roles",
+    },
+    inputs: ["https://example.org/a.pdf", "notes.txt"],
+    permissions: {
+      network: true,
+      execute: false,
+      allowed_tools: ["search:arxiv"],
+    },
+    budget: {
+      max_model_calls: 200,
+      max_seconds: 3600,
+      max_iterations: 10,
+      max_debate_turns: 1,
+      max_acquisitions: 8,
+    },
+  };
+
+  it("keeps the plan, inputs, permissions, and budget facts", () => {
+    const preview = parseRunPreview(previewWire);
+    expect(preview.plan.roles).toEqual(["generation", "reflection"]);
+    expect(preview.plan.rationale).toMatch(/necessary roles/);
+    expect(preview.inputs).toHaveLength(2);
+    expect(preview.permissions.network).toBe(true);
+    expect(preview.permissions.execute).toBe(false);
+    expect(preview.permissions.allowed_tools).toEqual(["search:arxiv"]);
+    expect(preview.budget.max_debate_turns).toBe(1);
+  });
+
+  it("rejects a preview without a plan", () => {
+    expect(() => parseRunPreview({ ok: true, dry_run: true })).toThrow(/plan/);
+  });
+
+  it("rejects non-boolean permissions instead of coercing", () => {
+    const bad = {
+      ...previewWire,
+      permissions: { ...previewWire.permissions, execute: "no" },
+    };
+    expect(() => parseRunPreview(bad)).toThrow(/execute/);
   });
 });
