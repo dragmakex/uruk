@@ -62,8 +62,11 @@ Honesty notes:
   rounds`) because the engine records budgets, not duration estimates.
 - Agent cards render recorded task facts (current strategy, queue depths,
   last failure) and run-wide counts. No activity prose is invented.
-- Reports render as the exact exported markdown bytes in a preformatted
-  block rather than a lossy HTML re-interpretation.
+- The report page renders the markdown for reading, but the canonical
+  record stays available unmodified: Download Markdown serves the exact
+  exported `REPORT.md` bytes and Download PDF serves its deterministic
+  PDF twin, both straight from the engine. Raw HTML inside the
+  model-generated markdown is never rendered.
 
 ## Responsive topology
 

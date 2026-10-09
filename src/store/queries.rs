@@ -94,9 +94,10 @@ impl Store {
 
     /// List runs, newest first.
     pub async fn list_runs(&self) -> Result<Vec<(RunId, RunState, String)>> {
-        let rows = sqlx::query("SELECT id, state, created_at FROM runs ORDER BY created_at DESC")
-            .fetch_all(self.pool())
-            .await?;
+        let rows =
+            sqlx::query("SELECT id, state, created_at FROM runs ORDER BY created_at DESC, id")
+                .fetch_all(self.pool())
+                .await?;
         rows.into_iter()
             .map(|r| {
                 let state = RunState::parse(r.get::<String, _>("state").as_str())
@@ -178,7 +179,7 @@ impl Store {
 
     pub async fn list_sources(&self, run_id: &RunId) -> Result<Vec<Source>> {
         let rows =
-            sqlx::query_scalar("SELECT body FROM sources WHERE run_id = ? ORDER BY created_at")
+            sqlx::query_scalar("SELECT body FROM sources WHERE run_id = ? ORDER BY created_at, id")
                 .bind(run_id.as_str())
                 .fetch_all(self.pool())
                 .await?;
@@ -205,7 +206,7 @@ impl Store {
 
     pub async fn list_search_records(&self, run_id: &RunId) -> Result<Vec<SearchRecord>> {
         let rows = sqlx::query_scalar(
-            "SELECT body FROM search_records WHERE run_id = ? ORDER BY created_at",
+            "SELECT body FROM search_records WHERE run_id = ? ORDER BY created_at, id",
         )
         .bind(run_id.as_str())
         .fetch_all(self.pool())
@@ -224,7 +225,7 @@ impl Store {
 
     pub async fn list_items(&self, run_id: &RunId) -> Result<Vec<ResearchItem>> {
         let rows =
-            sqlx::query_scalar("SELECT body FROM items WHERE run_id = ? ORDER BY created_at")
+            sqlx::query_scalar("SELECT body FROM items WHERE run_id = ? ORDER BY created_at, id")
                 .bind(run_id.as_str())
                 .fetch_all(self.pool())
                 .await?;
@@ -237,7 +238,7 @@ impl Store {
         kind: ItemKind,
     ) -> Result<Vec<ResearchItem>> {
         let rows = sqlx::query_scalar(
-            "SELECT body FROM items WHERE run_id = ? AND kind = ? ORDER BY created_at",
+            "SELECT body FROM items WHERE run_id = ? AND kind = ? ORDER BY created_at, id",
         )
         .bind(run_id.as_str())
         .bind(kind.as_str())
@@ -267,17 +268,18 @@ impl Store {
     }
 
     pub async fn list_reviews_for_item(&self, item_id: &ItemId) -> Result<Vec<Review>> {
-        let rows =
-            sqlx::query_scalar("SELECT body FROM reviews WHERE item_id = ? ORDER BY created_at")
-                .bind(item_id.as_str())
-                .fetch_all(self.pool())
-                .await?;
+        let rows = sqlx::query_scalar(
+            "SELECT body FROM reviews WHERE item_id = ? ORDER BY created_at, id",
+        )
+        .bind(item_id.as_str())
+        .fetch_all(self.pool())
+        .await?;
         bodies(rows).await
     }
 
     pub async fn list_reviews(&self, run_id: &RunId) -> Result<Vec<Review>> {
         let rows =
-            sqlx::query_scalar("SELECT body FROM reviews WHERE run_id = ? ORDER BY created_at")
+            sqlx::query_scalar("SELECT body FROM reviews WHERE run_id = ? ORDER BY created_at, id")
                 .bind(run_id.as_str())
                 .fetch_all(self.pool())
                 .await?;
@@ -319,11 +321,12 @@ impl Store {
     }
 
     pub async fn list_evidence(&self, run_id: &RunId) -> Result<Vec<Evidence>> {
-        let rows =
-            sqlx::query_scalar("SELECT body FROM evidence WHERE run_id = ? ORDER BY created_at")
-                .bind(run_id.as_str())
-                .fetch_all(self.pool())
-                .await?;
+        let rows = sqlx::query_scalar(
+            "SELECT body FROM evidence WHERE run_id = ? ORDER BY created_at, id",
+        )
+        .bind(run_id.as_str())
+        .fetch_all(self.pool())
+        .await?;
         bodies(rows).await
     }
 
@@ -380,11 +383,12 @@ impl Store {
     }
 
     pub async fn list_decisions(&self, run_id: &RunId) -> Result<Vec<Decision>> {
-        let rows =
-            sqlx::query_scalar("SELECT body FROM decisions WHERE run_id = ? ORDER BY created_at")
-                .bind(run_id.as_str())
-                .fetch_all(self.pool())
-                .await?;
+        let rows = sqlx::query_scalar(
+            "SELECT body FROM decisions WHERE run_id = ? ORDER BY created_at, id",
+        )
+        .bind(run_id.as_str())
+        .fetch_all(self.pool())
+        .await?;
         bodies(rows).await
     }
 
@@ -394,7 +398,7 @@ impl Store {
         kind: DecisionKind,
     ) -> Result<Vec<Decision>> {
         let rows = sqlx::query_scalar(
-            "SELECT body FROM decisions WHERE run_id = ? AND kind = ? ORDER BY created_at",
+            "SELECT body FROM decisions WHERE run_id = ? AND kind = ? ORDER BY created_at, id",
         )
         .bind(run_id.as_str())
         .bind(kind.as_str())
@@ -404,11 +408,12 @@ impl Store {
     }
 
     pub async fn list_artifacts(&self, run_id: &RunId) -> Result<Vec<Artifact>> {
-        let rows =
-            sqlx::query_scalar("SELECT body FROM artifacts WHERE run_id = ? ORDER BY created_at")
-                .bind(run_id.as_str())
-                .fetch_all(self.pool())
-                .await?;
+        let rows = sqlx::query_scalar(
+            "SELECT body FROM artifacts WHERE run_id = ? ORDER BY created_at, id",
+        )
+        .bind(run_id.as_str())
+        .fetch_all(self.pool())
+        .await?;
         bodies(rows).await
     }
 
@@ -422,20 +427,22 @@ impl Store {
     }
 
     pub async fn list_experiments(&self, run_id: &RunId) -> Result<Vec<Experiment>> {
-        let rows =
-            sqlx::query_scalar("SELECT body FROM experiments WHERE run_id = ? ORDER BY created_at")
-                .bind(run_id.as_str())
-                .fetch_all(self.pool())
-                .await?;
+        let rows = sqlx::query_scalar(
+            "SELECT body FROM experiments WHERE run_id = ? ORDER BY created_at, id",
+        )
+        .bind(run_id.as_str())
+        .fetch_all(self.pool())
+        .await?;
         bodies(rows).await
     }
 
     pub async fn list_clusters(&self, run_id: &RunId) -> Result<Vec<Cluster>> {
-        let rows =
-            sqlx::query_scalar("SELECT body FROM clusters WHERE run_id = ? ORDER BY created_at")
-                .bind(run_id.as_str())
-                .fetch_all(self.pool())
-                .await?;
+        let rows = sqlx::query_scalar(
+            "SELECT body FROM clusters WHERE run_id = ? ORDER BY created_at, id",
+        )
+        .bind(run_id.as_str())
+        .fetch_all(self.pool())
+        .await?;
         bodies(rows).await
     }
 
@@ -472,7 +479,7 @@ impl Store {
 
     pub async fn list_matches(&self, run_id: &RunId) -> Result<Vec<Match>> {
         let rows =
-            sqlx::query_scalar("SELECT body FROM matches WHERE run_id = ? ORDER BY created_at")
+            sqlx::query_scalar("SELECT body FROM matches WHERE run_id = ? ORDER BY created_at, id")
                 .bind(run_id.as_str())
                 .fetch_all(self.pool())
                 .await?;
@@ -502,13 +509,15 @@ impl Store {
         })
     }
 
-    /// Ratings within one rubric cohort, best first (SPEC §7).
+    /// Ratings within one rubric cohort, best first (SPEC §7). Ties (every
+    /// candidate starts at the same initial Elo) break on item id so the
+    /// exported `tournament.jsonl` is reproducible.
     pub async fn leaderboard(&self, run_id: &RunId, rubric_id: &PlanId) -> Result<Vec<Rating>> {
         let rows = sqlx::query(
             "SELECT r.item_id, r.rating, r.matches_played, r.stale, r.updated_at
              FROM ratings r JOIN items i ON i.id = r.item_id
              WHERE i.run_id = ? AND r.rubric_id = ?
-             ORDER BY r.rating DESC",
+             ORDER BY r.rating DESC, r.item_id",
         )
         .bind(run_id.as_str())
         .bind(rubric_id.as_str())

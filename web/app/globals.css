@@ -898,15 +898,95 @@ details.legend-fold .legend-line {
 
 /* ---------- report ---------- */
 
-.report-pre {
+.report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.report-body {
+  padding: 28px 32px;
+  font-size: 14.5px;
+  line-height: 1.65;
+  overflow-wrap: break-word;
+}
+
+.report-body h1,
+.report-body h2,
+.report-body h3,
+.report-body h4 {
+  margin: 1.6em 0 0.5em;
+  line-height: 1.25;
+}
+
+.report-body h1 {
+  margin-top: 0;
+  font-size: 24px;
+}
+
+.report-body h2 {
+  font-size: 19px;
+  padding-bottom: 6px;
+  border-bottom: var(--hairline) solid var(--line-soft);
+}
+
+.report-body h3 {
+  font-size: 16px;
+}
+
+.report-body h4 {
+  font-size: 14.5px;
+}
+
+.report-body p,
+.report-body ul,
+.report-body ol {
+  margin: 0 0 0.9em;
+}
+
+.report-body ul,
+.report-body ol {
+  padding-left: 1.4em;
+}
+
+.report-body li {
+  margin-bottom: 0.3em;
+}
+
+.report-body blockquote {
+  margin: 0 0 1em;
+  padding: 10px 16px;
+  border-left: 3px solid var(--line);
+  background: var(--surface-raised);
+}
+
+.report-body blockquote p {
   margin: 0;
-  padding: 28px;
-  overflow-x: auto;
+}
+
+.report-body code {
   font-family: var(--font-mono);
-  font-size: 13px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-word;
+  font-size: 0.9em;
+  background: var(--surface-raised);
+  padding: 1px 4px;
+}
+
+.report-body pre {
+  overflow-x: auto;
+  padding: 14px 16px;
+  background: var(--surface-raised);
+  border: var(--hairline) solid var(--line-soft);
+}
+
+.report-body pre code {
+  padding: 0;
+  background: none;
+}
+
+.report-body hr {
+  margin: 1.6em 0;
+  border: 0;
+  border-top: var(--hairline) solid var(--line-soft);
 }
 
 .manifest-grid {

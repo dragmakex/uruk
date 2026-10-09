@@ -381,6 +381,8 @@ mod owner_isolation {
 
         for uri in [
             format!("/api/runs/{run_id}/report"),
+            format!("/api/runs/{run_id}/report.pdf"),
+            format!("/api/runs/{run_id}/report.md"),
             format!("/api/runs/{run_id}/sources"),
             format!("/api/runs/{run_id}/passages?q=drift"),
             format!("/api/runs/{run_id}/events"),
