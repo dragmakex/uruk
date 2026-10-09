@@ -276,6 +276,26 @@ describe("RunForm", () => {
     expect(startRunMock).not.toHaveBeenCalled();
   });
 
+  it("toggles network permissions when their explanatory text is clicked", async () => {
+    const user = userEvent.setup();
+    render(<RunForm />);
+
+    const network = screen.getByLabelText("Allow network retrieval");
+    const search = screen.getByLabelText("Literature search");
+
+    await user.click(
+      screen.getByText(/Permit fetching the source URLs\. Off by default/),
+    );
+    expect(network).toBeChecked();
+    expect(search).toBeEnabled();
+
+    await user.click(
+      screen.getByText(/Query open scholarly indexes\. Sends goal-derived/),
+    );
+    expect(search).toBeChecked();
+    expect(screen.getByLabelText("OpenAlex")).toBeInTheDocument();
+  });
+
   it("unlocks literature search only after the network grant", async () => {
     const user = userEvent.setup();
     render(<RunForm />);
