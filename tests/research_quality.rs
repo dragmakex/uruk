@@ -192,6 +192,7 @@ async fn fabricated_citations_are_dropped_and_real_ones_become_evidence() {
         output_refs: vec![],
         actual_cost: CostActual::default(),
         error: None,
+        failure: None,
         created_at: time::OffsetDateTime::now_utc(),
         started_at: None,
         finished_at: None,
@@ -204,6 +205,7 @@ async fn fabricated_citations_are_dropped_and_real_ones_become_evidence() {
             TaskState::Completed,
             &batch,
             CostActual::default(),
+            None,
             None,
         )
         .await

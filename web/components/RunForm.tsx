@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "./Button";
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useState } from "react";
 import {
@@ -606,15 +607,15 @@ export function RunForm() {
                   />
                   <span className="upload-name">{upload.file_name}</span>
                   <span className="micro">{formatSize(upload.size_bytes)}</span>
-                  <button
-                    type="button"
-                    className="btn-outline btn upload-delete"
+                  <Button
+                    variant="outline"
+                    size="xs"
                     onClick={() => onDeleteUpload(upload)}
                     disabled={uploading || busy !== null}
                     aria-label={`Delete ${upload.file_name}`}
                   >
                     Delete
-                  </button>
+                  </Button>
                 </li>
               ))}
             </ul>
@@ -689,17 +690,22 @@ export function RunForm() {
       )}
 
       <div className="panel-foot">
-        <button
-          type="button"
-          className="btn btn-outline"
+        <Button
+          variant="outline"
+          size="md"
           onClick={onPreview}
           disabled={busy !== null || uploading}
         >
           {busy === "preview" ? "Previewing" : "Preview plan"}
-        </button>
-        <button type="submit" className="btn" disabled={busy !== null || uploading}>
+        </Button>
+        <Button
+          type="submit"
+          variant="primary"
+          size="md"
+          disabled={busy !== null || uploading}
+        >
           {busy === "start" ? "Starting run" : "Start research"}
-        </button>
+        </Button>
       </div>
 
       {preview !== null && (

@@ -223,6 +223,7 @@ impl Store {
         batch: &RecordBatch,
         actual: CostActual,
         error: Option<String>,
+        failure: Option<FailureKind>,
     ) -> Result<Vec<String>> {
         let mut guard = self.begin_write().await?;
         let conn = guard.conn();
@@ -232,6 +233,7 @@ impl Store {
         batch.apply(conn).await?;
         task.output_refs = batch.output_refs();
         let refs = task.output_refs.clone();
+        task.failure = failure;
         finish_task_in_tx(conn, &mut task, state, actual, error).await?;
         guard.commit().await?;
         Ok(refs)
@@ -256,12 +258,16 @@ impl Store {
 
         settle_attempt(conn, &task, spent).await?;
 
+        release_leases(conn, &task).await?;
+
         if task.attempts >= task.max_attempts {
             task.error = Some(format!("{reason} (attempts exhausted: {})", task.attempts));
             release_reservation(conn, &task).await?;
             task.state = TaskState::Failed;
             task.finished_at = Some(now());
             store_task(conn, &task).await?;
+            invalidate_pending_approvals_in_tx(conn, &task.id, reason).await?;
+            cancel_dependents_in_tx(conn, &task).await?;
             guard.commit().await?;
             return Ok(false);
         }
@@ -279,6 +285,12 @@ impl Store {
     /// review; a safely repeatable one returns to `pending`. Its first attempt
     /// committed nothing (records commit with the outcome), so re-running it
     /// cannot duplicate research records.
+    ///
+    /// Model calls are different: every attempt the interrupted run recorded
+    /// as about to be sent is settled here as spent, with its cost unknown,
+    /// and its leases are released. "Preserve possible incurred cost rather
+    /// than assuming it was free": the restart therefore inherits a budget
+    /// that already counts those calls, and cannot grant them again.
     pub async fn reconcile_interrupted(&self, run_id: &RunId) -> Result<Vec<TaskId>> {
         let mut guard = self.begin_write().await?;
         let conn = guard.conn();
@@ -295,14 +307,27 @@ impl Store {
             // pure model calls are safe to redo.
             let safe_to_retry = task.role != Role::Tool;
 
+            // Charge every model call the lost attempt had started.
+            let started = count_attempt_rows(conn, &task, "attempt", "attempt").await?;
+            if started > 0 {
+                let spent = CostActual {
+                    model_calls: started,
+                    ..CostActual::default()
+                };
+                settle_attempt(conn, &task, &spent).await?;
+            }
+            release_leases(conn, &task).await?;
+
             task.state = if safe_to_retry {
                 TaskState::Pending
             } else {
                 uncertain.push(task.id.clone());
                 TaskState::Uncertain
             };
-            task.error =
-                Some("interrupted by shutdown; outcome of any external effect is unknown".into());
+            task.error = Some(format!(
+                "interrupted by shutdown; {started} model call(s) had been started and are \
+                 charged at unknown cost; outcome of any external effect is unknown"
+            ));
             if !safe_to_retry {
                 // Possible incurred cost is preserved, not assumed free.
                 release_reservation(conn, &task).await?;
@@ -332,9 +357,65 @@ impl Store {
             task.finished_at = Some(now());
             release_reservation(conn, &task).await?;
             store_task(conn, &task).await?;
+            invalidate_pending_approvals_in_tx(conn, &task.id, "task cancelled before dispatch")
+                .await?;
         }
         guard.commit().await?;
         Ok(n)
+    }
+
+    /// Account for one outbound model-call attempt before it is sent, and
+    /// decide whether it may be (SPEC §6: budgets are enforced before
+    /// spending, not detected after).
+    ///
+    /// `attempt` is the task attempt and `ordinal` the request's number
+    /// across every completion of that attempt; together they key the
+    /// record uniquely. When `covered` the
+    /// call is paid by the task's own reservation and is allowed unless the
+    /// run is already over `ceiling` (possible after a conservative crash
+    /// recovery). Otherwise one call is leased from the headroom under
+    /// `ceiling` as a persisted `reserve` row, released when the task
+    /// settles. Either way an `attempt` row records that the request was
+    /// about to go out, so a crash before the reply still charges it.
+    /// Returns `false`, recording nothing, when the budget cannot cover it.
+    pub async fn lease_model_call(
+        &self,
+        run_id: &RunId,
+        task_id: &TaskId,
+        attempt: u32,
+        ordinal: u32,
+        ceiling: u32,
+        covered: bool,
+    ) -> Result<bool> {
+        let mut guard = self.begin_write().await?;
+        let conn = guard.conn();
+        let usage = usage_from(conn, run_id).await?;
+        let committed = usage.committed_calls();
+        if (covered && committed > ceiling) || (!covered && committed + 1 > ceiling) {
+            return Ok(false);
+        }
+        if !covered {
+            ledger_row(
+                conn,
+                run_id,
+                task_id,
+                &format!("lease:{task_id}:{attempt}:{ordinal}"),
+                "reserve",
+                1,
+            )
+            .await?;
+        }
+        ledger_row(
+            conn,
+            run_id,
+            task_id,
+            &format!("attempt:{task_id}:{attempt}:{ordinal}"),
+            "attempt",
+            1,
+        )
+        .await?;
+        guard.commit().await?;
+        Ok(true)
     }
 
     /// Reserve budget before dispatch (SPEC §6: "Reserve budget for in-flight
@@ -548,13 +629,17 @@ impl Store {
             {
                 if approved {
                     task.state = TaskState::Pending;
+                    store_task(conn, &task).await?;
                 } else {
                     task.state = TaskState::Cancelled;
                     task.error = Some("denied by researcher".into());
                     task.finished_at = Some(now());
                     release_reservation(conn, &task).await?;
+                    store_task(conn, &task).await?;
+                    // What depended on the denied work can never run; close
+                    // it, and its own approvals, in this transaction.
+                    cancel_dependents_in_tx(conn, &task).await?;
                 }
-                store_task(conn, &task).await?;
             }
         }
 
@@ -621,7 +706,151 @@ async fn finish_task_in_tx(
     task.finished_at = Some(now());
     store_task(conn, task).await?;
     settle_attempt(conn, task, &actual).await?;
-    release_reservation(conn, task).await
+    release_reservation(conn, task).await?;
+    release_leases(conn, task).await?;
+    // A terminal task has nothing left to decide: an approval it was parked
+    // on (a refused reservation cancels a parked task) dies with it.
+    let reason = format!(
+        "task {}: {}",
+        state.as_str(),
+        task.error.as_deref().unwrap_or("no error recorded")
+    );
+    invalidate_pending_approvals_in_tx(conn, &task.id, &reason).await?;
+    if state != TaskState::Completed {
+        cancel_dependents_in_tx(conn, task).await?;
+    }
+    Ok(())
+}
+
+/// Insert one ledger row; duplicate keys are ignored, so replays are inert.
+async fn ledger_row(
+    conn: &mut SqliteConnection,
+    run_id: &RunId,
+    task_id: &TaskId,
+    key: &str,
+    kind: &str,
+    model_calls: u32,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT OR IGNORE INTO budget_ledger (run_id, task_id, settlement_key, kind,
+                                              model_calls, tokens, tool_executions,
+                                              cost_usd, created_at)
+         VALUES (?, ?, ?, ?, ?, 0, 0, NULL, ?)",
+    )
+    .bind(run_id.as_str())
+    .bind(task_id.as_str())
+    .bind(key)
+    .bind(kind)
+    .bind(model_calls)
+    .bind(to_rfc3339(now()))
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// Count the ledger rows of `kind` recorded for this task attempt.
+async fn count_attempt_rows(
+    conn: &mut SqliteConnection,
+    task: &Task,
+    kind: &str,
+    prefix: &str,
+) -> Result<u32> {
+    let n: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM budget_ledger
+         WHERE task_id = ? AND kind = ? AND settlement_key LIKE ?",
+    )
+    .bind(task.id.as_str())
+    .bind(kind)
+    .bind(format!("{prefix}:{}:{}:%", task.id, task.attempts))
+    .fetch_one(conn)
+    .await?;
+    Ok(u32::try_from(n).unwrap_or(u32::MAX))
+}
+
+/// Release the calls this task attempt leased past its reservation, once.
+async fn release_leases(conn: &mut SqliteConnection, task: &Task) -> Result<()> {
+    let leased = count_attempt_rows(conn, task, "reserve", "lease").await?;
+    if leased == 0 {
+        return Ok(());
+    }
+    ledger_row(
+        conn,
+        &task.run_id,
+        &task.id,
+        &format!("release:{}:leases:{}", task.id, task.attempts),
+        "release",
+        leased,
+    )
+    .await
+}
+
+/// Close the work that depended on `failed`, transitively.
+///
+/// A dependent of a task that ended without completing can never become
+/// ready (`ready_tasks` requires every dependency `completed`), so leaving
+/// it open would show it as queued for as long as the run exists. It is
+/// cancelled naming the prerequisite, its reservation is released, and any
+/// approval it was parked on is invalidated in the same transaction, so no
+/// pending decision outlives the task it was for.
+async fn cancel_dependents_in_tx(conn: &mut SqliteConnection, failed: &Task) -> Result<()> {
+    let mut frontier = vec![failed.clone()];
+    while let Some(prerequisite) = frontier.pop() {
+        let rows: Vec<String> = sqlx::query_scalar(
+            "SELECT t.body FROM tasks t
+             JOIN task_deps d ON d.task_id = t.id
+             WHERE d.depends_on = ?
+               AND t.state IN ('pending', 'blocked', 'waiting_for_human')",
+        )
+        .bind(prerequisite.id.as_str())
+        .fetch_all(&mut *conn)
+        .await?;
+        for body in rows {
+            let mut task: Task = serde_json::from_str(&body)?;
+            task.state = TaskState::Cancelled;
+            let reason = format!(
+                "not run: prerequisite task {} {}",
+                prerequisite.id,
+                prerequisite.state.as_str()
+            );
+            task.error = Some(reason.clone());
+            task.finished_at = Some(now());
+            release_reservation(conn, &task).await?;
+            store_task(conn, &task).await?;
+            invalidate_pending_approvals_in_tx(conn, &task.id, &reason).await?;
+            frontier.push(task);
+        }
+    }
+    Ok(())
+}
+
+/// Invalidate every pending approval parked on `task_id`: the task is no
+/// longer going to run, so there is nothing left to decide (SPEC §11: an
+/// approval binds to the exact request it was raised for).
+async fn invalidate_pending_approvals_in_tx(
+    conn: &mut SqliteConnection,
+    task_id: &TaskId,
+    reason: &str,
+) -> Result<()> {
+    let rows: Vec<String> =
+        sqlx::query_scalar("SELECT body FROM approvals WHERE task_id = ? AND state = 'pending'")
+            .bind(task_id.as_str())
+            .fetch_all(&mut *conn)
+            .await?;
+    for body in rows {
+        let mut req: ApprovalRequest = serde_json::from_str(&body)?;
+        req.state = ApprovalState::Invalidated;
+        req.decided_by = Some(Actor::System);
+        req.decided_reason = Some(reason.to_string());
+        req.decided_at = Some(now());
+        sqlx::query("UPDATE approvals SET state = ?, body = ?, decided_at = ? WHERE id = ?")
+            .bind(req.state.as_str())
+            .bind(serde_json::to_string(&req)?)
+            .bind(to_rfc3339(now()))
+            .bind(req.id.as_str())
+            .execute(&mut *conn)
+            .await?;
+    }
+    Ok(())
 }
 
 /// Record what an attempt actually consumed. Keyed by attempt so a retry is

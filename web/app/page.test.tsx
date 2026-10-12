@@ -9,11 +9,11 @@ describe("LandingPage", () => {
     expect(screen.getByRole("link", { name: "Start research" }))
       .toHaveAttribute("href", "/runs/new");
     expect(screen.getByRole("link", { name: "Start research" }))
-      .toHaveClass("landing-action");
+      .toHaveClass("btn", "btn--cta");
     expect(screen.getByRole("link", { name: "View runs" }))
       .toHaveAttribute("href", "/runs");
     expect(screen.getByRole("link", { name: "View runs" }))
-      .toHaveClass("landing-action");
+      .toHaveClass("btn", "btn--cta");
   });
 
   it("does not explain the browser-cookie ownership model", () => {

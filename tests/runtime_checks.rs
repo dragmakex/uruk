@@ -48,6 +48,7 @@ fn pending_task(f: &Fixture, role: Role, strategy: &str, inputs: Vec<String>) ->
         output_refs: vec![],
         actual_cost: CostActual::default(),
         error: None,
+        failure: None,
         created_at: OffsetDateTime::now_utc(),
         started_at: None,
         finished_at: None,
@@ -342,12 +343,20 @@ async fn check_3_restart_does_not_duplicate_records() {
             &batch,
             spent.clone(),
             None,
+            None,
         )
         .await
         .unwrap();
     let rating_once = store.get_rating(&a.id, &plan.id).await.unwrap().unwrap();
     store
-        .commit_task(&match_task.id, TaskState::Completed, &batch, spent, None)
+        .commit_task(
+            &match_task.id,
+            TaskState::Completed,
+            &batch,
+            spent,
+            None,
+            None,
+        )
         .await
         .unwrap();
     let rating_twice = store.get_rating(&a.id, &plan.id).await.unwrap().unwrap();
@@ -625,9 +634,12 @@ async fn stop_request_is_observed_by_a_running_scheduler() {
     );
 }
 
-/// Failed and retried work is charged for what it consumed (SPEC §6).
+/// Failed work is charged for what it consumed (SPEC §6). A provider
+/// failure is terminal for the work: the scheduler neither re-runs the task
+/// on top of the provider's own bounded retries nor proposes the same work
+/// again under a new task id.
 #[tokio::test]
-async fn failed_work_is_charged_and_retried() {
+async fn failed_work_is_charged_and_not_re_proposed() {
     let provider = MockProvider::new()
         .fail_first(1)
         .rule(anchor::TASK_SYNTHESIS, synthesis_json())
@@ -650,15 +662,39 @@ async fn failed_work_is_charged_and_retried() {
     .unwrap();
 
     let tasks = f.store.list_tasks(&f.run_id).await.unwrap();
-    let review_task = tasks
-        .iter()
-        .find(|t| t.role == Role::Reflection && t.input_refs == vec![item.id.0.clone()])
-        .expect("the review task exists");
-    assert_eq!(
-        review_task.attempts, 2,
-        "a provider fault is retried: {summary:?}"
+    assert!(
+        tasks.iter().all(|t| t.attempts == 1),
+        "the scheduler never re-runs a task after a provider failure: {tasks:?}"
     );
-    assert_eq!(review_task.state, TaskState::Completed);
+    let failed: Vec<&Task> = tasks
+        .iter()
+        .filter(|t| t.state == TaskState::Failed)
+        .collect();
+    assert_eq!(
+        failed.len(),
+        1,
+        "the one injected fault fails one task: {summary:?}"
+    );
+    let failed = failed[0];
+    assert_eq!(failed.role, Role::Reflection);
+    assert_eq!(failed.input_refs, vec![item.id.0.clone()]);
+    assert!(
+        failed
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains("mock transient failure")),
+        "the provider's message is kept verbatim: {failed:?}"
+    );
+    assert_eq!(failed.failure, Some(FailureKind::Provider), "{failed:?}");
+    assert!(
+        !tasks.iter().any(|t| {
+            t.id != failed.id
+                && t.role == failed.role
+                && t.strategy == failed.strategy
+                && t.input_refs == failed.input_refs
+        }),
+        "work the provider would not serve is not proposed again: {tasks:?}"
+    );
 
     let usage = f.store.budget_usage(&f.run_id).await.unwrap();
     assert_eq!(

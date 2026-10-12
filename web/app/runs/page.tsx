@@ -1,3 +1,4 @@
+import { Button } from "@/components/Button";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ApiDown } from "@/components/ApiDown";
@@ -64,9 +65,9 @@ export default async function RunsPage() {
             browser through an anonymous cookie; clearing site data loses
             access to them.
           </p>
-          <Link href="/runs/new" className="btn">
+          <Button href="/runs/new" variant="primary" size="md">
             Start research
-          </Link>
+          </Button>
         </div>
       ) : (
         <>

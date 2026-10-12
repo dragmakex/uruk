@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { Button } from "@/components/Button";
 
 export default function NotFound() {
   return (
@@ -6,9 +6,9 @@ export default function NotFound() {
       <div className="empty-state">
         <h1>Page not found</h1>
         <p>Nothing lives at this address.</p>
-        <Link href="/" className="btn btn-outline">
+        <Button href="/" variant="outline" size="sm">
           Back to URUK
-        </Link>
+        </Button>
       </div>
     </div>
   );

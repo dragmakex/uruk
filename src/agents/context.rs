@@ -1,10 +1,11 @@
 //! Shared execution context for a role invocation (SPEC §3, §12).
 
 use crate::prompts::{Bindings, PromptRegistry, Rendered, render};
-use crate::provider::{ChatRequest, ChatResponse, Message, Provider};
+use crate::provider::{AttemptBudget, Attempts, ChatRequest, ChatResponse, Message, Provider};
 use crate::records::*;
 use crate::store::Store;
 use crate::{Error, Result};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 
@@ -38,6 +39,13 @@ pub struct AgentContext {
     /// Everything spent through this context, so a failed or cancelled task
     /// still settles what it consumed (SPEC §6).
     spent: Arc<Mutex<CostActual>>,
+    /// Model calls this context may start: the task's reservation, then
+    /// headroom leased from the run's durable budget. `None` only outside a
+    /// budgeted run (tests, previews); the scheduler always sets it.
+    allowance: Option<Arc<CallAllowance>>,
+    /// Ordinal of the next outbound request across every completion this
+    /// context makes, so each request's durable budget record is unique.
+    sequence: Arc<AtomicU32>,
 }
 
 impl std::fmt::Debug for AgentContext {
@@ -86,6 +94,8 @@ impl AgentContext {
             cancel,
             model: None,
             spent: Arc::new(Mutex::new(CostActual::default())),
+            allowance: None,
+            sequence: Arc::new(AtomicU32::new(0)),
         }
     }
 
@@ -98,6 +108,18 @@ impl AgentContext {
     /// What this context has consumed so far.
     pub fn spent(&self) -> CostActual {
         self.spent.lock().map(|c| c.clone()).unwrap_or_default()
+    }
+
+    /// Bound this context's model calls to what `task` may spend under
+    /// `ceiling` (SPEC §6). Every outbound attempt, retries included, claims
+    /// one call durably before it is sent; an attempt the budget cannot
+    /// cover fails the call with [`Error::Budget`] instead of going out.
+    pub fn set_call_allowance(&mut self, task: &Task, ceiling: u32) {
+        self.allowance = Some(Arc::new(CallAllowance::for_task(
+            self.store.clone(),
+            task,
+            ceiling,
+        )));
     }
 
     /// Charge one tool execution to this context. Called before the process
@@ -139,26 +161,33 @@ impl AgentContext {
     /// Call the provider, racing against cancellation (SPEC §9.3).
     ///
     /// "Cancellation ... interrupts outstanding model requests where possible."
-    /// Every reply is charged to this context, truncated or not.
+    /// Every outbound attempt is charged to this context as a model call:
+    /// the attempts before an eventual success, every attempt of a terminal
+    /// failure, and an attempt abandoned by cancellation. The provider may
+    /// bill any of them (SPEC §6: "Failed work still costs what it
+    /// consumed"; §9.2: preserve possible incurred cost).
     pub async fn complete(&self, request: ChatRequest) -> Result<ChatResponse> {
         if self.cancel.is_cancelled() {
             return Err(Error::Cancelled);
         }
 
+        let attempts = match &self.allowance {
+            Some(allowance) => Attempts::bounded(allowance.clone(), self.sequence.clone()),
+            None => Attempts::default(),
+        };
         let result = tokio::select! {
             biased;
             _ = self.cancel.cancelled() => Err(Error::Cancelled),
-            result = self.provider.complete(request) => result,
+            result = self.provider.complete_counted(request, &attempts) => result,
         };
 
         if let Ok(mut spent) = self.spent.lock() {
-            match &result {
-                Ok(response) => spent.add(&response.cost()),
-                // A request was sent; the provider may have charged for it.
-                // Preserve possible incurred cost rather than assuming it was
-                // free (SPEC §9.2).
-                Err(Error::Provider(_)) => spent.model_calls += 1,
-                Err(_) => {}
+            spent.model_calls += attempts.count();
+            if let Ok(response) = &result {
+                // Token usage from the reply; its call is counted above.
+                let mut usage = response.cost();
+                usage.model_calls = 0;
+                spent.add(&usage);
             }
         }
         result
@@ -508,4 +537,76 @@ pub(crate) fn clip(s: &str, max: usize) -> String {
         .last()
         .unwrap_or(0);
     format!("{}\n[... {} bytes omitted ...]", &s[..end], s.len() - end)
+}
+
+/// The model calls one task attempt may start, settled against the run's
+/// durable budget ledger rather than a process-local counter.
+///
+/// The task's own reservation covers its first calls; each call past it
+/// leases one more from the headroom under `ceiling`, as a persisted
+/// reservation written in the same transaction that records the attempt.
+/// Any process that reads the ledger sees the lease, so schedulers cannot
+/// collectively overrun the ceiling, and a crash between the lease and the
+/// reply leaves the attempt on record for recovery to charge (SPEC §9.2).
+#[derive(Debug)]
+pub struct CallAllowance {
+    store: Store,
+    run_id: RunId,
+    task_id: TaskId,
+    /// The task attempt (its `attempts` counter after the claim).
+    attempt: u32,
+    /// Calls of the task's own reservation not yet used by this attempt.
+    reserved: AtomicU32,
+    ceiling: u32,
+}
+
+impl CallAllowance {
+    /// The allowance of `task`, as claimed for its current attempt, under
+    /// the model-call `ceiling` that applies to it.
+    pub fn for_task(store: Store, task: &Task, ceiling: u32) -> Self {
+        Self {
+            store,
+            run_id: task.run_id.clone(),
+            task_id: task.id.clone(),
+            attempt: task.attempts,
+            reserved: AtomicU32::new(task.reservation.model_calls),
+            ceiling,
+        }
+    }
+
+    /// Claim a call for the outbound request with task-attempt-wide
+    /// `ordinal`; see [`Store::lease_model_call`] for the accounting.
+    ///
+    /// # Errors
+    ///
+    /// Propagates store failures.
+    pub async fn claim(&self, ordinal: u32) -> Result<bool> {
+        let covered = self
+            .reserved
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+            .is_ok();
+        let granted = self
+            .store
+            .lease_model_call(
+                &self.run_id,
+                &self.task_id,
+                self.attempt,
+                ordinal,
+                self.ceiling,
+                covered,
+            )
+            .await?;
+        if covered && !granted {
+            // The reservation was not spent after all.
+            self.reserved.fetch_add(1, Ordering::SeqCst);
+        }
+        Ok(granted)
+    }
+}
+
+#[async_trait::async_trait]
+impl AttemptBudget for CallAllowance {
+    async fn claim(&self, ordinal: u32) -> Result<bool> {
+        CallAllowance::claim(self, ordinal).await
+    }
 }

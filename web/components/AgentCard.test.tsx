@@ -116,10 +116,10 @@ describe("AgentCard", () => {
       last_finished: {
         strategy: "deep_verification",
         state: "failed",
-        attempts: 3,
+        attempts: 1,
         started_at: null,
         finished_at: "2026-10-04T14:00:00Z",
-        error: "provider timeout (attempts exhausted: 3)",
+        error: "provider timeout: request failed (after 4 attempts)",
       },
     });
     render(<AgentCard panel={failing} stats={stats} />);

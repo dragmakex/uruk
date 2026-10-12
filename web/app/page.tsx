@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { Button } from "@/components/Button";
 
 /**
  * Minimal public landing shell. Static: it states what the local console
@@ -14,12 +14,12 @@ export default function LandingPage() {
         live tournament, and read the evidence-backed report it exports.
       </p>
       <div className="landing-actions">
-        <Link href="/runs/new" className="btn landing-action">
+        <Button href="/runs/new" variant="primary" size="cta">
           Start research
-        </Link>
-        <Link href="/runs" className="btn btn-outline landing-action">
+        </Button>
+        <Button href="/runs" variant="outline" size="cta">
           View runs
-        </Link>
+        </Button>
       </div>
     </div>
   );
