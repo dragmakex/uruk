@@ -182,7 +182,16 @@ async fn gives_up_after_the_retry_bound() {
         .await
         .unwrap_err();
     assert!(matches!(err, uruk::Error::Provider(_)), "{err}");
-    assert!(err.to_string().contains("after 2 attempt(s)"), "{err}");
+    let message = err.to_string();
+    assert!(
+        message.ends_with("(after 2 attempts)"),
+        "the adapter reports the attempts it made, in plain words: {message}"
+    );
+    assert_eq!(
+        message.matches("attempt").count(),
+        1,
+        "the attempt count appears exactly once: {message}"
+    );
     assert_eq!(server.await.unwrap().len(), 2);
 }
 

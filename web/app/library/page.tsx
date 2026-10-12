@@ -1,3 +1,4 @@
+import { Button } from "@/components/Button";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ApiDown } from "@/components/ApiDown";
@@ -76,9 +77,9 @@ export default async function LibraryPage({
           {sources.length} source{sources.length === 1 ? "" : "s"}
           {filtered ? " matching" : " across this browser's runs"}
         </span>
-        <Link href="/library/search" className="btn btn-outline">
+        <Button href="/library/search" variant="outline" size="sm">
           Search passages
-        </Link>
+        </Button>
       </div>
 
       <form method="get" className="filter-bar" aria-label="Filter sources">
@@ -114,9 +115,9 @@ export default async function LibraryPage({
             placeholder="title, authors, identifier"
           />
         </div>
-        <button type="submit" className="btn btn-outline">
+        <Button type="submit" variant="outline" size="sm">
           Filter
-        </button>
+        </Button>
       </form>
 
       {sources.length === 0 ? (
@@ -127,9 +128,9 @@ export default async function LibraryPage({
               The filters are applied to the recorded metadata exactly;
               loosen them to see every source again.
             </p>
-            <Link href="/library" className="btn btn-outline">
+            <Button href="/library" variant="outline" size="sm">
               Clear filters
-            </Link>
+            </Button>
           </div>
         ) : (
           <div className="empty-state">
@@ -139,9 +140,9 @@ export default async function LibraryPage({
               acquires literature. Start a run with uploads, URLs, or
               literature search to populate this library.
             </p>
-            <Link href="/runs" className="btn btn-outline">
+            <Button href="/runs" variant="outline" size="sm">
               View runs
-            </Link>
+            </Button>
           </div>
         )
       ) : (

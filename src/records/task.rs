@@ -210,12 +210,72 @@ pub struct Task {
     pub output_refs: Vec<String>,
     pub actual_cost: CostActual,
     pub error: Option<String>,
+    /// Why a `Failed` task failed, as a typed fact for scheduling policy;
+    /// `error` is the display text. Absent on tasks that did not fail.
+    #[serde(default)]
+    pub failure: Option<FailureKind>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339::option")]
     pub started_at: Option<OffsetDateTime>,
     #[serde(with = "time::serde::rfc3339::option")]
     pub finished_at: Option<OffsetDateTime>,
+}
+
+impl Task {
+    /// The class of this task's failure, for scheduling policy.
+    ///
+    /// The persisted [`Task::failure`] is authoritative. Tasks persisted
+    /// before it existed carry only the message; for those, and only when
+    /// the task is `Failed`, the message shapes the old provider adapter
+    /// produced are recognised as [`FailureKind::Provider`], so an outage
+    /// recorded before the upgrade stays terminal for its work. Anything
+    /// else stays unclassified, and is treated as re-proposable, so no
+    /// ordinary output failure is reclassified by guesswork.
+    pub fn failure_kind(&self) -> Option<FailureKind> {
+        if let Some(kind) = self.failure {
+            return Some(kind);
+        }
+        if self.state != TaskState::Failed {
+            return None;
+        }
+        self.error
+            .as_deref()
+            .filter(|e| legacy_provider_failure(e))
+            .map(|_| FailureKind::Provider)
+    }
+}
+
+/// Whether `error` is a message the pre-upgrade provider adapter wrote for
+/// a task that failed on the provider. The adapter stored its messages
+/// verbatim (no `validation:`-style prefix), in exactly these shapes:
+/// `HTTP <status>: …`, `request failed: …`, `reading response: …`,
+/// `unparseable chat completion (…)`, with transient ones suffixed
+/// `(after N attempt(s))` and possibly `(attempts exhausted: N)`.
+fn legacy_provider_failure(error: &str) -> bool {
+    error.contains(" attempt(s))")
+        || error.starts_with("HTTP ")
+        || error.starts_with("request failed: ")
+        || error.starts_with("reading response: ")
+        || error.starts_with("unparseable chat completion")
+}
+
+/// The class of a task failure, recorded so the supervisor can decide what a
+/// failure means for the work without reading its message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FailureKind {
+    /// The model provider did not serve the request: unreachable after the
+    /// adapter's bounded retries, or a refusal such as a 4xx. Terminal for
+    /// the work; proposing it again would only repeat the attempts.
+    Provider,
+    /// The model answered, but the role could not accept the result
+    /// (unparseable, truncated, rejected by validation). A stochastic miss;
+    /// the same work may be proposed again within the usual bound.
+    Output,
+    /// The run's budget could not cover another model call for this work.
+    /// Terminal for the work: the budget does not come back.
+    Budget,
 }
 
 /// What a decision recorded (SPEC §4.2 `Decision`).
@@ -496,5 +556,111 @@ mod tests {
         assert!(!AccessClass::LocalOnly.may_disclose_to_provider());
         assert!(!AccessClass::Sensitive.may_disclose_to_provider());
         assert!(AccessClass::Open.may_disclose_to_provider());
+    }
+}
+
+#[cfg(test)]
+mod legacy_failure_tests {
+    use super::*;
+
+    fn failed_task(error: &str) -> Task {
+        Task {
+            id: TaskId::new(),
+            schema_version: SCHEMA_VERSION,
+            run_id: RunId::new(),
+            role: Role::MetaReview,
+            strategy: "deliverable".into(),
+            goal_id: GoalId::new(),
+            plan_id: PlanId::new(),
+            input_refs: vec![],
+            input_hash: ContentHash::of_str("in"),
+            prompt_id: None,
+            prompt_hash: None,
+            model: None,
+            provider: None,
+            payload: None,
+            feedback_id: None,
+            depends_on: vec![],
+            priority: 1.0,
+            priority_rationale: "test".into(),
+            permissions: Permissions::default(),
+            reservation: CostReservation {
+                model_calls: 1,
+                tokens: 0,
+                tool_executions: 0,
+            },
+            state: TaskState::Failed,
+            attempts: 3,
+            max_attempts: 3,
+            seed: 1,
+            output_refs: vec![],
+            actual_cost: CostActual::default(),
+            error: Some(error.to_string()),
+            failure: None,
+            created_at: OffsetDateTime::now_utc(),
+            started_at: None,
+            finished_at: None,
+        }
+    }
+
+    /// A task persisted before `failure` existed: the field is absent.
+    fn from_legacy_body(error: &str) -> Task {
+        let mut body = serde_json::to_value(failed_task(error)).unwrap();
+        body.as_object_mut().unwrap().remove("failure");
+        serde_json::from_value(body).unwrap()
+    }
+
+    #[test]
+    fn the_pre_upgrade_screenshot_failure_stays_terminal_for_the_work() {
+        let task = from_legacy_body(
+            "request failed: error sending request for url \
+             (http://localhost:8080/v1/chat/completions) (after 4 attempt(s)) \
+             (attempts exhausted: 3)",
+        );
+        assert_eq!(task.failure, None, "nothing was persisted");
+        assert_eq!(task.failure_kind(), Some(FailureKind::Provider));
+    }
+
+    #[test]
+    fn other_pre_upgrade_adapter_messages_are_provider_failures() {
+        for error in [
+            "HTTP 503 Service Unavailable: overloaded (after 4 attempt(s))",
+            "HTTP 401 Unauthorized: bad key",
+            "unparseable chat completion (expected value at line 1): <html>",
+            "reading response: connection reset",
+        ] {
+            assert_eq!(
+                from_legacy_body(error).failure_kind(),
+                Some(FailureKind::Provider),
+                "{error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn pre_upgrade_output_failures_are_not_reclassified() {
+        for error in [
+            "validation: model response was cut off by the token limit; a truncated \
+             reply cannot be parsed into a complete record",
+            "assessment rejected: unsupported claim",
+            "validation: expected a JSON object with a `hypotheses` array",
+            "interrupted by shutdown; outcome of any external effect is unknown",
+        ] {
+            assert_eq!(from_legacy_body(error).failure_kind(), None, "{error:?}");
+        }
+    }
+
+    #[test]
+    fn a_persisted_kind_is_authoritative_over_inference() {
+        let mut task = failed_task("HTTP 500 Internal Server Error: boom (after 4 attempt(s))");
+        task.failure = Some(FailureKind::Output);
+        assert_eq!(task.failure_kind(), Some(FailureKind::Output));
+    }
+
+    #[test]
+    fn inference_applies_only_to_failed_tasks() {
+        let mut task = failed_task("HTTP 500 Internal Server Error: boom (after 4 attempt(s))");
+        task.state = TaskState::Cancelled;
+        assert_eq!(task.failure_kind(), None);
     }
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { Button, ButtonGroup } from "./Button";
 import { useEffect, useRef, useState } from "react";
 import { ApiFailure, stopRun } from "@/lib/api";
 import {
@@ -153,14 +153,13 @@ export function LiveRun({
           </span>
           {note !== null && <span className="conn-note">{note}</span>}
           {!terminal && (
-            <button
-              type="button"
-              className="btn btn-outline"
+            <Button
+              variant="outline" size="sm"
               onClick={onStop}
               disabled={stopping}
             >
               {stopping ? "Stopping" : "Stop"}
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -191,15 +190,22 @@ export function LiveRun({
                 : "cost unknown"}
               .
             </p>
-            <Link href={`/runs/${encodeURIComponent(run.id)}/report`} className="btn">
-              Read the report
-            </Link>{" "}
-            <Link
-              href={`/runs/${encodeURIComponent(run.id)}/citations`}
-              className="btn btn-outline"
-            >
-              Inspect citations
-            </Link>
+            <ButtonGroup equal>
+              <Button
+                href={`/runs/${encodeURIComponent(run.id)}/report`}
+                variant="primary"
+                size="cta"
+              >
+                Read the report
+              </Button>
+              <Button
+                href={`/runs/${encodeURIComponent(run.id)}/citations`}
+                variant="outline"
+                size="cta"
+              >
+                Inspect citations
+              </Button>
+            </ButtonGroup>
           </div>
         )}
 

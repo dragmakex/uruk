@@ -3,7 +3,10 @@
 //! CI must need no paid LLM or live network, so every acceptance check drives
 //! the system through this.
 
-use super::{ChatRequest, ChatResponse, Choice, FinishReason, Message, Provider, Usage};
+use super::{
+    Attempts, ChatRequest, ChatResponse, Choice, FinishReason, Message, Provider, Usage,
+    budget_refused,
+};
 use crate::{Error, Result};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -169,6 +172,17 @@ impl Provider for MockProvider {
     }
 
     async fn complete(&self, request: ChatRequest) -> Result<ChatResponse> {
+        self.complete_counted(request, &Attempts::default()).await
+    }
+
+    async fn complete_counted(
+        &self,
+        request: ChatRequest,
+        attempts: &Attempts,
+    ) -> Result<ChatResponse> {
+        if attempts.try_start().await?.is_none() {
+            return Err(budget_refused(attempts, None));
+        }
         let n = self.calls.fetch_add(1, Ordering::SeqCst);
         self.seen.lock().unwrap().push(request.clone());
 

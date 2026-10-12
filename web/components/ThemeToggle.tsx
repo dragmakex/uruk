@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "./Button";
 import { useLayoutEffect, useState } from "react";
 
 type Theme = "light" | "dark";
@@ -61,13 +62,8 @@ export function ThemeToggle() {
   }
 
   return (
-    <button
-      type="button"
-      className="btn-outline btn"
-      onClick={toggle}
-      style={{ padding: "6px 14px", fontFamily: "var(--font-mono)", fontSize: 12 }}
-    >
+    <Button variant="outline" size="xs" onClick={toggle}>
       {theme === "dark" ? "Light" : "Dark"}
-    </button>
+    </Button>
   );
 }

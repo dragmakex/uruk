@@ -18,9 +18,11 @@ pub use http::{
 pub use mock::{MockProvider, MockRule, Reply};
 pub use pacing::StartPacer;
 
-use crate::Result;
 use crate::records::CostActual;
+use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 /// A conversation role, as the wire format spells it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -206,6 +208,90 @@ impl ChatResponse {
     }
 }
 
+/// The caller's authority over whether one more outbound attempt may be
+/// sent. Implemented over durable run accounting (see
+/// [`crate::agents::CallAllowance`]); the adapter only asks.
+#[async_trait::async_trait]
+pub trait AttemptBudget: Send + Sync + std::fmt::Debug {
+    /// Claim a model call for the outbound attempt with the given
+    /// `ordinal`, unique across every completion of the task attempt (see
+    /// [`Attempts`]). `Ok(false)` means the budget cannot cover it, so the
+    /// request must not go out.
+    async fn claim(&self, ordinal: u32) -> Result<bool>;
+}
+
+/// Outbound request attempts of one completion, counted as each starts and
+/// gated by the caller's [`AttemptBudget`].
+///
+/// Two counts live here. `started` is local to this completion: it is what
+/// the adapter reports ("after 3 attempts") and what the caller charges for
+/// this call. `sequence` is shared across every completion of one task
+/// attempt (a debate makes several), so each outbound request carries an
+/// ordinal that is unique task-attempt-wide; the budget keys its durable
+/// records by it, and no two requests can ever share a record.
+///
+/// Shared with the caller so the counts outlive the call: when cancellation
+/// drops the in-flight future, the attempt that was already sent is still
+/// on record, and may still be billed (SPEC §9.2: preserve possible
+/// incurred cost). An attempt the budget refuses is never sent, so a retry
+/// can never spend a call the run does not have.
+#[derive(Debug, Default)]
+pub struct Attempts {
+    started: AtomicU32,
+    sequence: Arc<AtomicU32>,
+    /// `None` is unbounded: callers outside a budgeted run.
+    budget: Option<Arc<dyn AttemptBudget>>,
+}
+
+impl Attempts {
+    /// Attempts gated by `budget`, numbered from the shared `sequence`.
+    pub fn bounded(budget: Arc<dyn AttemptBudget>, sequence: Arc<AtomicU32>) -> Self {
+        Self {
+            started: AtomicU32::new(0),
+            sequence,
+            budget: Some(budget),
+        }
+    }
+
+    /// Claim a call and record that an attempt is being sent; returns this
+    /// completion's attempt number, from 1, or `None` when the budget is
+    /// spent, in which case nothing was recorded and the request must not
+    /// go out. A refused ordinal is consumed, never reused.
+    ///
+    /// # Errors
+    ///
+    /// Propagates a failure of the budget's own store.
+    pub async fn try_start(&self) -> Result<Option<u32>> {
+        let ordinal = self.sequence.fetch_add(1, Ordering::SeqCst) + 1;
+        if let Some(budget) = &self.budget
+            && !budget.claim(ordinal).await?
+        {
+            return Ok(None);
+        }
+        Ok(Some(self.started.fetch_add(1, Ordering::SeqCst) + 1))
+    }
+
+    /// Attempts started so far.
+    pub fn count(&self) -> u32 {
+        self.started.load(Ordering::SeqCst)
+    }
+}
+
+/// The error for an attempt the budget would not cover, worded so a task
+/// reports budget exhaustion rather than a provider outage.
+fn budget_refused(attempts: &Attempts, last_error: Option<&str>) -> Error {
+    let sent = attempts.count();
+    let plural = if sent == 1 { "" } else { "s" };
+    let message = match (sent, last_error) {
+        (0, _) => "model-call budget exhausted before the request could be sent".to_string(),
+        (n, Some(last)) => {
+            format!("model-call budget exhausted after {n} attempt{plural}; last: {last}")
+        }
+        (n, None) => format!("model-call budget exhausted after {n} attempt{plural}"),
+    };
+    Error::Budget(message)
+}
+
 /// A model provider.
 ///
 /// Implementations: [`HttpProvider`] for any OpenAI-compatible endpoint, and
@@ -218,11 +304,32 @@ pub trait Provider: Send + Sync + std::fmt::Debug {
     /// Default model when the plan does not name one.
     fn default_model(&self) -> &str;
 
-    /// Perform one completion.
+    /// Perform one completion with one outbound request.
     ///
     /// Cancellation is the caller's concern: it races this future against a
-    /// cancellation token, so implementations need not poll for it.
+    /// cancellation token, so implementations need not poll for it. This is
+    /// the original trait surface; providers that only implement it are
+    /// counted and budgeted by the default [`Provider::complete_counted`].
     async fn complete(&self, request: ChatRequest) -> Result<ChatResponse>;
+
+    /// Perform one completion, calling [`Attempts::try_start`] immediately
+    /// before each outbound request so every attempt is on record (and
+    /// refused when the budget cannot cover it) even if the future is
+    /// dropped before the reply arrives.
+    ///
+    /// The default claims exactly one attempt and delegates to
+    /// [`Provider::complete`]. Adapters that retry internally override this
+    /// and implement `complete` by way of it with unbounded attempts.
+    async fn complete_counted(
+        &self,
+        request: ChatRequest,
+        attempts: &Attempts,
+    ) -> Result<ChatResponse> {
+        if attempts.try_start().await?.is_none() {
+            return Err(budget_refused(attempts, None));
+        }
+        self.complete(request).await
+    }
 }
 
 /// Choose the model provider from the environment (SPEC §13: model selection

@@ -319,8 +319,23 @@ impl Ledger<'_> {
     /// Input-less work (another generation, another synthesis) is a distinct
     /// stochastic trial each round, so a completed one does not block the
     /// next. Work over specific inputs runs once unless it failed.
+    ///
+    /// A failure is re-proposed only when a fresh trial could plausibly
+    /// succeed: an output the role could not accept. Work the provider
+    /// would not serve ([`FailureKind::Provider`], already retried by the
+    /// adapter) or the budget could not cover ([`FailureKind::Budget`]) is
+    /// terminal; proposing it again would only repeat the outbound attempts
+    /// under a new task id.
     fn allows(&self, role: Role, strategy: &str, inputs: &[String]) -> bool {
         let same = |t: &&Task| t.role == role && t.strategy == strategy && t.input_refs == inputs;
+        if self.tasks.iter().filter(same).any(|t| {
+            matches!(
+                t.failure_kind(),
+                Some(FailureKind::Provider | FailureKind::Budget)
+            )
+        }) {
+            return false;
+        }
         let repeatable = inputs.is_empty();
         let blocking = self.tasks.iter().filter(same).any(|t| {
             let open = !t.state.is_terminal();
@@ -844,9 +859,13 @@ pub async fn select_work(
     }
 
     // --- Task mode: the deliverable, once nothing else remains ---
+    // Like any other work, a failed deliverable is re-proposed a bounded
+    // number of times; a provider outage must not keep proposing it every
+    // round for as long as the run has budget.
     if goal.mode == Mode::Task
         && enabled(Role::MetaReview)
         && !ledger.deliverable_done()
+        && ledger.allows(Role::MetaReview, "deliverable", &[])
         && work.is_empty()
         && !ledger.has_unfinished_supporting_work()
     {

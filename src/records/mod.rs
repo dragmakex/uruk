@@ -27,7 +27,7 @@ pub use run::{CampaignSnapshot, Cluster, Critique, Feedback, Run, RunState, Stra
 pub use source::{AccessLevel, Locator, Origin, SearchRecord, Source};
 pub use task::{
     AccessClass, Actor, ApprovalRequest, ApprovalState, Artifact, CostActual, CostReservation,
-    Decision, DecisionKind, ExecutionRecord, Experiment, Role, Task, TaskState,
+    Decision, DecisionKind, ExecutionRecord, Experiment, FailureKind, Role, Task, TaskState,
 };
 pub use tournament::{
     DEFAULT_K, INITIAL_ELO, Match, MatchMethod, MatchOutcome, Rating, apply_elo, expected_score,

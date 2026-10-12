@@ -23,7 +23,9 @@ pub struct SchedulerConfig {
     pub weights: supervisor::Weights,
     /// Tasks admitted per iteration.
     pub batch_size: usize,
-    /// Attempts per task before it fails permanently.
+    /// Attempts per task before it fails permanently. Only a store fault
+    /// mid-task spends an attempt: provider errors are already retried, and
+    /// then final, inside the provider adapter.
     pub max_attempts: u32,
 }
 
@@ -95,6 +97,31 @@ impl Drop for StopWatcher {
     }
 }
 
+/// Cancels the run's work token when the wall-clock deadline passes, so an
+/// in-flight model call — retries and backoff included — ends at the
+/// deadline instead of running the run past it (SPEC §6: "Enforce a finite
+/// deadline"). Only the work token is cancelled: the run's own token still
+/// means "the researcher stopped this run".
+struct DeadlineWatch(tokio::task::JoinHandle<()>);
+
+impl DeadlineWatch {
+    fn spawn(deadline: OffsetDateTime, work: CancellationToken) -> Self {
+        let remaining = (deadline - OffsetDateTime::now_utc()).max(time::Duration::ZERO);
+        let remaining = std::time::Duration::try_from(remaining).unwrap_or_default();
+        Self(tokio::spawn(async move {
+            tokio::time::sleep(remaining).await;
+            tracing::warn!("wall-clock deadline reached; cancelling in-flight work");
+            work.cancel();
+        }))
+    }
+}
+
+impl Drop for DeadlineWatch {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 impl Scheduler {
     pub fn new(store: Store, provider: Arc<dyn Provider>, config: SchedulerConfig) -> Self {
         Self {
@@ -155,6 +182,10 @@ impl Scheduler {
         // start, so a restart cannot extend the deadline (SPEC §6).
         let deadline = run.created_at + time::Duration::seconds(goal.budget.wall_clock_secs as i64);
         let _watcher = StopWatcher::spawn(self.store.clone(), run_id.clone(), self.cancel.clone());
+        // Work runs under a child token: a stop request cancels it through
+        // the parent, the deadline cancels it alone.
+        let work = self.cancel.child_token();
+        let _deadline_watch = DeadlineWatch::spawn(deadline, work.clone());
         let stop_condition: StopCondition;
 
         loop {
@@ -217,7 +248,13 @@ impl Scheduler {
                 continue;
             }
 
-            self.dispatch(run_id, &goal, &plan, ready).await?;
+            // Ordinary work is capped below the output reserve (SPEC §6).
+            let ceiling = goal
+                .budget
+                .max_model_calls
+                .saturating_sub(goal.budget.reserve_calls_for_output);
+            self.dispatch(run_id, &goal, &plan, ready, &work, ceiling)
+                .await?;
             let iteration = self.store.bump_iteration(run_id).await?;
             self.snapshot(run_id, iteration).await?;
 
@@ -235,23 +272,42 @@ impl Scheduler {
         // The final deliverable draws on the output reserve and runs only if
         // permitted and budgeted; when it cannot, that is recorded (SPEC §6).
         let skipped = self
-            .final_output(run_id, &goal, &plan, &stop_condition)
+            .final_output(run_id, &goal, &plan, &stop_condition, deadline, &work)
             .await?;
 
-        let state = match stop_condition {
-            StopCondition::Cancelled => {
-                self.store.cancel_pending_tasks(run_id).await?;
-                RunState::Cancelled
-            }
+        // A stop request that landed during the final meta-review wins over
+        // the condition the loop stopped on.
+        let mut stop_condition = if self.cancel.is_cancelled() {
+            StopCondition::Cancelled
+        } else {
+            stop_condition
+        };
+
+        // A finished run holds no open work: whatever was admitted but never
+        // dispatched (parked behind a failed prerequisite, or simply left
+        // over) is closed with the run rather than shown as queued forever.
+        self.store.cancel_pending_tasks(run_id).await?;
+
+        let mut state = match stop_condition {
+            StopCondition::Cancelled => RunState::Cancelled,
             StopCondition::BudgetExhausted => RunState::BudgetExhausted,
             StopCondition::SafetyBoundary => RunState::Blocked,
             // A scientifically negative result is still a completed run.
             _ => RunState::Completed,
         };
 
-        self.store
-            .set_run_state(run_id, state, Some(stop_condition.clone()))
-            .await?;
+        // Guarded write: a durable stop that the watcher has not observed
+        // yet is already recorded as `cancelled`, and must not be overwritten.
+        if !self
+            .store
+            .finish_run(run_id, state, stop_condition.clone())
+            .await?
+        {
+            tracing::warn!("stop request observed at completion; the run is cancelled");
+            self.cancel.cancel();
+            state = RunState::Cancelled;
+            stop_condition = StopCondition::Cancelled;
+        }
         self.summarize(run_id, state, Some(stop_condition), uncertain, skipped)
             .await
     }
@@ -266,12 +322,19 @@ impl Scheduler {
 
     /// Produce the final deliverable after the loop, if not already done.
     /// Returns the reason it was skipped, if it was.
+    ///
+    /// The deliverable is one more model call under the same bounds as the
+    /// rest of the run: it is skipped once the wall-clock deadline has
+    /// passed, and it is not re-run when an attempt at it already failed
+    /// during the loop (that failure is reported instead).
     async fn final_output(
         &self,
         run_id: &RunId,
         goal: &Goal,
         plan: &Plan,
         stop: &StopCondition,
+        deadline: OffsetDateTime,
+        cancel: &CancellationToken,
     ) -> Result<Option<String>> {
         if !plan.roles.iter().any(|r| r == Role::MetaReview.as_str()) {
             return Ok(None);
@@ -280,10 +343,31 @@ impl Scheduler {
             return Ok(None);
         }
 
+        let failed_deliverable = self
+            .store
+            .list_tasks(run_id)
+            .await?
+            .into_iter()
+            .filter(|t| {
+                t.role == Role::MetaReview
+                    && t.strategy == "deliverable"
+                    && t.state == TaskState::Failed
+            })
+            .max_by_key(|t| t.finished_at);
+
         let skip_reason = if matches!(stop, StopCondition::Cancelled) {
             Some("run was cancelled before the final meta-review".to_string())
         } else if matches!(stop, StopCondition::SafetyBoundary) {
             Some("run stopped at a safety boundary; no final meta-review".to_string())
+        } else if OffsetDateTime::now_utc() >= deadline {
+            Some("wall-clock deadline passed before the final meta-review".to_string())
+        } else if let Some(failed) = failed_deliverable {
+            Some(format!(
+                "final meta-review already attempted and failed: {}",
+                failed
+                    .error
+                    .unwrap_or_else(|| "no error recorded".to_string())
+            ))
         } else if !self
             .store
             .can_afford_final_output(run_id, FINAL_OUTPUT_CALLS, &goal.budget)
@@ -336,9 +420,39 @@ impl Scheduler {
             .filter(|t| t.id == task_id)
             .collect();
         if !ready.is_empty() {
-            self.dispatch(run_id, goal, plan, ready).await?;
+            // The deliverable may spend the output reserve.
+            self.dispatch(
+                run_id,
+                goal,
+                plan,
+                ready,
+                cancel,
+                goal.budget.max_model_calls,
+            )
+            .await?;
         }
-        Ok(None)
+
+        // The deliverable ran under the same bounds as the rest of the run;
+        // when it did not complete, say why rather than leaving a cancelled
+        // task with no reason.
+        let task = self.store.get_task(&task_id).await?;
+        if task.state == TaskState::Completed {
+            return Ok(None);
+        }
+        let reason = if task.state == TaskState::Cancelled && self.cancel.is_cancelled() {
+            "run was cancelled during the final meta-review".to_string()
+        } else if task.state == TaskState::Cancelled && OffsetDateTime::now_utc() >= deadline {
+            "wall-clock deadline passed during the final meta-review".to_string()
+        } else {
+            format!(
+                "final meta-review {}: {}",
+                task.state.as_str(),
+                task.error
+                    .unwrap_or_else(|| "no error recorded".to_string())
+            )
+        };
+        self.record_skip(run_id, &reason).await?;
+        Ok(Some(reason))
     }
 
     async fn record_skip(&self, run_id: &RunId, reason: &str) -> Result<()> {
@@ -527,6 +641,7 @@ impl Scheduler {
             output_refs: vec![],
             actual_cost: CostActual::default(),
             error: None,
+            failure: None,
             created_at: OffsetDateTime::now_utc(),
             started_at: None,
             finished_at: None,
@@ -534,12 +649,19 @@ impl Scheduler {
     }
 
     /// Dispatch ready tasks concurrently, bounded by the configured limits.
+    /// `work` cancels every task's model calls: it fires on a stop request
+    /// and at the wall-clock deadline. `ceiling` is the model-call limit
+    /// this work may spend up to; each task starts attempts against its own
+    /// reservation, then leases headroom under the ceiling from the durable
+    /// ledger, so retries can never overrun the budget.
     async fn dispatch(
         &self,
         run_id: &RunId,
         goal: &Goal,
         plan: &Plan,
         ready: Vec<Task>,
+        work: &CancellationToken,
+        ceiling: u32,
     ) -> Result<()> {
         let feedback = self.store.latest_feedback(run_id).await?;
         let human_feedback: Vec<String> = self
@@ -576,6 +698,9 @@ impl Scheduler {
             if !self.store.claim_task(&task.id).await? {
                 continue; // Another worker took it.
             }
+            // The claim advanced the attempt counter that keys this
+            // attempt's budget records.
+            let task = self.store.get_task(&task.id).await?;
 
             let mut ctx = AgentContext::new(
                 self.store.clone(),
@@ -586,12 +711,13 @@ impl Scheduler {
                 plan.clone(),
                 task.permissions.clone(),
                 task.seed,
-                self.cancel.clone(),
+                work.clone(),
             );
             ctx.feedback = feedback.clone();
             ctx.human_feedback = human_feedback.clone();
             ctx.overview_hints = overview_hints.clone();
             ctx.model = task.model.clone();
+            ctx.set_call_allowance(&task, ceiling);
 
             let limits = self.config.limits.clone();
             let task_id = task.id.clone();
@@ -620,18 +746,9 @@ impl Scheduler {
             };
 
             match result {
-                Ok(outcome) if outcome.retryable => {
-                    // Infrastructure failures are retried within bounds, and
-                    // each attempt is charged (SPEC §6).
-                    let reason = outcome.error.clone().unwrap_or_default();
-                    let requeued = self
-                        .store
-                        .requeue_task(&task_id, &reason, &outcome.cost)
-                        .await?;
-                    if !requeued {
-                        tracing::warn!(task = %task_id, %reason, "task failed permanently");
-                    }
-                }
+                // Provider failures arrive here already retried by the
+                // adapter and are final for the task (SPEC §6: retries are
+                // bounded and charged, once).
                 Ok(outcome) => {
                     self.store
                         .commit_task(
@@ -640,6 +757,7 @@ impl Scheduler {
                             &outcome.batch,
                             outcome.cost,
                             outcome.error,
+                            outcome.failure,
                         )
                         .await?;
                 }
@@ -663,6 +781,7 @@ impl Scheduler {
                             &RecordBatch::default(),
                             CostActual::default(),
                             Some(e.to_string()),
+                            None,
                         )
                         .await?;
                 }

@@ -367,6 +367,7 @@ async fn enqueue_acquisitions(
             output_refs: vec![],
             actual_cost: CostActual::default(),
             error: None,
+            failure: None,
             created_at: OffsetDateTime::now_utc(),
             started_at: None,
             finished_at: None,

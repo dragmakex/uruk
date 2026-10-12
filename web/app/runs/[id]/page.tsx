@@ -1,5 +1,5 @@
+import { Button } from "@/components/Button";
 import type { Metadata } from "next";
-import Link from "next/link";
 import { LiveRun } from "@/components/LiveRun";
 import { ApiFailure, fetchSnapshot } from "@/lib/api";
 import { identityCookieHeader } from "@/lib/server-identity";
@@ -33,9 +33,9 @@ export default async function RunPage({
               to the browser that started them; a cleared cookie or a
               different browser cannot reach them.
             </p>
-            <Link href="/runs" className="btn btn-outline">
+            <Button href="/runs" variant="outline" size="sm">
               Back to runs
-            </Link>
+            </Button>
           </div>
         </div>
       );

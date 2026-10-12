@@ -102,6 +102,7 @@ pub(crate) fn test_task(run_id: &RunId, goal_id: &GoalId, plan_id: &PlanId, role
         output_refs: vec![],
         actual_cost: CostActual::default(),
         error: None,
+        failure: None,
         created_at: now(),
         started_at: None,
         finished_at: None,
@@ -1146,7 +1147,8 @@ async fn commit_task_is_atomic_and_idempotent() {
                 TaskState::Completed,
                 &batch,
                 CostActual::default(),
-                None
+                None,
+                None,
             )
             .await
             .is_err()
@@ -1186,12 +1188,19 @@ async fn commit_task_is_atomic_and_idempotent() {
         ..Default::default()
     };
     let refs = store
-        .commit_task(&task.id, TaskState::Completed, &batch, spent.clone(), None)
+        .commit_task(
+            &task.id,
+            TaskState::Completed,
+            &batch,
+            spent.clone(),
+            None,
+            None,
+        )
         .await
         .unwrap();
     assert_eq!(refs, vec![item.id.0.clone()]);
     let again = store
-        .commit_task(&task.id, TaskState::Completed, &batch, spent, None)
+        .commit_task(&task.id, TaskState::Completed, &batch, spent, None, None)
         .await
         .unwrap();
     assert!(again.is_empty(), "duplicate delivery must be ignored");

@@ -1,5 +1,5 @@
+import { Button } from "@/components/Button";
 import type { Metadata } from "next";
-import Link from "next/link";
 import { ApiDown } from "@/components/ApiDown";
 import {
   ApiFailure,
@@ -85,9 +85,9 @@ export default async function SourcePage({
               Sources belong to the run that recorded them and to the
               browser that started it.
             </p>
-            <Link href="/library" className="btn btn-outline">
+            <Button href="/library" variant="outline" size="sm">
               Back to the library
-            </Link>
+            </Button>
           </div>
         </div>
       );
@@ -111,12 +111,12 @@ export default async function SourcePage({
     <div className="canvas canvas-narrow">
       <div className="page-head">
         <h1>{source.title ?? "untitled source"}</h1>
-        <Link
+        <Button
           href={`/runs/${encodeURIComponent(id)}`}
-          className="btn btn-outline"
+          variant="outline" size="sm"
         >
           Run {shortRunId(id)}
-        </Link>
+        </Button>
       </div>
 
       {source.authors !== null && (
@@ -146,13 +146,13 @@ export default async function SourcePage({
             placeholder="terms to search in this source's text"
           />
         </div>
-        <button type="submit" className="btn btn-outline">
+        <Button type="submit" variant="outline" size="sm">
           Search
-        </button>
+        </Button>
         {query !== "" && (
-          <Link href={base} className="btn btn-outline">
+          <Button href={base} variant="outline" size="sm">
             Browse all
-          </Link>
+          </Button>
         )}
       </form>
 
@@ -208,24 +208,25 @@ export default async function SourcePage({
                 {page.total}
               </span>
               {page.offset > 0 && (
-                <Link
+                <Button
                   href={
                     page.offset - page.limit > 0
                       ? `${base}?offset=${page.offset - page.limit}`
                       : base
                   }
-                  className="btn btn-outline"
+                  variant="outline"
+                  size="sm"
                 >
                   Previous
-                </Link>
+                </Button>
               )}
               {page.offset + page.passages.length < page.total && (
-                <Link
+                <Button
                   href={`${base}?offset=${page.offset + page.limit}`}
-                  className="btn btn-outline"
+                  variant="outline" size="sm"
                 >
                   Next
-                </Link>
+                </Button>
               )}
             </div>
           </>

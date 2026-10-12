@@ -107,6 +107,31 @@ describe("LiveRun", () => {
     expect(source!.closed).toBe(true);
   });
 
+  it("sizes the finished-run actions identically, differing only in variant", async () => {
+    render(<LiveRun runId="run_0412aa" initial={initial} />);
+    const source = FakeEventSource.instances[0]!;
+    const finished = snapshotFixture() as { run: Record<string, unknown> };
+    finished.run.state = "completed";
+    finished.run.stop_condition = "deliverable_satisfied";
+    await act(async () => {
+      source.emit("snapshot", JSON.stringify(finished));
+      source.emit("end", "{}");
+    });
+
+    const report = screen.getByRole("link", { name: "Read the report" });
+    const citations = screen.getByRole("link", { name: "Inspect citations" });
+    const sizeOf = (el: HTMLElement) =>
+      [...el.classList].find((c) => /^btn--(xs|sm|md|cta)$/.test(c));
+    expect(sizeOf(report)).toBe("btn--cta");
+    expect(sizeOf(citations)).toBe("btn--cta");
+    expect(report).toHaveClass("btn--primary");
+    expect(citations).toHaveClass("btn--outline");
+    expect(report).not.toHaveAttribute("style");
+    expect(citations).not.toHaveAttribute("style");
+    expect(report.parentElement).toBe(citations.parentElement);
+    expect(report.parentElement).toHaveClass("btn-group--equal");
+  });
+
   it("shows a reconnecting note when the stream drops", async () => {
     render(<LiveRun runId="run_0412aa" initial={initial} />);
     const source = FakeEventSource.instances[0]!;
