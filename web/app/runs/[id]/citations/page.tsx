@@ -1,3 +1,4 @@
+import { Button } from "@/components/Button";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ApiDown } from "@/components/ApiDown";
@@ -42,9 +43,9 @@ export default async function CitationsPage({
               No run with id {id} is available to this browser. Runs belong
               to the browser that started them.
             </p>
-            <Link href="/runs" className="btn btn-outline">
+            <Button href="/runs" variant="outline" size="sm">
               Back to runs
-            </Link>
+            </Button>
           </div>
         </div>
       );
@@ -65,12 +66,12 @@ export default async function CitationsPage({
     <div className="canvas canvas-narrow">
       <div className="page-head">
         <h1>Citations, run {shortRunId(id)}</h1>
-        <Link
+        <Button
           href={`/runs/${encodeURIComponent(id)}`}
-          className="btn btn-outline"
+          variant="outline" size="sm"
         >
           Back to the run
-        </Link>
+        </Button>
       </div>
 
       {citations.length === 0 ? (

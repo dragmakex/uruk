@@ -16,4 +16,4 @@ pub mod safety;
 pub mod search;
 pub mod supervisor;
 
-pub use context::{AgentContext, Completion};
+pub use context::{AgentContext, CallAllowance, Completion};

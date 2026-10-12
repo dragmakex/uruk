@@ -1060,7 +1060,14 @@ async fn containment_denies_escapes() {
     }
 
     let f = fixture(Mode::Task, MockProvider::new()).await;
-    let outside = f.dir.path().join("escape.txt");
+    // `fixture` lives under /tmp on most hosts, but bubblewrap intentionally
+    // mounts a private writable tmpfs at /tmp. An escape aimed there can exit
+    // successfully while remaining invisible to the host, which makes the
+    // assertion below test tmpfs isolation rather than the read-only root.
+    // Put the probe under the repository instead so it is definitely covered
+    // by bubblewrap's read-only root bind.
+    let outside_dir = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
+    let outside = outside_dir.path().join("escape.txt");
     let permissions = Permissions {
         execute: true,
         allowed_tools: vec!["sh".into()],

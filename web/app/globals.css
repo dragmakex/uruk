@@ -266,20 +266,24 @@ a {
 
 /* ---------- buttons ---------- */
 
-.btn {
-  font-family: var(--font-sans);
-  font-size: 15px;
-  font-weight: 650;
-  padding: 12px 28px;
-  border: var(--hairline) solid var(--fill);
-  background: var(--fill);
-  color: var(--fill-ink);
-  cursor: pointer;
-}
+/* One control (components/Button.tsx), three axes. The base owns the shared
+   box rules, `.btn--{size}` owns geometry (padding, type size, and for the
+   CTA token a fixed height and minimum width), `.btn--{variant}` owns colour
+   only. A variant therefore never changes a control's box: two controls of
+   one size are the same size whatever their variant. */
 
-.btn:hover:not(:disabled) {
-  background: var(--fill-hover);
-  border-color: var(--fill-hover);
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  font-family: var(--font-sans);
+  font-weight: 650;
+  line-height: 1.2;
+  text-align: center;
+  text-decoration: none;
+  border: var(--hairline) solid transparent;
+  cursor: pointer;
 }
 
 .btn:active:not(:disabled) {
@@ -291,17 +295,90 @@ a {
   cursor: not-allowed;
 }
 
-.btn-outline {
-  background: transparent;
-  border-color: var(--line);
-  color: var(--ink);
-  font-weight: 600;
+/* size tokens */
+
+.btn--xs {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 6px 14px;
+}
+
+.btn--sm {
+  font-size: 15px;
   padding: 8px 20px;
 }
 
-.btn-outline:hover:not(:disabled) {
-  background: var(--surface-raised);
+.btn--md {
+  font-size: 15px;
+  padding: 12px 28px;
+}
+
+/* Paired calls to action: fixed height and a minimum width wide enough for
+   every CTA label, so siblings are exactly equal boxes. */
+.btn--cta {
+  font-size: 15px;
+  height: 52px;
+  min-width: 200px;
+  padding: 0 28px;
+}
+
+@media (min-width: 1024px) {
+  .btn--cta {
+    font-size: 17px;
+    height: 56px;
+    min-width: 232px;
+    padding: 0 32px;
+  }
+}
+
+/* groups */
+
+.btn-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+/* Equal columns: each sibling is sized to the widest, whatever its label,
+   so paired CTAs are exactly equal boxes rather than merely sharing a
+   minimum width. */
+.btn-group--equal {
+  display: inline-grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 12px;
+  max-width: 100%;
+}
+
+@media (max-width: 640px) {
+  .btn-group--equal {
+    display: grid;
+    grid-auto-flow: row;
+    width: 100%;
+  }
+}
+
+/* variants: colour only */
+
+.btn--primary {
+  background: var(--fill);
+  border-color: var(--fill);
+  color: var(--fill-ink);
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: var(--fill-hover);
+  border-color: var(--fill-hover);
+}
+
+.btn--outline {
+  background: transparent;
   border-color: var(--line);
+  color: var(--ink);
+}
+
+.btn--outline:hover:not(:disabled) {
+  background: var(--surface-raised);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1218,17 +1295,6 @@ details.legend-fold .legend-line {
   flex-wrap: wrap;
 }
 
-.landing-action {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  box-sizing: border-box;
-  min-width: 150px;
-  min-height: 48px;
-  line-height: 1.2;
-  text-align: center;
-}
-
 @media (min-width: 1024px) {
   .landing {
     max-width: 1080px;
@@ -1250,13 +1316,6 @@ details.legend-fold .legend-line {
   .landing-actions {
     gap: 20px;
   }
-
-  .landing-action {
-    min-width: 184px;
-    min-height: 56px;
-    padding: 15px 32px;
-    font-size: 17px;
-  }
 }
 
 @media (max-width: 640px) {
@@ -1274,10 +1333,12 @@ details.legend-fold .legend-line {
     width: 100%;
   }
 
-  .landing-action {
+  /* Two equal grid columns size the actions on narrow screens. */
+  .landing-actions .btn {
     width: 100%;
     min-width: 0;
-    padding: 12px 10px;
+    padding-left: 10px;
+    padding-right: 10px;
   }
 }
 
@@ -1414,11 +1475,6 @@ details.legend-fold .legend-line {
   flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
-}
-
-.upload-delete {
-  font-size: 12px;
-  padding: 4px 12px;
 }
 
 .preview-grid {

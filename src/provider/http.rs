@@ -2,12 +2,20 @@
 //!
 //! Speaks `POST {base_url}/chat/completions` with the wire types in the parent
 //! module, which is what OpenAI, Anthropic's compatibility endpoint, Together,
-//! Groq, vLLM, llama.cpp, Ollama and OpenRouter accept. Bounded retries and
-//! timeouts live here; cancellation is the caller's race (see
-//! [`crate::agents::AgentContext::complete`]).
+//! Groq, vLLM, llama.cpp, Ollama and OpenRouter accept.
+//!
+//! This adapter is the one owner of retry for transient failures (429, 5xx,
+//! connection and timeout errors): bounded attempts with jittered
+//! exponential backoff, `Retry-After`, and request-start pacing live here,
+//! and the final error states the attempts made exactly once. The scheduler
+//! treats a provider error that survived these retries as final for the
+//! task, so attempts are never multiplied by a second retry loop. The loop
+//! is bounded in time by the caller's cancellation (the run's stop request
+//! or wall-clock deadline; see [`crate::agents::AgentContext::complete`]),
+//! which drops the in-flight attempt and any pending backoff.
 
 use super::pacing::StartPacer;
-use super::{ChatRequest, ChatResponse, Provider};
+use super::{Attempts, ChatRequest, ChatResponse, Provider, budget_refused};
 use crate::{Error, Result};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
@@ -281,6 +289,14 @@ impl Provider for HttpProvider {
     }
 
     async fn complete(&self, request: ChatRequest) -> Result<ChatResponse> {
+        self.complete_counted(request, &Attempts::default()).await
+    }
+
+    async fn complete_counted(
+        &self,
+        request: ChatRequest,
+        attempts: &Attempts,
+    ) -> Result<ChatResponse> {
         let url = format!("{}/chat/completions", self.base_url);
         let mut body = serde_json::to_value(&request)
             .map_err(|e| Error::Provider(format!("serialising request: {e}")))?;
@@ -292,6 +308,8 @@ impl Provider for HttpProvider {
         // any honored Retry-After). The pacer folds it into its slot, so the
         // waits run concurrently — never back to back.
         let mut floor: Option<tokio::time::Instant> = None;
+        // The most recent transient failure, for a budget refusal's report.
+        let mut last_error: Option<String> = None;
         let pacer = self.pacer();
 
         loop {
@@ -310,6 +328,11 @@ impl Provider for HttpProvider {
                 req = req.bearer_auth(key);
             }
 
+            // The budget is consulted before every attempt, retries
+            // included: an attempt it cannot cover is never sent.
+            let Some(sent) = attempts.try_start().await? else {
+                return Err(budget_refused(attempts, last_error.as_deref()));
+            };
             let (transient_error, retry_after) = match req.send().await {
                 Ok(resp) => {
                     let status = resp.status();
@@ -351,9 +374,9 @@ impl Provider for HttpProvider {
             };
 
             if attempt >= self.max_retries {
+                let noun = if sent == 1 { "attempt" } else { "attempts" };
                 return Err(Error::Provider(format!(
-                    "{transient_error} (after {} attempt(s))",
-                    attempt + 1
+                    "{transient_error} (after {sent} {noun})"
                 )));
             }
             // One delay serves both signals: the larger of jittered backoff
@@ -368,6 +391,7 @@ impl Provider for HttpProvider {
                 delay_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
                 "provider call failed; retrying"
             );
+            last_error = Some(transient_error);
             attempt += 1;
         }
     }

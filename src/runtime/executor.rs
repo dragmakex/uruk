@@ -28,17 +28,19 @@ pub struct TaskOutcome {
     /// "Failed work still costs what it consumed").
     pub cost: CostActual,
     pub error: Option<String>,
-    /// True when the failure was an infrastructure fault worth a bounded
-    /// retry, as opposed to a scientific or validation failure.
-    pub retryable: bool,
+    /// The class of failure when `state` is `Failed`.
+    pub failure: Option<FailureKind>,
 }
 
 /// Execute one task and collect its records.
 ///
-/// Provider faults become retryable failures, validation failures become
-/// permanent ones, and cancellation retains labelled partial artifacts. Only
-/// storage errors propagate, since nothing can be recorded through a broken
-/// store.
+/// Every failure the role reports is final for this task: the provider
+/// adapter has already retried transient faults within its own bound (see
+/// [`crate::provider::HttpProvider`]), so the error it returns is reported
+/// once, with the attempts it made, rather than re-run from here. Validation
+/// failures are permanent by nature, and cancellation retains labelled
+/// partial artifacts. Only storage errors propagate, since nothing can be
+/// recorded through a broken store.
 pub async fn execute_task(ctx: &AgentContext, task: &Task) -> Result<TaskOutcome> {
     let mut batch = RecordBatch::default();
     let result = match task.role {
@@ -56,24 +58,26 @@ pub async fn execute_task(ctx: &AgentContext, task: &Task) -> Result<TaskOutcome
     };
     let cost = ctx.spent();
 
-    let (state, error, retryable) = match result {
+    let (state, error, failure) = match result {
         Ok(()) => {
             return Ok(TaskOutcome {
                 state: TaskState::Completed,
                 batch,
                 cost,
                 error: None,
-                retryable: false,
+                failure: None,
             });
         }
         Err(Error::Cancelled) => (
             TaskState::Cancelled,
             "cancelled; partial outputs retained with this context".to_string(),
-            false,
+            None,
         ),
         Err(e @ Error::Storage(_)) | Err(e @ Error::Migration(_)) => return Err(e),
-        Err(Error::Provider(msg)) => (TaskState::Failed, msg, true),
-        Err(e) => (TaskState::Failed, e.to_string(), false),
+        // The adapter's message already carries its attempt count.
+        Err(Error::Provider(msg)) => (TaskState::Failed, msg, Some(FailureKind::Provider)),
+        Err(Error::Budget(msg)) => (TaskState::Failed, msg, Some(FailureKind::Budget)),
+        Err(e) => (TaskState::Failed, e.to_string(), Some(FailureKind::Output)),
     };
 
     // Half-built scientific records are not committed; artifacts and
@@ -89,7 +93,7 @@ pub async fn execute_task(ctx: &AgentContext, task: &Task) -> Result<TaskOutcome
         batch,
         cost,
         error: Some(error),
-        retryable,
+        failure,
     })
 }
 

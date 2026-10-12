@@ -225,6 +225,31 @@ impl Store {
         guard.commit().await
     }
 
+    /// Record how a run finished, unless a durable stop request already made
+    /// it `cancelled` (SPEC §9.2): the stop wins, and `false` tells the
+    /// scheduler to report the run as cancelled instead.
+    pub async fn finish_run(
+        &self,
+        run_id: &RunId,
+        state: RunState,
+        stop: StopCondition,
+    ) -> Result<bool> {
+        let mut guard = self.begin_write().await?;
+        let result = sqlx::query(
+            "UPDATE runs SET state = ?, stop_condition = ?, updated_at = ?
+             WHERE id = ? AND state != ?",
+        )
+        .bind(state.as_str())
+        .bind(stop.as_str())
+        .bind(to_rfc3339(now()))
+        .bind(run_id.as_str())
+        .bind(RunState::Cancelled.as_str())
+        .execute(guard.conn())
+        .await?;
+        guard.commit().await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     /// Transition a run to `Running` for a (re)starting scheduler, refusing
     /// to overwrite a durable stop request (SPEC §9.2): a run that is
     /// already `cancelled` stays cancelled, so a stop request cannot lose

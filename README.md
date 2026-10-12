@@ -189,8 +189,21 @@ cannot run, the report says why.
   payload hash and survive restart. Writes use `BEGIN IMMEDIATE`, so a
   concurrent control write (a stop request) during a run queues instead
   of failing.
-- **Failed work is charged.** Every attempted model call is settled, retries
-  are bounded, and a cancelled task keeps its labelled partial artifacts.
+- **Failed work is charged.** Every attempted model call is settled, and a
+  cancelled task keeps its labelled partial artifacts. Transient provider
+  failures are retried only in the provider adapter (bounded attempts with
+  backoff and `Retry-After`, cut off by a stop request or the wall-clock
+  deadline); a failure that survives those retries is terminal for that work,
+  is recorded as a typed provider failure, and reports the attempts made
+  exactly once. Every attempt that was sent is settled as a model call,
+  including attempts before an eventual success and an attempt abandoned by
+  cancellation. Before any attempt goes out it is recorded in the budget
+  ledger and, past the task's own reservation, leased from the run's
+  remaining headroom in the same transaction, so retries can never overrun
+  `max_model_calls` or the output reserve, and a crash after the send is
+  charged on recovery at unknown cost. Work that depended on a failed task
+  is closed with it instead of waiting as queued, and a finished run holds no
+  open work.
 - **Execution is contained or unavailable.** Approved programs run under macOS
   `sandbox-exec` or Linux bubblewrap with no network and writes confined to a
   task workspace; inputs must lie within the run's readable paths.

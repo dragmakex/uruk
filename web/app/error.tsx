@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "@/components/Button";
 /** Last-resort render error boundary; API failures are handled per page. */
 export default function GlobalError({
   error,
@@ -13,9 +14,9 @@ export default function GlobalError({
       <div className="error-box" role="alert">
         <h1>Something broke while rendering</h1>
         <p>{error.message || "Unknown rendering error."}</p>
-        <button type="button" className="btn btn-outline" onClick={reset}>
+        <Button variant="outline" size="sm" onClick={reset}>
           Try again
-        </button>
+        </Button>
       </div>
     </div>
   );

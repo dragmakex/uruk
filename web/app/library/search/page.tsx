@@ -1,3 +1,4 @@
+import { Button } from "@/components/Button";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ApiDown } from "@/components/ApiDown";
@@ -45,9 +46,9 @@ export default async function LibrarySearchPage({
     <div className="canvas canvas-narrow">
       <div className="page-head">
         <h1>Passage search</h1>
-        <Link href="/library" className="btn btn-outline">
+        <Button href="/library" variant="outline" size="sm">
           Back to the library
-        </Link>
+        </Button>
       </div>
 
       <form method="get" className="filter-bar" aria-label="Passage search">
@@ -61,9 +62,9 @@ export default async function LibrarySearchPage({
             placeholder="terms to search across every indexed source"
           />
         </div>
-        <button type="submit" className="btn btn-outline">
+        <Button type="submit" variant="outline" size="sm">
           Search
-        </button>
+        </Button>
       </form>
 
       {hits !== null &&

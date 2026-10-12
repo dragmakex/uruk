@@ -1,5 +1,5 @@
+import { Button } from "@/components/Button";
 import type { Metadata } from "next";
-import Link from "next/link";
 import { ApiDown } from "@/components/ApiDown";
 import { ReportMarkdown } from "@/components/ReportMarkdown";
 import { ApiFailure, fetchReport } from "@/lib/api";
@@ -75,9 +75,9 @@ export default async function ReportPage({
               A report is exported when the run finishes (or is stopped). If
               the run is still live, watch it instead.
             </p>
-            <Link href={`/runs/${encodeURIComponent(id)}`} className="btn btn-outline">
+            <Button href={`/runs/${encodeURIComponent(id)}`} variant="outline" size="sm">
               Back to the run
-            </Link>
+            </Button>
           </div>
         </div>
       );
@@ -101,30 +101,30 @@ export default async function ReportPage({
       <div className="page-head">
         <h1>Report, run {shortRunId(report.run_id)}</h1>
         <div className="report-actions">
-          <Link
+          <Button
             href={`/runs/${encodeURIComponent(report.run_id)}/citations`}
-            className="btn btn-outline"
+            variant="outline" size="sm"
           >
             Inspect citations
-          </Link>
-          <a
+          </Button>
+          <Button
             href={`/api/runs/${encodeURIComponent(report.run_id)}/report.pdf`}
-            className="btn btn-outline"
+            variant="outline" size="sm"
           >
             Download PDF
-          </a>
-          <a
+          </Button>
+          <Button
             href={`/api/runs/${encodeURIComponent(report.run_id)}/report.md`}
-            className="btn btn-outline"
+            variant="outline" size="sm"
           >
             Download Markdown
-          </a>
-          <Link
+          </Button>
+          <Button
             href={`/runs/${encodeURIComponent(report.run_id)}`}
-            className="btn btn-outline"
+            variant="outline" size="sm"
           >
             Back to the run
-          </Link>
+          </Button>
         </div>
       </div>
 
