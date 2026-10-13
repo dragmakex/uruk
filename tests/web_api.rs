@@ -330,7 +330,8 @@ async fn start_run_creates_and_dispatches_a_run_to_completion() {
             ..WebConfig::default()
         },
     );
-    let app = router(state);
+    let app = router(state.clone());
+    state.start_dispatcher();
 
     let response = app
         .clone()
@@ -720,9 +721,9 @@ async fn web_started_runs_share_the_cli_project_identity() {
 
 #[tokio::test]
 async fn interrupted_runs_resume_when_the_server_starts() {
-    // A run left `running` by a killed process: the serve-side reconciler
-    // must pick it up, because `uruk serve` is the project's only
-    // scheduler owner.
+    // A run left `running` without a queue place: the serve-side sweep
+    // must put it on the queue and the dispatcher must drive it, because
+    // `uruk serve` is the project's only scheduler owner.
     let provider = MockProvider::new()
         .rule("Requested deliverable:", common::synthesis_json())
         .default_reply(common::review_json("inconclusive", "mock resume", false));
@@ -735,6 +736,7 @@ async fn interrupted_runs_resume_when_the_server_starts() {
 
     let resumed = uruk::web::resume_orphaned_runs(&state).await.unwrap();
     assert_eq!(resumed, vec![fixture.run_id.clone()]);
+    state.start_dispatcher();
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     loop {
@@ -755,8 +757,9 @@ async fn interrupted_runs_resume_when_the_server_starts() {
     let resumed_again = uruk::web::resume_orphaned_runs(&state).await.unwrap();
     assert!(
         resumed_again.is_empty(),
-        "finished runs are not re-dispatched"
+        "finished runs are not re-enqueued"
     );
+    state.stop_dispatcher();
 }
 
 // --- report downloads: REPORT.pdf and REPORT.md as files ---

@@ -221,6 +221,10 @@ pub enum StopCondition {
     Cancelled,
     /// A safety boundary was violated.
     SafetyBoundary,
+    /// The start request that created the run never finished preparing
+    /// it (the server or the request died first), so it was never
+    /// executed (docs/WEB.md "One run at a time").
+    StartIncomplete,
 }
 
 impl StopCondition {
@@ -232,6 +236,7 @@ impl StopCondition {
             "progress_stalled" => Self::ProgressStalled,
             "cancelled" => Self::Cancelled,
             "safety_boundary" => Self::SafetyBoundary,
+            "start_incomplete" => Self::StartIncomplete,
             _ => return None,
         })
     }
@@ -244,6 +249,7 @@ impl StopCondition {
             Self::ProgressStalled => "progress_stalled",
             Self::Cancelled => "cancelled",
             Self::SafetyBoundary => "safety_boundary",
+            Self::StartIncomplete => "start_incomplete",
         }
     }
 }

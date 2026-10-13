@@ -3,7 +3,7 @@
  * nothing estimates or invents (no fake "est. 4 min").
  */
 
-import type { RunState } from "./types";
+import type { ProviderWait, RunState } from "./types";
 import { TERMINAL_STATES } from "./types";
 
 /** `mm:ss` under an hour, `h:mm:ss` from there, clamped at zero. */
@@ -47,6 +47,9 @@ export function roundLabel(
   iterations: number,
   maxIterations: number,
 ): string {
+  if (state === "queued") {
+    return "queued";
+  }
   if (isTerminal(state)) {
     return `${iterations} of ${maxIterations} rounds`;
   }
@@ -68,6 +71,29 @@ export function stateLabel(state: RunState): string {
     default:
       return state;
   }
+}
+
+/** How many runs precede a queued run at 1-based `position`. */
+export function queueNote(position: number): string {
+  const ahead = Math.max(0, Math.floor(position) - 1);
+  if (ahead === 0) return "next to start";
+  return `${ahead} run${ahead === 1 ? "" : "s"} ahead`;
+}
+
+/** `HH:MM UTC` of an RFC-3339 instant, or the raw text if unparsable. */
+function clockUtc(instant: string): string {
+  const t = Date.parse(instant);
+  if (Number.isNaN(t)) return instant;
+  return `${new Date(t).toISOString().slice(11, 16)} UTC`;
+}
+
+/**
+ * One factual sentence about an open provider wait: when it started and,
+ * when the adapter recorded one, the last transient failure.
+ */
+export function providerWaitNote(wait: ProviderWait): string {
+  const base = `waiting for the model provider since ${clockUtc(wait.since)}`;
+  return wait.note ? `${base} (${wait.note})` : base;
 }
 
 /** Elo as the figure renders it: a whole number. */

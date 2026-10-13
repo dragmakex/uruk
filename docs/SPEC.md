@@ -308,13 +308,13 @@ External experiments may take days or weeks: export the protocol, park the depen
 
 - Enforce a finite deadline and task/iteration limits even when provider cost is unknown. Report unknown cost instead of recording zero.
 - Reserve budget for in-flight work and final output before admitting more tasks. Nested tool teams share the parent budget; they cannot mint a new one.
-- Retries are bounded and charged. Retry infrastructure failures when safe; do not retry negative scientific results until they look positive.
+- Charge what was served; wait out what was not. One completion is one logical model call, claimed before its first send; a transient provider failure (a transport error, or a 408, 425, 429, or 5xx) is waited out by the provider adapter behind one availability gate per upstream — one half-open probe at a time, capped backoff, `Retry-After` honored — bounded only by cancellation, never by an attempt count. The sends it repeats are audited, not charged, so an outage can exhaust neither the call budget nor the wall-clock budget, which stands still while the provider is unavailable. A permanent refusal is terminal for the work at once. Do not retry negative scientific results until they look positive.
 - Mark unavailable optional capabilities and choose a permitted alternative, or return a blocked/partial result. Never imply the missing check passed.
 - Stop when the deliverable is satisfied, limits are reached, permitted work is exhausted, progress stalls under the plan's criterion, the researcher cancels, or a safety boundary is violated.
 - Cancellation stops admission, requests cancellation of attached work, and terminates owned subprocesses after a bounded grace period. Late results retain their cancellation context.
 - Always preserve completed evidence and generate a status/partial-output manifest without needing another paid model call. Final Meta-review runs only if permitted and budgeted; report when it was skipped.
 
-Run states distinguish `running`, `waiting-for-human`, `blocked`, `completed`, `budget-exhausted`, `cancelled`, and `failed`. A scientifically negative result can be a successfully completed task.
+Run states distinguish `queued`, `running`, `waiting-for-human`, `blocked`, `completed`, `budget-exhausted`, `cancelled`, and `failed`. A scientifically negative result can be a successfully completed task. Web runs execute one at a time in a durable FIFO order (docs/WEB.md); a queued run has started nothing and spends nothing, and its wall-clock budget runs from its first execution.
 
 ## 7. Evaluation and tournament
 
@@ -398,7 +398,7 @@ An external experimental result records its contributor, protocol version, colle
 | Research policy and agents | Typed structs/enums, versioned prompts, validated model outputs; no model-generated mutation of shared state |
 | Concurrent work | Tokio tasks with owned task handles, bounded admission, and per-tool concurrency limits |
 | Durable state | SQLite through `sqlx`, transactional task/research records, schema migrations, unique IDs |
-| Models and retrieval | Rust HTTP/provider adapters, bounded retries/timeouts, cancellation, usage accounting |
+| Models and retrieval | Rust HTTP/provider adapters, timeouts, indefinite availability waiting behind one gate per upstream, cancellation, usage accounting |
 | External tools | Rust process/API adapters, isolated workspaces, explicit permissions, bounded output capture |
 | Interface and reporting | Rust web API handling and deterministic exports; reports do not require a model call |
 | Optional market | A later Rust module using the same task admission path and SQLite transactions |
@@ -408,7 +408,7 @@ Use `serde` for persisted and provider-facing data, but also validate semantic c
 ### 9.2 Persistence and recovery
 
 - One scheduler process owns a project at a time, enforced by an OS-held project lock. Other processes may inspect state or submit durable control requests; they must not start a competing scheduler. This is a single-machine v1 design, not a distributed execution guarantee.
-- Store research records, task attempts, approvals, budget reservations, and scheduling decisions in `.uruk/state.sqlite`. The persisted task set is the queue's source of truth; in-memory ready lists are rebuildable. No message broker or second writable research store.
+- Store research records, task attempts, approvals, budget reservations, scheduling decisions, the run queue, and each run's research clock (first start, provider waits) in `.uruk/state.sqlite`. The persisted task set is the queue's source of truth; in-memory ready lists are rebuildable. The run queue is a dedicated sequence, and a restart resumes its interrupted head first, then the rest in order. No message broker or second writable research store.
 - Persist task identity, versioned inputs, permission envelope, selected strategy, and budget reservation before dispatch. Record nondeterministic scheduling choices rather than drawing new ones during recovery.
 - On completion, validate outputs and commit the task outcome, referenced research records, budget settlement, and any applicable rating update atomically. Unique task/match/settlement keys make duplicate result delivery harmless. Short serialized transactions must not span external calls.
 - Write and durably finalize immutable artifacts before committing references to them. A crash may leave an unreferenced artifact, but must not leave a successful task pointing to an incomplete file. JSONL/Markdown exports are derived snapshots, not mutable authority.
@@ -469,7 +469,7 @@ Web runs grant no permissions beyond provider disclosure. In particular, computa
 
 Store the normalized goal, effective configuration, permissions, budgets, model/tool/prompt versions, and input hashes for every run. Approval references an immutable request identifying the exact action, inputs, scope, and limits. Changing that payload requires a new approval.
 
-The run snapshot shows the current goal revision, completed/running/blocked work, human requests, resource use, evidence changes, and leading candidates where applicable. No finding, null result, and no available tool are distinct outcomes. “No discovery” is not an execution error.
+The run snapshot shows the current goal revision, the run's queue position while it waits its turn, any provider outage it is waiting out, completed/running/blocked work, human requests, resource use, evidence changes, and leading candidates where applicable. No finding, null result, and no available tool are distinct outcomes. “No discovery” is not an execution error.
 
 A run exports only applicable artifacts under `runs/<run-id>/`:
 

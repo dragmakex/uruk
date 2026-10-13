@@ -1,8 +1,10 @@
-//! Every outbound model request is charged (SPEC §6: "Failed work still
-//! costs what it consumed"; §9.2: preserve possible incurred cost). The
-//! adapter counts attempts as they start, so attempts before an eventual
-//! success, attempts of a terminal failure, and an attempt cut off by
-//! cancellation all settle against the run's model-call budget.
+//! Every logical model call is charged (SPEC §6: "Failed work still costs
+//! what it consumed"; §9.2: preserve possible incurred cost). The adapter
+//! claims a call before its first send, so a served call, a permanently
+//! refused call, and a call cut off by cancellation all settle against the
+//! run's model-call budget. Sends repeated after a transient upstream
+//! failure are audited as `resend` ledger rows but claim nothing: an
+//! outage cannot spend the budget.
 
 mod common;
 
@@ -14,33 +16,43 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 use uruk::agents::{AgentContext, CallAllowance};
-use uruk::provider::{ChatRequest, HttpProvider, Message, MockProvider};
+use uruk::provider::{ChatRequest, HttpProvider, Message, MockProvider, ProbeBackoff};
 use uruk::records::*;
 use uruk::runtime::{Scheduler, SchedulerConfig, execute_task};
 use uruk::{Error, Result};
 
-/// One scripted upstream response: answer, or accept and never answer.
+/// One scripted upstream response: answer, answer whatever role is
+/// asking, or accept and never answer.
 enum Step {
     Reply(u16, String),
+    /// A served reply shaped for the prompt: a synthesis for the
+    /// deliverable, a plain review for everything else.
+    ByPrompt,
     Hang,
 }
 
 fn ok_body() -> String {
+    completion("ok")
+}
+
+/// A served chat completion whose reply is `content`.
+fn completion(content: &str) -> String {
     serde_json::json!({
         "id": "chatcmpl-1", "object": "chat.completion", "model": "m",
-        "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}],
         "usage": {"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15}
     })
     .to_string()
 }
 
-async fn read_request(sock: &mut tokio::net::TcpStream) {
+/// Read one request; returns its body.
+async fn read_request(sock: &mut tokio::net::TcpStream) -> String {
     let mut buf = Vec::new();
     let mut tmp = [0u8; 4096];
     let head_end = loop {
         let n = sock.read(&mut tmp).await.unwrap();
         if n == 0 {
-            return;
+            return String::new();
         }
         buf.extend_from_slice(&tmp[..n]);
         if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
@@ -63,6 +75,7 @@ async fn read_request(sock: &mut tokio::net::TcpStream) {
         }
         buf.extend_from_slice(&tmp[..n]);
     }
+    String::from_utf8_lossy(&buf[head_end..]).into_owned()
 }
 
 /// Serve `steps` one per connection, then hold every hung socket open until
@@ -77,8 +90,17 @@ async fn serve(steps: Vec<Step>) -> (String, tokio::task::JoinHandle<()>, Arc<At
         let mut held = Vec::new();
         for step in steps {
             let (mut sock, _) = listener.accept().await.unwrap();
-            read_request(&mut sock).await;
+            let request_body = read_request(&mut sock).await;
             counter.fetch_add(1, Ordering::SeqCst);
+            let step = match step {
+                Step::ByPrompt if request_body.contains("Requested deliverable:") => {
+                    Step::Reply(200, completion(&synthesis_json()))
+                }
+                Step::ByPrompt => {
+                    Step::Reply(200, completion(&review_json("plausible", "fine", false)))
+                }
+                other => other,
+            };
             match step {
                 Step::Reply(status, body) => {
                     let response = format!(
@@ -89,6 +111,7 @@ async fn serve(steps: Vec<Step>) -> (String, tokio::task::JoinHandle<()>, Arc<At
                     sock.shutdown().await.ok();
                 }
                 Step::Hang => held.push(sock),
+                Step::ByPrompt => unreachable!("resolved above"),
             }
         }
         std::future::pending::<()>().await;
@@ -96,16 +119,14 @@ async fn serve(steps: Vec<Step>) -> (String, tokio::task::JoinHandle<()>, Arc<At
     (url, handle, received)
 }
 
-fn http_context(
-    f: &Fixture,
-    url: &str,
-    max_retries: u32,
-    cancel: CancellationToken,
-) -> AgentContext {
+fn fast_probes() -> ProbeBackoff {
+    ProbeBackoff::new(Duration::from_millis(1), Duration::from_millis(5))
+}
+
+fn http_context(f: &Fixture, url: &str, cancel: CancellationToken) -> AgentContext {
     let provider = HttpProvider::new(url, None, "m")
         .unwrap()
-        .with_max_retries(max_retries)
-        .with_retry_base(Duration::from_millis(1));
+        .with_probe_backoff(fast_probes());
     AgentContext::new(
         f.store.clone(),
         Arc::new(provider),
@@ -124,49 +145,51 @@ fn request() -> ChatRequest {
 }
 
 #[tokio::test]
-async fn every_attempt_before_an_eventual_success_is_charged() {
-    let (url, server, _) = serve(vec![
+async fn a_call_served_after_transient_failures_is_charged_once() {
+    let (url, server, received) = serve(vec![
         Step::Reply(503, "{}".into()),
         Step::Reply(503, "{}".into()),
         Step::Reply(200, ok_body()),
     ])
     .await;
     let f = fixture(Mode::Task, MockProvider::new()).await;
-    let ctx = http_context(&f, &url, 3, CancellationToken::new());
+    let ctx = http_context(&f, &url, CancellationToken::new());
 
     let response = ctx.complete(request()).await.unwrap();
     assert_eq!(response.text(), "ok");
+    assert_eq!(received.load(Ordering::SeqCst), 3, "three sends went out");
     let spent = ctx.spent();
-    assert_eq!(spent.model_calls, 3, "three requests went out: {spent:?}");
     assert_eq!(
-        spent.prompt_tokens, 12,
-        "the reply's usage is still counted"
+        spent.model_calls, 1,
+        "one logical call, whatever the upstream needed: {spent:?}"
+    );
+    assert_eq!(spent.prompt_tokens, 12, "the reply's usage is counted");
+    server.abort();
+}
+
+#[tokio::test]
+async fn a_permanently_refused_call_is_charged() {
+    let (url, server, received) = serve(vec![Step::Reply(401, "no".into())]).await;
+    let f = fixture(Mode::Task, MockProvider::new()).await;
+    let ctx = http_context(&f, &url, CancellationToken::new());
+
+    let err = ctx.complete(request()).await.unwrap_err();
+    assert!(matches!(err, Error::Provider(_)), "{err}");
+    assert_eq!(received.load(Ordering::SeqCst), 1, "no retry of a refusal");
+    assert_eq!(
+        ctx.spent().model_calls,
+        1,
+        "the refused request still went out and is charged"
     );
     server.abort();
 }
 
 #[tokio::test]
-async fn every_attempt_of_a_terminal_failure_is_charged() {
-    let (url, server, _) = serve(vec![
-        Step::Reply(500, "boom".into()),
-        Step::Reply(500, "boom".into()),
-    ])
-    .await;
-    let f = fixture(Mode::Task, MockProvider::new()).await;
-    let ctx = http_context(&f, &url, 1, CancellationToken::new());
-
-    let err = ctx.complete(request()).await.unwrap_err();
-    assert!(matches!(err, Error::Provider(_)), "{err}");
-    assert_eq!(ctx.spent().model_calls, 2, "both requests went out");
-    server.abort();
-}
-
-#[tokio::test]
-async fn attempts_cut_off_by_cancellation_are_charged() {
-    let (url, server, _) = serve(vec![Step::Reply(503, "{}".into()), Step::Hang]).await;
+async fn a_call_cut_off_by_cancellation_is_charged_once() {
+    let (url, server, received) = serve(vec![Step::Reply(503, "{}".into()), Step::Hang]).await;
     let f = fixture(Mode::Task, MockProvider::new()).await;
     let cancel = CancellationToken::new();
-    let ctx = http_context(&f, &url, 3, cancel.clone());
+    let ctx = http_context(&f, &url, cancel.clone());
 
     let canceller = cancel.clone();
     tokio::spawn(async move {
@@ -177,9 +200,14 @@ async fn attempts_cut_off_by_cancellation_are_charged() {
     let result: Result<_> = ctx.complete(request()).await;
     assert!(matches!(result, Err(Error::Cancelled)), "{result:?}");
     assert_eq!(
-        ctx.spent().model_calls,
+        received.load(Ordering::SeqCst),
         2,
-        "the failed attempt and the one in flight at cancellation were both sent"
+        "a probe, then the hung send"
+    );
+    assert_eq!(
+        ctx.spent().model_calls,
+        1,
+        "the call in flight at cancellation is charged, its resend is not a second call"
     );
     server.abort();
 }
@@ -256,18 +284,19 @@ async fn provider_failures_are_recorded_with_a_typed_kind() {
     );
 }
 
-/// Drive a review-only task run against an upstream that only ever answers
-/// 503, with `calls` model calls in the whole budget and an adapter willing
-/// to retry far more often than that.
-async fn outage_run_with_budget(
+/// Drive a review-then-deliverable task run against an upstream that
+/// answers 503 to its first `outage` requests and serves every later one
+/// (a review, then syntheses), with `calls` model calls in the whole
+/// budget.
+async fn run_through_an_outage(
+    outage: usize,
     calls: u32,
 ) -> (usize, Vec<Task>, uruk::runtime::RunSummary, Fixture) {
-    let (url, server, received) = serve(
-        (0..8)
-            .map(|_| Step::Reply(503, "{\"error\":\"overloaded\"}".into()))
-            .collect(),
-    )
-    .await;
+    let mut steps: Vec<Step> = (0..outage)
+        .map(|_| Step::Reply(503, "{\"error\":\"overloaded\"}".into()))
+        .collect();
+    steps.extend((0..8).map(|_| Step::ByPrompt));
+    let (url, server, received) = serve(steps).await;
     let f = fixture_with(Mode::Task, MockProvider::new(), |g| {
         g.question = "assess this candidate".into();
         g.budget.max_model_calls = calls;
@@ -277,8 +306,7 @@ async fn outage_run_with_budget(
     seed_item(&f, "candidate").await;
     let provider = HttpProvider::new(&url, None, "m")
         .unwrap()
-        .with_max_retries(3)
-        .with_retry_base(Duration::from_millis(1));
+        .with_probe_backoff(fast_probes());
 
     let summary = Scheduler::new(
         f.store.clone(),
@@ -293,46 +321,57 @@ async fn outage_run_with_budget(
     (received.load(Ordering::SeqCst), tasks, summary, f)
 }
 
-async fn assert_outbound_requests_never_exceed_the_budget(calls: u32) {
-    let (received, tasks, summary, f) = outage_run_with_budget(calls).await;
-    assert_eq!(
-        received as u32, calls,
-        "the adapter may only send what the budget still allows: {summary:?}"
+/// An outage longer than the whole call budget does not spend it: the
+/// sends that the upstream did not serve are audited, not charged, and
+/// the run finishes its work once the upstream is back.
+#[tokio::test]
+async fn an_outage_longer_than_the_budget_does_not_spend_it() {
+    const CALLS: u32 = 4;
+    let (received, tasks, summary, f) = run_through_an_outage(6, CALLS).await;
+    assert!(
+        received > CALLS as usize,
+        "the upstream saw every probe: {received} sends"
     );
     let usage = f.store.budget_usage(&f.run_id).await.unwrap();
     assert!(
-        usage.model_calls <= calls,
+        usage.model_calls <= CALLS,
         "settled calls stay within the hard budget: {usage:?}"
     );
-    assert_eq!(usage.model_calls, calls, "every sent attempt is settled");
-
     let review = tasks
         .iter()
         .find(|t| t.role == Role::Reflection)
         .expect("the review ran");
-    assert_eq!(review.state, TaskState::Failed, "{review:?}");
+    assert_eq!(review.state, TaskState::Completed, "{review:?}");
     assert_eq!(
-        review.failure,
-        Some(FailureKind::Budget),
-        "the task reports budget exhaustion, not a provider outage: {review:?}"
+        review.actual_cost.model_calls, 1,
+        "the review is one logical call: {review:?}"
     );
-    let error = review.error.as_deref().unwrap_or("");
-    assert!(error.contains("budget"), "{error:?}");
     assert!(
-        !error.contains("after 4 attempts"),
-        "the adapter never got to exhaust its own bound: {error:?}"
+        !tasks.iter().any(|t| t.state == TaskState::Failed),
+        "an outage fails nothing: {tasks:?}"
+    );
+    assert_eq!(summary.state, RunState::Completed, "{summary:?}");
+    let resends: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM budget_ledger WHERE run_id = ? AND kind = 'resend'",
+    )
+    .bind(f.run_id.as_str())
+    .fetch_one(f.store.pool())
+    .await
+    .unwrap();
+    assert_eq!(resends, 6, "every unserved send is an auditable fact");
+}
+
+/// With no call left, nothing goes out at all, outage or not: the budget
+/// is consulted before the first send.
+#[tokio::test]
+async fn with_no_call_left_nothing_is_sent() {
+    let (received, tasks, summary, _f) = run_through_an_outage(2, 0).await;
+    assert_eq!(received, 0, "the adapter never reached the upstream");
+    assert!(
+        tasks.iter().all(|t| t.state != TaskState::Completed),
+        "{tasks:?}"
     );
     assert_eq!(summary.state, RunState::BudgetExhausted, "{summary:?}");
-}
-
-#[tokio::test]
-async fn with_one_call_left_an_outage_sends_exactly_one_request() {
-    assert_outbound_requests_never_exceed_the_budget(1).await;
-}
-
-#[tokio::test]
-async fn with_two_calls_left_an_outage_sends_exactly_two_requests() {
-    assert_outbound_requests_never_exceed_the_budget(2).await;
 }
 
 /// Concurrent tasks draw unreserved headroom through the store, in one
@@ -425,15 +464,15 @@ fn review_task(f: &Fixture, item: &ResearchItem) -> Task {
     }
 }
 
-/// A crash after attempts were sent but before the task settled must not
-/// lose those attempts: recovery charges every attempt that was started
-/// (SPEC §9.2: preserve possible incurred cost), and the redispatch cannot
-/// spend what the conservative charge already consumed.
+/// A crash while a call is waiting out an outage must not lose that call:
+/// recovery charges the one logical call that was claimed (SPEC §9.2:
+/// preserve possible incurred cost) — not one per probe — and the
+/// redispatch gets exactly the headroom that is left.
 #[tokio::test]
-async fn crash_after_send_charges_every_started_attempt_on_recovery() {
-    const CEILING: u32 = 4;
+async fn crash_during_an_outage_charges_the_claimed_call_once_on_recovery() {
+    const CEILING: u32 = 3;
     let (url, server, received) = serve(
-        (0..8)
+        (0..64)
             .map(|_| Step::Reply(503, "{\"error\":\"overloaded\"}".into()))
             .collect(),
     )
@@ -459,18 +498,20 @@ async fn crash_after_send_charges_every_started_attempt_on_recovery() {
     assert!(f.store.claim_task(&task.id).await.unwrap());
     let claimed = f.store.get_task(&task.id).await.unwrap();
 
-    // First process: the adapter sends what the budget allows, then the
-    // process dies before the task outcome is committed.
-    let mut ctx = http_context(&f, &url, 3, CancellationToken::new());
+    // First process: the call waits out the outage, probing; then the
+    // process dies mid-wait.
+    let mut ctx = http_context(&f, &url, CancellationToken::new());
     ctx.set_call_allowance(&claimed, CEILING);
-    let err = ctx.complete(request()).await.unwrap_err();
-    assert!(matches!(err, Error::Provider(_)), "{err}");
-    let sent_before_crash = received.load(Ordering::SeqCst) as u32;
-    assert_eq!(
-        sent_before_crash, CEILING,
-        "the budget, not the retry bound, stopped it"
-    );
-    drop(ctx);
+    let waiting = tokio::spawn(async move { ctx.complete(request()).await });
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while received.load(Ordering::SeqCst) < 4 {
+        assert!(std::time::Instant::now() < deadline, "probing stalled");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    waiting.abort();
+    let _ = waiting.await;
+    let probes = received.load(Ordering::SeqCst) as u32;
+    assert!(probes >= 4, "the budget did not stop the probing: {probes}");
 
     // Second process: recovery.
     let uncertain = f.store.reconcile_interrupted(&f.run_id).await.unwrap();
@@ -479,36 +520,46 @@ async fn crash_after_send_charges_every_started_attempt_on_recovery() {
     assert_eq!(recovered.state, TaskState::Pending);
     let usage = f.store.budget_usage(&f.run_id).await.unwrap();
     assert_eq!(
-        usage.model_calls, sent_before_crash,
-        "every attempt that was started is settled on recovery: {usage:?}"
+        usage.model_calls, 1,
+        "the one claimed call is charged, not one per probe: {usage:?}"
     );
     assert!(
         usage.cost_partially_unknown,
-        "the cost of the lost attempts is reported unknown, not zero: {usage:?}"
+        "the cost of the lost call is reported unknown, not zero: {usage:?}"
     );
     assert!(
         recovered
             .error
             .as_deref()
-            .is_some_and(|e| e.contains(&sent_before_crash.to_string())),
+            .is_some_and(|e| e.contains("1 model call")),
         "the recovery note is auditable: {recovered:?}"
     );
+    let resends: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM budget_ledger WHERE task_id = ? AND kind = 'resend'",
+    )
+    .bind(task.id.as_str())
+    .fetch_one(f.store.pool())
+    .await
+    .unwrap();
+    assert!(resends >= 3, "the probes stay on record: {resends}");
 
-    // Redispatch: the recovered task gets no fresh allowance for calls the
-    // run no longer has.
+    // Redispatch: the recovered task may claim the calls the run has left,
+    // and not one more.
     assert!(f.store.claim_task(&task.id).await.unwrap());
     let reclaimed = f.store.get_task(&task.id).await.unwrap();
-    let mut ctx = http_context(&f, &url, 3, CancellationToken::new());
-    ctx.set_call_allowance(&reclaimed, CEILING);
-    let err = ctx.complete(request()).await.unwrap_err();
-    assert!(matches!(err, Error::Budget(_)), "{err}");
-    assert_eq!(
-        received.load(Ordering::SeqCst) as u32,
-        CEILING,
-        "no outbound request beyond the hard ceiling, across both processes"
+    let allowance = CallAllowance::for_task(f.store.clone(), &reclaimed, CEILING);
+    assert!(
+        allowance.claim(1).await.unwrap(),
+        "the task's own reservation"
     );
-    let usage = f.store.budget_usage(&f.run_id).await.unwrap();
-    assert!(usage.model_calls <= CEILING, "{usage:?}");
+    assert!(
+        allowance.claim(2).await.unwrap(),
+        "the last unreserved call"
+    );
+    assert!(
+        !allowance.claim(3).await.unwrap(),
+        "nothing beyond the hard ceiling, across both processes"
+    );
     server.abort();
 }
 
@@ -524,12 +575,13 @@ async fn attempt_rows(f: &Fixture, task: &TaskId) -> u32 {
 }
 
 /// One task attempt makes several completions (a debate's turns). Every
-/// outbound request across all of them gets its own ledger row, the lease
-/// coverage is never confused between completions, and the hard cap binds
-/// across the whole task attempt, not per completion.
+/// logical call across all of them gets its own ledger row, resends are
+/// audited under their call, the lease coverage is never confused between
+/// completions, and the hard cap binds across the whole task attempt, not
+/// per completion.
 #[tokio::test]
-async fn attempts_across_completions_of_one_task_are_distinct_and_capped() {
-    const CEILING: u32 = 4;
+async fn calls_across_completions_of_one_task_are_distinct_and_capped() {
+    const CEILING: u32 = 2;
     let (url, server, received) = serve(vec![
         Step::Reply(503, "{}".into()),
         Step::Reply(503, "{}".into()),
@@ -559,38 +611,44 @@ async fn attempts_across_completions_of_one_task_are_distinct_and_capped() {
         .unwrap();
     assert!(f.store.claim_task(&task.id).await.unwrap());
     let claimed = f.store.get_task(&task.id).await.unwrap();
-    let mut ctx = http_context(&f, &url, 3, CancellationToken::new());
+    let mut ctx = http_context(&f, &url, CancellationToken::new());
     ctx.set_call_allowance(&claimed, CEILING);
 
-    // Turn 1: two transient failures, then success (3 requests).
+    // Turn 1: two transient failures, then served (3 sends, 1 call).
     let first = ctx.complete(request()).await.unwrap();
     assert_eq!(first.text(), "ok");
     assert_eq!(received.load(Ordering::SeqCst), 3);
-    assert_eq!(attempt_rows(&f, &task.id).await, 3, "one row per request");
+    assert_eq!(
+        attempt_rows(&f, &task.id).await,
+        1,
+        "one row per logical call"
+    );
+    assert_eq!(resend_rows(&f, &task.id).await, 2, "one row per resend");
 
-    // Turn 2: the 4th request is the last the budget covers; its retry is
-    // refused before it goes out.
+    // Turn 2: the last call the budget covers; its resend is not a new one.
+    let second = ctx.complete(request()).await.unwrap();
+    assert_eq!(second.text(), "ok");
+    assert_eq!(received.load(Ordering::SeqCst), 5);
+    assert_eq!(attempt_rows(&f, &task.id).await, CEILING);
+    assert_eq!(resend_rows(&f, &task.id).await, 3);
+
+    // Turn 3: refused before anything goes out.
     let err = ctx.complete(request()).await.unwrap_err();
     assert!(matches!(err, Error::Budget(_)), "{err}");
     assert_eq!(
-        received.load(Ordering::SeqCst) as u32,
-        CEILING,
+        received.load(Ordering::SeqCst),
+        5,
         "the hard cap binds across completions of one task attempt"
     );
-    assert_eq!(
-        attempt_rows(&f, &task.id).await,
-        CEILING,
-        "every outbound request of the task attempt has its own row"
-    );
-    assert_eq!(ctx.spent().model_calls, CEILING, "all four are charged");
+    assert_eq!(ctx.spent().model_calls, CEILING, "both calls are charged");
     let usage = f.store.budget_usage(&f.run_id).await.unwrap();
     assert_eq!(
         usage.committed_calls(),
         CEILING,
-        "one base reservation plus three leases: {usage:?}"
+        "one base reservation plus one lease: {usage:?}"
     );
 
-    // Crash before commit: recovery charges exactly the four that went out.
+    // Crash before commit: recovery charges exactly the two calls.
     drop(ctx);
     f.store.reconcile_interrupted(&f.run_id).await.unwrap();
     let usage = f.store.budget_usage(&f.run_id).await.unwrap();
@@ -600,6 +658,17 @@ async fn attempts_across_completions_of_one_task_are_distinct_and_capped() {
         "leases released, base kept: {usage:?}"
     );
     server.abort();
+}
+
+async fn resend_rows(f: &Fixture, task: &TaskId) -> u32 {
+    let n: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM budget_ledger WHERE task_id = ? AND kind = 'resend'",
+    )
+    .bind(task.as_str())
+    .fetch_one(f.store.pool())
+    .await
+    .unwrap();
+    u32::try_from(n).unwrap()
 }
 
 /// A provider written against the original trait implements only

@@ -8,6 +8,10 @@ export function snapshotFixture(): unknown {
       iterations: 1,
       created_at: "2026-10-04T14:00:00Z",
       updated_at: "2026-10-04T14:04:17Z",
+      started_at: "2026-10-04T14:00:05Z",
+      queue_position: null,
+      paused_secs: 0,
+      provider_wait: null,
     },
     goal: {
       question: "Which mechanisms could explain acquired resistance?",

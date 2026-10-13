@@ -12,10 +12,9 @@
 use super::AppState;
 use crate::agents::{safety, supervisor};
 use crate::records::*;
-use crate::runtime::{Scheduler, SchedulerConfig};
 use crate::store::{OwnerDigest, Store, Upload};
 use crate::tools::{ingest_input, ingest_upload};
-use crate::{Error, Result, report};
+use crate::{Error, Result};
 use time::OffsetDateTime;
 
 /// Body of `POST /api/runs`.
@@ -473,8 +472,8 @@ fn build_goal(
 /// apply the same safety gate a real start applies, and return the plan
 /// the Supervisor would run. `uruk run --dry-run` persists its planned
 /// run for a later `uruk resume`; the web cannot, because the serve
-/// process auto-resumes every persisted `running` run, so the web dry
-/// run is a pure preview instead.
+/// process enqueues and executes every persisted nonterminal run, so the
+/// web dry run is a pure preview instead.
 pub async fn preview(
     state: &AppState,
     v: ValidatedStart,
@@ -518,11 +517,17 @@ pub async fn preview(
     }))
 }
 
-/// Persist the run, gate it on safety, ingest its inputs, plan it, and
-/// dispatch the scheduler in the background (SPEC §11, §12). The run is
-/// bound to the requesting
-/// browser's [`OwnerDigest`] in the same transaction that creates it, so
-/// a crash cannot leave an unowned web run behind.
+/// Gate the goal on safety, persist the run on the durable queue, ingest
+/// its inputs, and plan it (SPEC §11, §12); the dispatcher executes it
+/// when it reaches the head. The run, its goal, its owner binding, and
+/// its queue place are created in one transaction, so a crash cannot
+/// leave an unowned or unqueued web run behind, and its place in the
+/// order is the moment of creation, not the end of ingestion. The place
+/// is `preparing` until the plan commits — in the same transaction — so a
+/// run becomes executable only once it is fully prepared; a run whose
+/// request dies first is abandoned by the dispatcher, never executed. A
+/// goal the safety check refuses is persisted `blocked`, with the
+/// decision, and holds no queue place at all.
 pub async fn start_run(state: &AppState, v: ValidatedStart, owner: &OwnerDigest) -> Result<RunId> {
     if v.dry_run {
         return Err(Error::validation(
@@ -539,41 +544,48 @@ pub async fn start_run(state: &AppState, v: ValidatedStart, owner: &OwnerDigest)
     let (project_id, project_name) = store.project_identity();
 
     let goal = build_goal(&v, &run_id, &goal_id, &inputs);
-    let run = Run {
+    let mut run = Run {
         id: run_id.clone(),
         schema_version: SCHEMA_VERSION,
         project_id: project_id.clone(),
         goal_id,
         plan_id: None,
-        state: RunState::Running,
+        state: RunState::Queued,
         stop_condition: None,
         iterations: 0,
         created_at: OffsetDateTime::now_utc(),
         updated_at: OffsetDateTime::now_utc(),
     };
-
     store.ensure_project(&project_id, &project_name).await?;
-    store.create_run_owned(&run, &goal, owner).await?;
 
-    // Check the goal itself before any work is scheduled (SPEC §12).
+    // Check the goal itself before anything is persisted (SPEC §12): a
+    // refused goal is recorded `blocked`, with its decision, and never
+    // takes a queue place.
     let verdict = safety::check(&goal.question);
-    if let Some(decision) = safety::safety_decision(&run_id, &verdict, "research goal", vec![]) {
+    let safety_decision = safety::safety_decision(&run_id, &verdict, "research goal", vec![]);
+    if verdict.is_blocked() {
+        run.state = RunState::Blocked;
+        run.stop_condition = Some(StopCondition::SafetyBoundary);
+        let decision = safety_decision.unwrap_or_else(|| blocked_decision(&run_id, &verdict));
+        store
+            .create_run_blocked(&run, &goal, Some(owner), &decision)
+            .await?;
+        return Err(Error::permission(
+            verdict
+                .concern()
+                .unwrap_or("the goal is blocked")
+                .to_string(),
+        ));
+    }
+
+    // Held back from execution until this request has prepared the run;
+    // the guard releases it on every exit path below, and a request that
+    // dies before the plan commits leaves a `preparing` entry the
+    // dispatcher abandons rather than executes.
+    let _preparing = state.prepare(&run_id);
+    store.create_run_queued(&run, &goal, Some(owner)).await?;
+    if let Some(decision) = safety_decision {
         store.insert_decision(&decision).await?;
-        if verdict.is_blocked() {
-            store
-                .set_run_state(
-                    &run_id,
-                    RunState::Blocked,
-                    Some(StopCondition::SafetyBoundary),
-                )
-                .await?;
-            return Err(Error::permission(
-                verdict
-                    .concern()
-                    .unwrap_or("the goal is blocked")
-                    .to_string(),
-            ));
-        }
     }
 
     // Ingest supplied sources before dispatch, exactly as the CLI does: a
@@ -597,79 +609,95 @@ pub async fn start_run(state: &AppState, v: ValidatedStart, owner: &OwnerDigest)
     }
 
     let plan = supervisor::build_plan(&goal, 0);
-    store.insert_plan(&plan).await?;
-
-    dispatch(state.clone(), run_id.clone());
+    if !store.insert_plan_and_ready(&plan).await? {
+        // Stopped or abandoned while preparing: it will not execute, and
+        // the caller must not be told otherwise.
+        let run = store.get_run(&run_id).await?;
+        return Err(Error::validation(format!(
+            "run {run_id} was {} before it was ready to start",
+            run.state.as_str()
+        )));
+    }
     Ok(run_id)
 }
 
-/// Run the scheduler for this run in the background, then export the
-/// report. Stop requests reach it through the persisted run state
-/// (SPEC §9.2), so no handle needs to be kept. The run stays claimed in
-/// [`AppState`] for the scheduler's lifetime so the reconcile sweep never
-/// starts a second scheduler for it; returns whether this call took the
-/// claim.
-fn dispatch(state: AppState, run_id: RunId) -> bool {
-    if !state.claim_run(&run_id) {
-        return false;
+/// The decision for a blocked goal when the safety module records none
+/// (it always does for a blocked verdict; this keeps the refusal
+/// recorded regardless).
+fn blocked_decision(run_id: &RunId, verdict: &safety::SafetyVerdict) -> Decision {
+    Decision {
+        id: DecisionId::new(),
+        schema_version: SCHEMA_VERSION,
+        run_id: run_id.clone(),
+        kind: DecisionKind::SafetyBlock,
+        actor: Actor::System,
+        reason: verdict
+            .concern()
+            .unwrap_or("the goal is blocked")
+            .to_string(),
+        referenced: vec![],
+        payload: serde_json::json!({ "subject": "research goal" }),
+        created_at: OffsetDateTime::now_utc(),
     }
-    tokio::spawn(async move {
-        let scheduler = Scheduler::new(
-            state.store().clone(),
-            state.provider().clone(),
-            SchedulerConfig::default(),
-        );
-        match scheduler.run(&run_id).await {
-            Ok(summary) => tracing::info!(
-                run = %run_id,
-                state = summary.state.as_str(),
-                "run finished"
-            ),
-            Err(e) => tracing::error!(run = %run_id, error = %e, "run failed"),
-        }
-        // Export whatever state the run reached; a partial export is marked
-        // as partial rather than hidden (SPEC §6).
-        if let Err(e) = report::export_run(state.store(), &run_id).await {
-            tracing::error!(run = %run_id, error = %e, "report export failed");
-        }
-        state.release_run(&run_id);
-    });
-    true
 }
 
-/// Dispatch schedulers for runs this process should be driving but is not.
+/// Put on the queue every run this server should be driving but which
+/// holds no live queue place, and wake the dispatcher.
 ///
 /// Two cases, both consequences of `uruk serve` being the project's only
 /// scheduler owner:
 ///
-/// - a run left `running` by an interrupted process would otherwise sit
-///   that way forever;
-/// - a run parked `waiting-for-human` with no approvals left pending
-///   needs a scheduler to pick the released work back up.
+/// - a run left `running` without a queue place (created by an engine
+///   caller outside the web API, or by a build before the queue existed
+///   and not covered by the migration) would otherwise sit that way
+///   forever;
+/// - a run parked `waiting-for-human` with no approvals left pending needs
+///   another turn to pick the released work back up.
 ///
-/// Runs already claimed by an in-process scheduler are skipped, as are
-/// `blocked` and terminal runs. Returns the runs dispatched by this sweep.
+/// Runs already on the queue — including the interrupted head a restart
+/// finds `running` — are left where they are, so a restart never reorders
+/// anything. `blocked` and terminal runs are skipped. Returns the runs
+/// enqueued by this sweep.
+///
+/// The sweep also settles tasks a crash orphaned: a run that is already
+/// over (stopped, finished) but still holds open tasks, and that no live
+/// scheduler in this process is driving, gets them closed and charged
+/// (see [`Store::settle_orphaned_tasks`]).
 pub async fn resume_orphaned_runs(state: &AppState) -> Result<Vec<RunId>> {
-    let mut resumed = Vec::new();
-    for run in state.store().list_run_overviews().await? {
+    let store = state.store();
+    let executing = state.executing();
+    for run_id in store.runs_with_open_tasks().await? {
+        if executing.as_ref() == Some(&run_id) {
+            continue;
+        }
+        let run = store.get_run(&run_id).await?;
+        if run.state.is_terminal() {
+            let closed = store.settle_orphaned_tasks(&run_id).await?;
+            tracing::warn!(run = %run_id, closed, "settled tasks orphaned by an interrupted stop");
+        }
+    }
+    let mut enqueued = Vec::new();
+    for run in store.list_run_overviews().await? {
         let eligible = match run.state {
-            RunState::Running => true,
-            RunState::WaitingForHuman => state
-                .store()
+            RunState::Queued | RunState::Running => true,
+            RunState::WaitingForHuman => store
                 .list_approvals(&run.id, Some(ApprovalState::Pending))
                 .await?
                 .is_empty(),
             _ => false,
         };
-        if !eligible {
+        if !eligible || store.queue_status(&run.id).await?.is_some() {
             continue;
         }
-        if dispatch(state.clone(), run.id.clone()) {
-            tracing::info!(run = %run.id, state = run.state.as_str(), "resuming orphaned run");
-            resumed.push(run.id);
+        if store.enqueue_run(&run.id).await? {
+            tracing::info!(run = %run.id, state = run.state.as_str(), "enqueued an orphaned run");
+            enqueued.push(run.id);
         }
     }
-    Ok(resumed)
+    if !enqueued.is_empty() {
+        state.wake_dispatcher();
+    }
+    Ok(enqueued)
 }
 
 #[cfg(test)]

@@ -6,7 +6,7 @@
 
 use crate::Result;
 use crate::records::*;
-use crate::store::{BudgetUsage, ItemSummary, Store};
+use crate::store::{BudgetUsage, ItemSummary, QueueState, Store};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
@@ -34,6 +34,29 @@ pub struct RunMeta {
     pub iterations: u32,
     pub created_at: String,
     pub updated_at: String,
+    /// When the run first executed; `null` while it is still queued. The
+    /// wall-clock budget runs from here, not from `created_at`.
+    pub started_at: Option<String>,
+    /// Place on the run queue while `state` is `queued`: `1` is next to
+    /// start. `null` once the run executes.
+    pub queue_position: Option<u32>,
+    /// Seconds of settled provider waits, excluded from the research
+    /// clock; the clock is `updated_at - started_at - paused_secs` for a
+    /// finished run.
+    pub paused_secs: u64,
+    /// The provider outage the run is currently waiting out, if any. A
+    /// waiting run is `running`, not failed: its work resumes by itself
+    /// and its research clock stands still meanwhile.
+    pub provider_wait: Option<ProviderWaitView>,
+}
+
+/// A run's open wait for a transiently unavailable model provider.
+#[derive(Debug, Serialize)]
+pub struct ProviderWaitView {
+    /// When the upstream was last seen unavailable (RFC 3339).
+    pub since: String,
+    /// The transient failure last observed, as the adapter reported it.
+    pub note: Option<String>,
 }
 
 /// The goal as specified, with the budget facts the header shows.
@@ -247,6 +270,8 @@ pub async fn run_snapshot(store: &Store, run_id: &RunId) -> Result<RunSnapshot> 
     let run = store.get_run(run_id).await?;
     let goal = store.get_goal(&run.goal_id).await?;
     let plan = store.current_plan(run_id).await?;
+    let timing = store.run_timing(run_id).await?;
+    let queue = store.queue_status(run_id).await?;
     let tasks = store.list_tasks(run_id).await?;
     let usage = store.budget_usage(run_id).await?;
     let mut items = store
@@ -325,6 +350,15 @@ pub async fn run_snapshot(store: &Store, run_id: &RunId) -> Result<RunSnapshot> 
             iterations: run.iterations,
             created_at: rfc3339(run.created_at),
             updated_at: rfc3339(run.updated_at),
+            started_at: timing.started_at.map(rfc3339),
+            queue_position: queue
+                .filter(|q| matches!(q.state, QueueState::Preparing | QueueState::Queued))
+                .map(|q| q.ahead.saturating_add(1)),
+            paused_secs: timing.paused_secs,
+            provider_wait: timing.paused_since.map(|since| ProviderWaitView {
+                since: rfc3339(since),
+                note: timing.pause_note.clone(),
+            }),
         },
         goal: GoalView {
             question: goal.question,

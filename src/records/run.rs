@@ -11,6 +11,9 @@ use time::OffsetDateTime;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum RunState {
+    /// Created and waiting its turn on the durable FIFO run queue; no
+    /// work has been scheduled yet (docs/WEB.md "One run at a time").
+    Queued,
     Running,
     WaitingForHuman,
     Blocked,
@@ -23,6 +26,7 @@ pub enum RunState {
 impl RunState {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Queued => "queued",
             Self::Running => "running",
             Self::WaitingForHuman => "waiting-for-human",
             Self::Blocked => "blocked",
@@ -35,6 +39,7 @@ impl RunState {
 
     pub fn parse(s: &str) -> Option<Self> {
         Some(match s {
+            "queued" => Self::Queued,
             "running" => Self::Running,
             "waiting-for-human" => Self::WaitingForHuman,
             "blocked" => Self::Blocked,

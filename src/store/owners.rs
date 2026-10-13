@@ -111,15 +111,12 @@ impl Store {
     /// The owner-scoped run listing: newest first, ties broken by id, runs
     /// of other owners and ownerless runs excluded.
     pub async fn list_run_overviews_owned(&self, owner: &OwnerDigest) -> Result<Vec<RunOverview>> {
-        let rows = sqlx::query(
-            "SELECT r.id, r.state, r.stop_condition, r.iterations, r.created_at, r.updated_at,
-                    g.body AS goal
-             FROM runs r
-             JOIN goals g ON g.id = r.goal_id
-             JOIN run_owners o ON o.run_id = r.id
+        let rows = sqlx::query(&format!(
+            "{} JOIN run_owners o ON o.run_id = r.id
              WHERE o.owner_digest = ?
              ORDER BY r.created_at DESC, r.id",
-        )
+            queries::OVERVIEW_SELECT
+        ))
         .bind(owner.as_str())
         .fetch_all(self.pool())
         .await?;
@@ -177,7 +174,7 @@ impl Store {
     }
 }
 
-async fn insert_owner_in_tx(
+pub(crate) async fn insert_owner_in_tx(
     conn: &mut SqliteConnection,
     run_id: &RunId,
     owner: &OwnerDigest,

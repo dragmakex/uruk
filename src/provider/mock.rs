@@ -3,13 +3,15 @@
 //! CI must need no paid LLM or live network, so every acceptance check drives
 //! the system through this.
 
+use super::availability::{SendError, complete_through_gate};
 use super::{
-    Attempts, ChatRequest, ChatResponse, Choice, FinishReason, Message, Provider, Usage,
-    budget_refused,
+    Attempts, ChatRequest, ChatResponse, Choice, FinishReason, Message, ProbeBackoff, Provider,
+    TransientFault, UpstreamGate, Usage,
 };
 use crate::{Error, Result};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 /// How a rule replies: fixed text, or text computed from the prompt (so a
 /// test can cite a record ID that only exists at run time).
@@ -56,10 +58,20 @@ pub struct MockProvider {
     calls: Arc<AtomicU32>,
     /// Prompts received, for asserting what a judge was actually shown.
     seen: Arc<Mutex<Vec<ChatRequest>>>,
-    /// Fail the first N calls, to exercise bounded retry.
+    /// Refuse the first N calls permanently, to exercise terminal failure.
     fail_first: Arc<AtomicU32>,
     /// Artificial latency per call, so tests can observe a run mid-flight.
     delay: Arc<Mutex<Option<std::time::Duration>>>,
+    /// The stand-in upstream's availability: while `false`, every send is
+    /// a transient failure, exactly like an upstream outage.
+    available: Arc<AtomicBool>,
+    /// Transient failures handed out so far.
+    transient_failures: Arc<AtomicU32>,
+    /// This mock's own availability gate (clones share it).
+    gate: Arc<UpstreamGate>,
+    /// Probe spacing while unavailable; short by default so outage tests
+    /// run in milliseconds.
+    probe_backoff: ProbeBackoff,
 }
 
 impl Default for MockProvider {
@@ -80,6 +92,10 @@ impl MockProvider {
             seen: Arc::new(Mutex::new(Vec::new())),
             fail_first: Arc::new(AtomicU32::new(0)),
             delay: Arc::new(Mutex::new(None)),
+            available: Arc::new(AtomicBool::new(true)),
+            transient_failures: Arc::new(AtomicU32::new(0)),
+            gate: Arc::new(UpstreamGate::new()),
+            probe_backoff: ProbeBackoff::new(Duration::from_millis(5), Duration::from_millis(50)),
         }
     }
 
@@ -146,6 +162,31 @@ impl MockProvider {
         self
     }
 
+    /// Probe spacing while the stand-in upstream is unavailable.
+    pub fn with_probe_backoff(mut self, backoff: ProbeBackoff) -> Self {
+        self.probe_backoff = backoff;
+        self
+    }
+
+    /// Flip the stand-in upstream's availability. While unavailable every
+    /// send fails transiently (a 503), so callers wait exactly as they
+    /// would for a real outage; flipping it back lets the next probe
+    /// through.
+    pub fn set_available(&self, available: bool) {
+        self.available.store(available, Ordering::SeqCst);
+    }
+
+    /// Transient failures handed out while unavailable.
+    pub fn transient_failures(&self) -> u32 {
+        self.transient_failures.load(Ordering::SeqCst)
+    }
+
+    /// Calls the stand-in upstream actually served (replies and permanent
+    /// refusals); the same count as [`Self::call_count`].
+    pub fn served_count(&self) -> u32 {
+        self.calls.load(Ordering::SeqCst)
+    }
+
     pub fn call_count(&self) -> u32 {
         self.calls.load(Ordering::SeqCst)
     }
@@ -180,8 +221,30 @@ impl Provider for MockProvider {
         request: ChatRequest,
         attempts: &Attempts,
     ) -> Result<ChatResponse> {
-        if attempts.try_start().await?.is_none() {
-            return Err(budget_refused(attempts, None));
+        complete_through_gate(&self.gate, None, &self.probe_backoff, attempts, || {
+            self.send_once(&request)
+        })
+        .await
+    }
+
+    fn upstream_gate(&self) -> Option<Arc<UpstreamGate>> {
+        Some(Arc::clone(&self.gate))
+    }
+}
+
+impl MockProvider {
+    /// One send to the stand-in upstream.
+    async fn send_once(
+        &self,
+        request: &ChatRequest,
+    ) -> std::result::Result<ChatResponse, SendError> {
+        if !self.available.load(Ordering::SeqCst) {
+            self.transient_failures.fetch_add(1, Ordering::SeqCst);
+            return Err(SendError::Transient(TransientFault::status(
+                503,
+                None,
+                "mock upstream unavailable",
+            )));
         }
         let n = self.calls.fetch_add(1, Ordering::SeqCst);
         self.seen.lock().unwrap().push(request.clone());
@@ -192,10 +255,10 @@ impl Provider for MockProvider {
         }
 
         if self.fail_first.load(Ordering::SeqCst) > n {
-            return Err(Error::Provider(format!(
-                "mock transient failure on call {}",
+            return Err(SendError::Permanent(Error::Provider(format!(
+                "mock provider refused call {}",
                 n + 1
-            )));
+            ))));
         }
 
         let prompt = request.rendered();
@@ -216,10 +279,10 @@ impl Provider for MockProvider {
                 let mut queue = self.queue.lock().unwrap();
                 if queue.is_empty() {
                     let fallback = self.default_reply.lock().unwrap().clone().ok_or_else(|| {
-                        Error::Provider(format!(
+                        SendError::Permanent(Error::Provider(format!(
                             "mock provider has no reply for prompt:\n{}",
                             &prompt[..prompt.len().min(400)]
-                        ))
+                        )))
                     })?;
                     (fallback, false)
                 } else {
@@ -234,7 +297,7 @@ impl Provider for MockProvider {
 
         Ok(ChatResponse {
             id: format!("mock-{}", n),
-            model: request.model,
+            model: request.model.clone(),
             choices: vec![Choice {
                 index: 0,
                 message: Message::assistant(reply),
@@ -283,9 +346,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn transient_failures_are_surfaced() {
+    async fn permanent_refusals_are_surfaced_at_once() {
         let p = MockProvider::new().fail_first(1).default_reply("ok");
         assert!(p.complete(ChatRequest::new("m", vec![])).await.is_err());
         assert!(p.complete(ChatRequest::new("m", vec![])).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn an_unavailable_upstream_is_waited_out_not_failed() {
+        let p = MockProvider::new().default_reply("ok");
+        p.set_available(false);
+        let waiter = tokio::spawn({
+            let p = p.clone();
+            async move { p.complete(ChatRequest::new("m", vec![])).await }
+        });
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        assert!(!waiter.is_finished(), "the call waits for recovery");
+        assert!(p.transient_failures() >= 1);
+        p.set_available(true);
+        let reply = waiter.await.unwrap().unwrap();
+        assert_eq!(reply.text(), "ok");
+        assert_eq!(p.served_count(), 1, "one served call, however many probes");
     }
 }

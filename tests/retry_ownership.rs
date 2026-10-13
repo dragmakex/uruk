@@ -1,12 +1,11 @@
-//! One retry owner for transient provider failures (SPEC §6: "Retries are
-//! bounded and charged"; §9.1: bounded retries live in the provider adapter).
+//! One owner for provider failures (SPEC §6, §9.1).
 //!
-//! The provider adapter retries a transient HTTP failure with backoff and
-//! reports the attempts it made once. The scheduler does not stack a second
-//! retry loop on top: a provider error that survived the adapter's retries is
-//! final for the task, so a persistent outage cannot multiply into nested
-//! attempt counts, strand dependent work as queued, or keep a run busy past
-//! its wall-clock deadline.
+//! The provider adapter waits out a transient failure itself (see
+//! `provider_availability.rs`); what reaches the scheduler is a permanent
+//! refusal. The scheduler does not stack a retry loop on top of that: a
+//! permanent refusal is final for the task, so it cannot multiply into
+//! nested attempt counts, strand dependent work as queued, or keep a run
+//! busy past its wall-clock deadline.
 
 mod common;
 
@@ -58,13 +57,12 @@ fn pending_task(f: &Fixture, role: Role, strategy: &str) -> Task {
     }
 }
 
-/// The screenshot: a provider outage that outlives the adapter's retries.
-/// The scheduler must not re-run the task again and again (12 outbound
-/// attempts, "(after 4 attempt(s)) (attempts exhausted: 3)"); the task fails
-/// once with the provider's own message, and the run winds down with no
-/// task left queued.
+/// A provider that refuses every request permanently. The scheduler must
+/// not re-run the task again and again; the task fails once with the
+/// provider's own message, and the run winds down with no task left
+/// queued.
 #[tokio::test]
-async fn a_provider_failure_that_survived_the_adapter_is_final_for_the_task() {
+async fn a_permanent_provider_refusal_is_final_for_the_task() {
     let provider = MockProvider::new().fail_first(u32::MAX);
     let f = fixture_with(Mode::Task, provider, |g| {
         g.question = "assess this candidate".into();
@@ -86,13 +84,12 @@ async fn a_provider_failure_that_survived_the_adapter_is_final_for_the_task() {
     for task in &tasks {
         assert_eq!(
             task.attempts, 1,
-            "the scheduler must not retry a provider failure the adapter already \
-             retried: {task:?}"
+            "the scheduler must not retry a permanent provider refusal: {task:?}"
         );
         assert_eq!(task.state, TaskState::Failed, "{task:?}");
         let error = task.error.as_deref().unwrap_or("");
         assert!(
-            error.contains("mock transient failure"),
+            error.contains("mock provider refused"),
             "the provider's own message is reported: {error:?}"
         );
         assert!(
@@ -107,7 +104,7 @@ async fn a_provider_failure_that_survived_the_adapter_is_final_for_the_task() {
     );
     assert!(
         summary.state.is_terminal(),
-        "a persistent outage ends the run coherently: {summary:?}"
+        "a refusing provider ends the run coherently: {summary:?}"
     );
     assert!(
         summary.final_output_skipped.is_some(),
@@ -137,7 +134,7 @@ async fn dependents_of_a_permanently_failed_task_are_cancelled_not_left_queued()
             TaskState::Failed,
             vec![],
             CostActual::default(),
-            Some("request failed: connection refused (after 4 attempts)".into()),
+            Some("HTTP 401: unauthorized".into()),
         )
         .await
         .unwrap();
@@ -210,11 +207,11 @@ async fn the_run_deadline_cuts_in_flight_provider_work() {
     );
 }
 
-/// A provider failure that already survived the adapter's retries is
-/// terminal for that logical work: the supervisor must not propose the same
-/// work again under a new task id, which would multiply the attempts anyway.
+/// A permanent provider refusal is terminal for that logical work: the
+/// supervisor must not propose the same work again under a new task id,
+/// which would only repeat the refusal.
 #[tokio::test]
-async fn adapter_exhausted_provider_failures_are_not_re_proposed() {
+async fn permanent_provider_refusals_are_not_re_proposed() {
     let provider = MockProvider::new().fail_first(u32::MAX);
     let f = fixture_with(Mode::Task, provider, |g| {
         g.question = "assess this candidate".into();
@@ -245,7 +242,7 @@ async fn adapter_exhausted_provider_failures_are_not_re_proposed() {
     }
     assert!(
         by_work.values().all(|&n| n == 1),
-        "each logical work item is attempted exactly once during an outage: {by_work:?} ({summary:?})"
+        "each logical work item is attempted exactly once against a refusing provider: {by_work:?} ({summary:?})"
     );
     assert_eq!(
         f.provider.call_count(),
@@ -442,7 +439,7 @@ async fn dependents_parked_for_approval_are_cancelled_with_their_approvals() {
             TaskState::Failed,
             vec![],
             CostActual::default(),
-            Some("request failed: connection refused (after 4 attempts)".into()),
+            Some("HTTP 401: unauthorized".into()),
         )
         .await
         .unwrap();

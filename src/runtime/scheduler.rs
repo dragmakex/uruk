@@ -4,11 +4,12 @@ use super::executor::execute_task;
 use super::limits::ConcurrencyLimits;
 use crate::agents::{AgentContext, supervisor};
 use crate::prompts::PromptRegistry;
-use crate::provider::Provider;
+use crate::provider::{Provider, UpstreamGate};
 use crate::records::*;
 use crate::store::{RecordBatch, Store};
 use crate::{Error, Result};
 use std::sync::Arc;
+use std::time::Duration;
 use time::OffsetDateTime;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
@@ -24,8 +25,9 @@ pub struct SchedulerConfig {
     /// Tasks admitted per iteration.
     pub batch_size: usize,
     /// Attempts per task before it fails permanently. Only a store fault
-    /// mid-task spends an attempt: provider errors are already retried, and
-    /// then final, inside the provider adapter.
+    /// mid-task spends an attempt: a transient provider failure is waited
+    /// out inside the adapter and never reaches the task, and a permanent
+    /// provider refusal is final for it.
     pub max_attempts: u32,
 }
 
@@ -67,16 +69,27 @@ pub struct Scheduler {
     cancel: CancellationToken,
 }
 
-/// Watches the persisted run state so a durable stop request (the web
-/// API's stop route) reaches in-flight work through the cancellation
-/// token (SPEC §9.2).
-struct StopWatcher(tokio::task::JoinHandle<()>);
+/// How often the watchers re-read the store.
+const WATCH_INTERVAL: Duration = Duration::from_millis(250);
 
-impl StopWatcher {
-    fn spawn(store: Store, run_id: RunId, cancel: CancellationToken) -> Self {
+/// Watches the run while it executes: a durable stop request (the web
+/// API's stop route) reaches in-flight work through the cancellation token
+/// (SPEC §9.2), and the provider's availability gate is mirrored into the
+/// run's persisted research clock, so a transient outage is recorded as a
+/// pause — visible to the UI, survivable across a restart, and excluded
+/// from the wall-clock budget.
+struct RunWatch(tokio::task::JoinHandle<()>);
+
+impl RunWatch {
+    fn spawn(
+        store: Store,
+        run_id: RunId,
+        cancel: CancellationToken,
+        gate: Option<Arc<UpstreamGate>>,
+    ) -> Self {
         Self(tokio::spawn(async move {
             loop {
-                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                tokio::time::sleep(WATCH_INTERVAL).await;
                 match store.get_run(&run_id).await {
                     Ok(run) if run.state == RunState::Cancelled => {
                         tracing::warn!("stop request observed; cancelling in-flight work");
@@ -84,34 +97,100 @@ impl StopWatcher {
                         return;
                     }
                     Ok(_) => {}
-                    Err(e) => tracing::debug!(error = %e, "stop watcher could not read run"),
+                    Err(e) => tracing::debug!(error = %e, "run watch could not read run"),
+                }
+                if let Some(gate) = &gate
+                    && let Err(e) = sync_provider_wait(&store, &run_id, gate).await
+                {
+                    tracing::debug!(error = %e, "run watch could not record the provider wait");
                 }
             }
         }))
     }
 }
 
-impl Drop for StopWatcher {
+impl Drop for RunWatch {
     fn drop(&mut self) {
         self.0.abort();
     }
 }
 
+/// Mirror the gate into the run's persisted pause: open it when the
+/// upstream goes down, keep its note current, settle it when the upstream
+/// serves again.
+async fn sync_provider_wait(store: &Store, run_id: &RunId, gate: &UpstreamGate) -> Result<()> {
+    let status = gate.status();
+    let timing = store.run_timing(run_id).await?;
+    match (status.unavailable_since(), timing.paused_since) {
+        (Some(since), None) => {
+            let note = status.last_fault().unwrap_or("provider unavailable");
+            tracing::warn!(%note, "provider unavailable; the run's research clock is paused");
+            store.begin_provider_wait(run_id, since, note).await
+        }
+        (Some(since), Some(_)) => {
+            let note = status.last_fault().unwrap_or("provider unavailable");
+            if timing.pause_note.as_deref() != Some(note) {
+                store.begin_provider_wait(run_id, since, note).await?;
+            }
+            Ok(())
+        }
+        (None, Some(_)) => {
+            tracing::info!("provider serving again; the run's research clock resumes");
+            store
+                .end_provider_wait(run_id, OffsetDateTime::now_utc())
+                .await
+                .map(|_| ())
+        }
+        (None, None) => Ok(()),
+    }
+}
+
 /// Cancels the run's work token when the wall-clock deadline passes, so an
-/// in-flight model call — retries and backoff included — ends at the
-/// deadline instead of running the run past it (SPEC §6: "Enforce a finite
-/// deadline"). Only the work token is cancelled: the run's own token still
-/// means "the researcher stopped this run".
+/// in-flight model call ends at the deadline instead of running the run
+/// past it (SPEC §6: "Enforce a finite deadline"). The deadline is the
+/// persisted research clock: it runs from the run's first start, not from
+/// this process start, so a restart cannot extend it; and it stands still
+/// while the provider is unavailable, so an outage cannot spend it. Only
+/// the work token is cancelled: the run's own token still means "the
+/// researcher stopped this run".
 struct DeadlineWatch(tokio::task::JoinHandle<()>);
 
 impl DeadlineWatch {
-    fn spawn(deadline: OffsetDateTime, work: CancellationToken) -> Self {
-        let remaining = (deadline - OffsetDateTime::now_utc()).max(time::Duration::ZERO);
-        let remaining = std::time::Duration::try_from(remaining).unwrap_or_default();
+    fn spawn(
+        store: Store,
+        run_id: RunId,
+        wall_clock_secs: u64,
+        gate: Option<Arc<UpstreamGate>>,
+        work: CancellationToken,
+    ) -> Self {
         Self(tokio::spawn(async move {
-            tokio::time::sleep(remaining).await;
-            tracing::warn!("wall-clock deadline reached; cancelling in-flight work");
-            work.cancel();
+            loop {
+                let timing = match store.run_timing(&run_id).await {
+                    Ok(timing) => timing,
+                    Err(e) => {
+                        tracing::debug!(error = %e, "deadline watch could not read the clock");
+                        tokio::time::sleep(WATCH_INTERVAL).await;
+                        continue;
+                    }
+                };
+                let upstream_down = gate.as_ref().is_some_and(|g| !g.status().is_available());
+                let now = OffsetDateTime::now_utc();
+                if timing.is_paused() || upstream_down {
+                    tokio::time::sleep(WATCH_INTERVAL).await;
+                    continue;
+                }
+                let Some(deadline) = timing.deadline(wall_clock_secs) else {
+                    tokio::time::sleep(WATCH_INTERVAL).await;
+                    continue;
+                };
+                if now >= deadline {
+                    tracing::warn!("wall-clock deadline reached; cancelling in-flight work");
+                    work.cancel();
+                    return;
+                }
+                let remaining = Duration::try_from(deadline - now).unwrap_or(WATCH_INTERVAL);
+                tokio::time::sleep(remaining.min(Duration::from_secs(1))).await;
+            }
         }))
     }
 }
@@ -178,14 +257,27 @@ impl Scheduler {
             tracing::warn!("run was cancelled while the scheduler was starting");
         }
 
-        // The wall clock runs from the run's creation, not from this process
-        // start, so a restart cannot extend the deadline (SPEC §6).
-        let deadline = run.created_at + time::Duration::seconds(goal.budget.wall_clock_secs as i64);
-        let _watcher = StopWatcher::spawn(self.store.clone(), run_id.clone(), self.cancel.clone());
+        // The wall clock is the persisted research clock: it runs from the
+        // run's first start (stamped above, once), so a restart cannot
+        // extend the deadline, and it pauses while the provider is down.
+        let wall_clock_secs = goal.budget.wall_clock_secs;
+        let gate = self.provider.upstream_gate();
+        let watch = RunWatch::spawn(
+            self.store.clone(),
+            run_id.clone(),
+            self.cancel.clone(),
+            gate.clone(),
+        );
         // Work runs under a child token: a stop request cancels it through
         // the parent, the deadline cancels it alone.
         let work = self.cancel.child_token();
-        let _deadline_watch = DeadlineWatch::spawn(deadline, work.clone());
+        let _deadline_watch = DeadlineWatch::spawn(
+            self.store.clone(),
+            run_id.clone(),
+            wall_clock_secs,
+            gate.clone(),
+            work.clone(),
+        );
         let stop_condition: StopCondition;
 
         loop {
@@ -203,7 +295,7 @@ impl Scheduler {
             }
 
             let usage = self.store.budget_usage(run_id).await?;
-            let deadline_passed = OffsetDateTime::now_utc() >= deadline;
+            let deadline_passed = self.deadline_passed(run_id, wall_clock_secs).await?;
 
             if let Some(condition) = supervisor::should_stop(
                 &self.store,
@@ -272,7 +364,7 @@ impl Scheduler {
         // The final deliverable draws on the output reserve and runs only if
         // permitted and budgeted; when it cannot, that is recorded (SPEC §6).
         let skipped = self
-            .final_output(run_id, &goal, &plan, &stop_condition, deadline, &work)
+            .final_output(run_id, &goal, &plan, &stop_condition, &work)
             .await?;
 
         // A stop request that landed during the final meta-review wins over
@@ -287,6 +379,13 @@ impl Scheduler {
         // dispatched (parked behind a failed prerequisite, or simply left
         // over) is closed with the run rather than shown as queued forever.
         self.store.cancel_pending_tasks(run_id).await?;
+
+        // The watch must not reopen a pause after the run is over; settle
+        // any wait that was still open (a stop during an outage).
+        drop(watch);
+        self.store
+            .end_provider_wait(run_id, OffsetDateTime::now_utc())
+            .await?;
 
         let mut state = match stop_condition {
             StopCondition::Cancelled => RunState::Cancelled,
@@ -312,6 +411,22 @@ impl Scheduler {
             .await
     }
 
+    /// Whether the research clock has run out: the persisted deadline has
+    /// passed and the clock is not standing still on a provider wait (the
+    /// gate is consulted directly, so the moments before the watch records
+    /// a new outage count as paused too).
+    async fn deadline_passed(&self, run_id: &RunId, wall_clock_secs: u64) -> Result<bool> {
+        if self
+            .provider
+            .upstream_gate()
+            .is_some_and(|gate| !gate.status().is_available())
+        {
+            return Ok(false);
+        }
+        let timing = self.store.run_timing(run_id).await?;
+        Ok(timing.deadline_passed(wall_clock_secs, OffsetDateTime::now_utc()))
+    }
+
     async fn deliverable_done(&self, run_id: &RunId) -> Result<bool> {
         Ok(self.store.list_tasks(run_id).await?.iter().any(|t| {
             t.role == Role::MetaReview
@@ -333,7 +448,6 @@ impl Scheduler {
         goal: &Goal,
         plan: &Plan,
         stop: &StopCondition,
-        deadline: OffsetDateTime,
         cancel: &CancellationToken,
     ) -> Result<Option<String>> {
         if !plan.roles.iter().any(|r| r == Role::MetaReview.as_str()) {
@@ -359,7 +473,10 @@ impl Scheduler {
             Some("run was cancelled before the final meta-review".to_string())
         } else if matches!(stop, StopCondition::SafetyBoundary) {
             Some("run stopped at a safety boundary; no final meta-review".to_string())
-        } else if OffsetDateTime::now_utc() >= deadline {
+        } else if self
+            .deadline_passed(run_id, goal.budget.wall_clock_secs)
+            .await?
+        {
             Some("wall-clock deadline passed before the final meta-review".to_string())
         } else if let Some(failed) = failed_deliverable {
             Some(format!(
@@ -441,7 +558,11 @@ impl Scheduler {
         }
         let reason = if task.state == TaskState::Cancelled && self.cancel.is_cancelled() {
             "run was cancelled during the final meta-review".to_string()
-        } else if task.state == TaskState::Cancelled && OffsetDateTime::now_utc() >= deadline {
+        } else if task.state == TaskState::Cancelled
+            && self
+                .deadline_passed(run_id, goal.budget.wall_clock_secs)
+                .await?
+        {
             "wall-clock deadline passed during the final meta-review".to_string()
         } else {
             format!(
@@ -746,9 +867,9 @@ impl Scheduler {
             };
 
             match result {
-                // Provider failures arrive here already retried by the
-                // adapter and are final for the task (SPEC §6: retries are
-                // bounded and charged, once).
+                // A provider failure arriving here is a permanent refusal
+                // and final for the task; a transient outage never reaches
+                // here, the adapter waits it out (SPEC §6, §9.1).
                 Ok(outcome) => {
                     self.store
                         .commit_task(

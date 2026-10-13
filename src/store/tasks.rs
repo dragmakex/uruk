@@ -338,30 +338,69 @@ impl Store {
         Ok(uncertain)
     }
 
-    /// Cancel every task not yet terminal (SPEC §6).
+    /// Cancel every task not yet dispatched (SPEC §6).
     pub async fn cancel_pending_tasks(&self, run_id: &RunId) -> Result<u32> {
         let mut guard = self.begin_write().await?;
-        let conn = guard.conn();
-        let rows: Vec<String> = sqlx::query_scalar(
-            "SELECT body FROM tasks WHERE run_id = ?
-               AND state IN ('pending', 'blocked', 'waiting_for_human')",
-        )
-        .bind(run_id.as_str())
-        .fetch_all(&mut *conn)
-        .await?;
-        let n = rows.len() as u32;
-        for body in rows {
-            let mut task: Task = serde_json::from_str(&body)?;
-            task.state = TaskState::Cancelled;
-            task.error = Some("cancelled before dispatch".into());
-            task.finished_at = Some(now());
-            release_reservation(conn, &task).await?;
-            store_task(conn, &task).await?;
-            invalidate_pending_approvals_in_tx(conn, &task.id, "task cancelled before dispatch")
-                .await?;
-        }
+        let n = cancel_pending_tasks_in_tx(guard.conn(), run_id).await?;
         guard.commit().await?;
         Ok(n)
+    }
+
+    /// Close the open tasks of a run that is already over but whose
+    /// scheduler died before settling them (a crash after a stop). A
+    /// `running` task is charged every model call it had started, at
+    /// unknown cost (SPEC §9.2: preserve possible incurred cost), its
+    /// leases and reservation are released, and it ends `cancelled`;
+    /// tasks never dispatched are cancelled as a stop cancels them.
+    /// Idempotent; returns how many tasks were closed.
+    ///
+    /// # Errors
+    ///
+    /// Propagates store failures.
+    pub async fn settle_orphaned_tasks(&self, run_id: &RunId) -> Result<u32> {
+        let mut guard = self.begin_write().await?;
+        let conn = guard.conn();
+        let rows: Vec<String> =
+            sqlx::query_scalar("SELECT body FROM tasks WHERE run_id = ? AND state = 'running'")
+                .bind(run_id.as_str())
+                .fetch_all(&mut *conn)
+                .await?;
+        let mut closed = 0u32;
+        for body in rows {
+            let mut task: Task = serde_json::from_str(&body)?;
+            let started = count_attempt_rows(conn, &task, "attempt", "attempt").await?;
+            let spent = CostActual {
+                model_calls: started,
+                ..CostActual::default()
+            };
+            task.state = TaskState::Cancelled;
+            task.error = Some(format!(
+                "run stopped; the task's scheduler was interrupted with {started} model \
+                 call(s) started, charged at unknown cost"
+            ));
+            task.actual_cost = spent.clone();
+            task.finished_at = Some(now());
+            store_task(conn, &task).await?;
+            settle_attempt(conn, &task, &spent).await?;
+            release_reservation(conn, &task).await?;
+            release_leases(conn, &task).await?;
+            invalidate_pending_approvals_in_tx(conn, &task.id, "run stopped").await?;
+            closed += 1;
+        }
+        closed += cancel_pending_tasks_in_tx(conn, run_id).await?;
+        guard.commit().await?;
+        Ok(closed)
+    }
+
+    /// Runs that still hold open (non-terminal) tasks.
+    pub async fn runs_with_open_tasks(&self) -> Result<Vec<RunId>> {
+        let ids: Vec<String> = sqlx::query_scalar(
+            "SELECT DISTINCT run_id FROM tasks
+             WHERE state IN ('pending', 'blocked', 'running', 'waiting_for_human')",
+        )
+        .fetch_all(self.pool())
+        .await?;
+        Ok(ids.into_iter().map(RunId::from_raw).collect())
     }
 
     /// Account for one outbound model-call attempt before it is sent, and
@@ -416,6 +455,36 @@ impl Store {
         .await?;
         guard.commit().await?;
         Ok(true)
+    }
+
+    /// Record that logical call `ordinal` of task `attempt` is being sent
+    /// again (its `resend`-th resend) after a transient upstream failure.
+    /// An audit row (`kind = 'resend'`), never a charge: usage ignores it,
+    /// and recovery charges only the logical call's `attempt` row. Replays
+    /// are inert.
+    ///
+    /// # Errors
+    ///
+    /// Propagates store failures.
+    pub async fn record_resend(
+        &self,
+        run_id: &RunId,
+        task_id: &TaskId,
+        attempt: u32,
+        ordinal: u32,
+        resend: u32,
+    ) -> Result<()> {
+        let mut guard = self.begin_write().await?;
+        ledger_row(
+            guard.conn(),
+            run_id,
+            task_id,
+            &format!("resend:{task_id}:{attempt}:{ordinal}:{resend}"),
+            "resend",
+            1,
+        )
+        .await?;
+        guard.commit().await
     }
 
     /// Reserve budget before dispatch (SPEC §6: "Reserve budget for in-flight
@@ -646,6 +715,33 @@ impl Store {
         guard.commit().await?;
         Ok(req)
     }
+}
+
+/// Cancel every task of `run_id` not yet dispatched, releasing its
+/// reservation and invalidating its approvals; returns how many.
+pub(crate) async fn cancel_pending_tasks_in_tx(
+    conn: &mut SqliteConnection,
+    run_id: &RunId,
+) -> Result<u32> {
+    let rows: Vec<String> = sqlx::query_scalar(
+        "SELECT body FROM tasks WHERE run_id = ?
+           AND state IN ('pending', 'blocked', 'waiting_for_human')",
+    )
+    .bind(run_id.as_str())
+    .fetch_all(&mut *conn)
+    .await?;
+    let n = rows.len() as u32;
+    for body in rows {
+        let mut task: Task = serde_json::from_str(&body)?;
+        task.state = TaskState::Cancelled;
+        task.error = Some("cancelled before dispatch".into());
+        task.finished_at = Some(now());
+        release_reservation(conn, &task).await?;
+        store_task(conn, &task).await?;
+        invalidate_pending_approvals_in_tx(conn, &task.id, "task cancelled before dispatch")
+            .await?;
+    }
+    Ok(n)
 }
 
 async fn insert_approval_in_tx(conn: &mut SqliteConnection, req: &ApprovalRequest) -> Result<()> {

@@ -20,6 +20,7 @@
 //! `URUK_COOKIE_SECURE=true` (see `docs/WEB.md`). Binding a non-loopback
 //! address logs a loud warning but is not refused.
 
+mod dispatch;
 mod error;
 mod owner;
 mod routes;
@@ -45,6 +46,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::sync::Notify;
 use tower_http::compression::CompressionLayer;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::timeout::TimeoutLayer;
@@ -65,8 +67,9 @@ pub struct WebConfig {
     pub max_upload_bytes: usize,
     /// How many uploads one browser identity may hold at a time.
     pub max_uploads_per_owner: usize,
-    /// How often `serve` sweeps for runs it should be driving but is not
-    /// (interrupted by a restart, or with no approvals left pending).
+    /// How often `serve` sweeps for runs that belong on the queue but are
+    /// not on it (parked runs whose approvals were decided), and the
+    /// dispatcher's idle tick between wakeups.
     pub reconcile_interval: Duration,
     /// Whether the browser-identity cookie carries the `Secure` attribute.
     /// `false` fits the documented local HTTP setup; any deployment behind
@@ -95,13 +98,25 @@ struct Inner {
     store: Store,
     provider: Arc<dyn Provider>,
     config: WebConfig,
-    /// Runs a scheduler in this process is currently driving, so the
-    /// reconcile sweep never dispatches a second scheduler for a run.
-    active_runs: Mutex<HashSet<RunId>>,
+    /// Wakes the dispatcher when the queue may have changed. A wakeup
+    /// only; the queue itself lives in SQLite.
+    queue_wake: Notify,
+    /// Runs whose start request is still ingesting sources and planning.
+    /// They already hold their queue place (enqueue is part of creation)
+    /// but must not execute until the request finishes; a crash empties
+    /// this set, and the dispatcher then runs them as they are.
+    preparing: Mutex<HashSet<RunId>>,
+    /// The one dispatcher task of this server, once started.
+    dispatcher: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// The run the dispatcher is executing right now, so the sweep leaves
+    /// its tasks to the live scheduler. A hint, not authority: after a
+    /// crash it is empty and the sweep settles what the crash orphaned.
+    executing: Mutex<Option<RunId>>,
 }
 
 /// Shared state for every handler: the store, the model provider used for
-/// runs started over the API, and the adapter tunables.
+/// runs started over the API, the adapter tunables, and the singleton run
+/// dispatcher.
 #[derive(Clone)]
 pub struct AppState {
     inner: Arc<Inner>,
@@ -114,7 +129,10 @@ impl AppState {
                 store,
                 provider,
                 config,
-                active_runs: Mutex::new(HashSet::new()),
+                queue_wake: Notify::new(),
+                preparing: Mutex::new(HashSet::new()),
+                dispatcher: Mutex::new(None),
+                executing: Mutex::new(None),
             }),
         }
     }
@@ -131,25 +149,98 @@ impl AppState {
         &self.inner.config
     }
 
-    /// The active-run set, recovering from a poisoned lock: the set stays
-    /// usable even if a holder panicked, so the reconcile sweep can never
-    /// be wedged into silently skipping every run.
-    fn active_runs(&self) -> std::sync::MutexGuard<'_, HashSet<RunId>> {
+    /// Start the run dispatcher, the one task that executes the queue.
+    /// Returns `false` when it is already running. `serve` starts it; tests
+    /// that drive the router directly start it themselves.
+    pub fn start_dispatcher(&self) -> bool {
+        let mut slot = self
+            .inner
+            .dispatcher
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if slot.as_ref().is_some_and(|task| !task.is_finished()) {
+            return false;
+        }
+        *slot = Some(tokio::spawn(dispatch::run(self.clone())));
+        true
+    }
+
+    /// Abort the dispatcher. The run it was driving, if any, is left exactly
+    /// as a crash would leave it: `running`, head of the queue, resumed by
+    /// the next dispatcher.
+    pub fn stop_dispatcher(&self) {
+        let task = self
+            .inner
+            .dispatcher
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some(task) = task {
+            task.abort();
+        }
+    }
+
+    /// Tell the dispatcher the queue may have changed.
+    pub fn wake_dispatcher(&self) {
+        self.inner.queue_wake.notify_one();
+    }
+
+    fn queue_wake(&self) -> &Notify {
+        &self.inner.queue_wake
+    }
+
+    /// The preparing set, recovering from a poisoned lock so the dispatcher
+    /// can never be wedged by a panicked start request.
+    fn preparing(&self) -> std::sync::MutexGuard<'_, HashSet<RunId>> {
         self.inner
-            .active_runs
+            .preparing
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// Claim a run for a scheduler in this process. `false` means another
-    /// in-process scheduler already drives it. Never held across `.await`.
-    fn claim_run(&self, run_id: &RunId) -> bool {
-        self.active_runs().insert(run_id.clone())
+    /// Hold `run_id` back from execution while its start request prepares
+    /// it; the returned guard releases it (and wakes the dispatcher) when
+    /// dropped, on every exit path. Never held across `.await` itself.
+    fn prepare(&self, run_id: &RunId) -> Preparation {
+        self.preparing().insert(run_id.clone());
+        Preparation {
+            state: self.clone(),
+            run_id: run_id.clone(),
+        }
     }
 
-    /// Release a claim taken by [`AppState::claim_run`].
-    fn release_run(&self, run_id: &RunId) {
-        self.active_runs().remove(run_id);
+    fn is_preparing(&self, run_id: &RunId) -> bool {
+        self.preparing().contains(run_id)
+    }
+
+    fn set_executing(&self, run_id: Option<RunId>) {
+        *self
+            .inner
+            .executing
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = run_id;
+    }
+
+    fn executing(&self) -> Option<RunId> {
+        self.inner
+            .executing
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+}
+
+/// Releases a run from the preparing set on drop (see
+/// [`AppState::prepare`]).
+struct Preparation {
+    state: AppState,
+    run_id: RunId,
+}
+
+impl Drop for Preparation {
+    fn drop(&mut self) {
+        self.state.preparing().remove(&self.run_id);
+        self.state.wake_dispatcher();
     }
 }
 
@@ -260,20 +351,24 @@ pub struct ServeOptions {
 /// Serve the API until Ctrl-C / SIGTERM.
 ///
 /// Takes the project scheduler lock for its whole lifetime: runs started
-/// over the API are dispatched inside this process, and SPEC §9.2 allows one
-/// scheduler owner per project, so a second `uruk serve` on the same
-/// project fails fast with a lock message. Because this process is the
-/// only scheduler owner, it also sweeps for runs it should be driving
-/// (interrupted `running` runs on startup, and runs whose approvals are
-/// no longer pending) on [`WebConfig::reconcile_interval`].
+/// over the API are executed by this process's dispatcher, one at a time
+/// in queue order, and SPEC §9.2 allows one scheduler owner per project,
+/// so a second `uruk serve` on the same project fails fast with a lock
+/// message. Because this process is the only scheduler owner, it also
+/// sweeps for runs that belong on the queue but are not on it (runs
+/// parked `waiting-for-human` whose approvals were decided) on
+/// [`WebConfig::reconcile_interval`]. A restart changes nothing about the
+/// queue: the interrupted head is resumed first, then the rest in order.
 pub async fn serve(opts: ServeOptions) -> Result<()> {
     let _lock = ProjectLock::acquire(&opts.project)?;
     let store = Store::open(opts.project.join(STATE_DB_RELATIVE)).await?;
     let provider = crate::provider::from_env_or_offline()?;
     let state = AppState::new(store, provider, opts.config);
 
-    // Recover immediately, then keep sweeping while the server runs.
+    // Put stragglers on the queue, start executing it, and keep sweeping
+    // while the server runs.
     resume_orphaned_runs(&state).await?;
+    state.start_dispatcher();
     let reconciler = tokio::spawn({
         let state = state.clone();
         async move {
@@ -309,16 +404,18 @@ pub async fn serve(opts: ServeOptions) -> Result<()> {
 
     let listener = tokio::net::TcpListener::bind(opts.bind).await?;
     tracing::info!(addr = %opts.bind, "uruk web API listening");
-    let served = axum::serve(listener, router(state))
+    let served = axum::serve(listener, router(state.clone()))
         .with_graceful_shutdown(shutdown_signal())
         .await
         .map_err(Error::Io);
     reconciler.abort();
+    state.stop_dispatcher();
     served
 }
 
-/// Ctrl-C or SIGTERM ends the accept loop; runs interrupted mid-flight are
-/// picked up by [`resume_orphaned_runs`] on the next start (SPEC §9.2).
+/// Ctrl-C or SIGTERM ends the accept loop; a run interrupted mid-flight is
+/// still the head of the durable queue and is resumed by the next start's
+/// dispatcher (SPEC §9.2).
 async fn shutdown_signal() {
     #[cfg(unix)]
     {

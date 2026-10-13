@@ -70,6 +70,8 @@ describe("parseRunOverviews", () => {
           mode: "task",
           created_at: "2026-10-04T14:00:00Z",
           updated_at: "2026-10-04T14:05:00Z",
+          queue_position: null,
+          paused_since: null,
         },
       ],
     });
@@ -484,5 +486,90 @@ describe("parseRunPreview", () => {
       permissions: { ...previewWire.permissions, execute: "no" },
     };
     expect(() => parseRunPreview(bad)).toThrow(/execute/);
+  });
+});
+
+describe("queue position and provider wait on the run meta", () => {
+  it("keeps a queued run's position", () => {
+    const fixture = snapshotFixture() as { run: Record<string, unknown> };
+    fixture.run.state = "queued";
+    fixture.run.queue_position = 3;
+    fixture.run.started_at = null;
+    const snap = parseRunSnapshot(fixture);
+    expect(snap.run.state).toBe("queued");
+    expect(snap.run.queue_position).toBe(3);
+    expect(snap.run.started_at).toBeNull();
+    expect(snap.run.paused_secs).toBe(0);
+    expect(snap.run.provider_wait).toBeNull();
+  });
+
+  it("keeps the provider-wait facts of a running head", () => {
+    const fixture = snapshotFixture() as { run: Record<string, unknown> };
+    fixture.run.paused_secs = 12;
+    fixture.run.provider_wait = {
+      since: "2026-10-04T14:03:00Z",
+      note: "HTTP 503: overloaded",
+    };
+    const snap = parseRunSnapshot(fixture);
+    expect(snap.run.paused_secs).toBe(12);
+    expect(snap.run.provider_wait).toEqual({
+      since: "2026-10-04T14:03:00Z",
+      note: "HTTP 503: overloaded",
+    });
+  });
+
+  it("rejects a snapshot that omits the queue position field", () => {
+    const fixture = snapshotFixture() as { run: Record<string, unknown> };
+    delete fixture.run.queue_position;
+    expect(() => parseRunSnapshot(fixture)).toThrow(/queue_position/);
+  });
+
+  it("rejects a provider wait without a since instant", () => {
+    const fixture = snapshotFixture() as { run: Record<string, unknown> };
+    fixture.run.provider_wait = { note: null };
+    expect(() => parseRunSnapshot(fixture)).toThrow(/provider_wait\.since/);
+  });
+
+  it("rejects a snapshot that omits the settled wait seconds", () => {
+    const fixture = snapshotFixture() as { run: Record<string, unknown> };
+    delete fixture.run.paused_secs;
+    expect(() => parseRunSnapshot(fixture)).toThrow(/paused_secs/);
+  });
+});
+
+describe("parseRunOverviews with queue facts", () => {
+  it("keeps queue position and the open provider wait", () => {
+    const runs = parseRunOverviews({
+      runs: [
+        {
+          id: "run_q",
+          state: "queued",
+          stop_condition: null,
+          iterations: 0,
+          question: "q",
+          mode: "task",
+          created_at: "2026-10-04T14:00:00Z",
+          updated_at: "2026-10-04T14:00:00Z",
+          queue_position: 2,
+          paused_since: null,
+        },
+        {
+          id: "run_w",
+          state: "running",
+          stop_condition: null,
+          iterations: 0,
+          question: "w",
+          mode: "task",
+          created_at: "2026-10-04T14:00:00Z",
+          updated_at: "2026-10-04T14:00:00Z",
+          queue_position: null,
+          paused_since: "2026-10-04T14:05:00Z",
+        },
+      ],
+    });
+    expect(runs[0]?.queue_position).toBe(2);
+    expect(runs[0]?.paused_since).toBeNull();
+    expect(runs[1]?.queue_position).toBeNull();
+    expect(runs[1]?.paused_since).toBe("2026-10-04T14:05:00Z");
   });
 });

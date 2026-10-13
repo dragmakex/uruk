@@ -6,7 +6,13 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::Instant;
-use uruk::provider::{HttpProvider, Provider, StartPacer};
+use uruk::provider::{HttpProvider, ProbeBackoff, Provider, StartPacer};
+
+/// A 1 ms probe schedule: any observed spacing comes from the pacer or
+/// from `Retry-After`, never from the backoff.
+fn fast_probes() -> ProbeBackoff {
+    ProbeBackoff::new(Duration::from_millis(1), Duration::from_millis(1))
+}
 
 const INTERVAL: Duration = Duration::from_secs(4);
 
@@ -350,12 +356,11 @@ async fn retries_go_through_the_shared_pacer() {
         (200, String::new(), completion_body()),
     ])
     .await;
-    // Backoff base of 1 ms: any observed spacing comes from the pacer.
+    // Probe spacing of 1 ms: any observed spacing comes from the pacer.
     let provider = HttpProvider::new(&url, None, "m")
         .unwrap()
         .with_requests_per_minute(NonZeroU32::new(240))
-        .with_max_retries(2)
-        .with_retry_base(Duration::from_millis(1));
+        .with_probe_backoff(fast_probes());
 
     provider.complete(request()).await.unwrap();
 
@@ -374,11 +379,10 @@ async fn retry_after_seconds_is_honored_on_429() {
         (200, String::new(), completion_body()),
     ])
     .await;
-    // No pacing and a 1 ms backoff base: only Retry-After can explain a wait.
+    // No pacing and 1 ms probes: only Retry-After can explain a wait.
     let provider = HttpProvider::new(&url, None, "m")
         .unwrap()
-        .with_max_retries(2)
-        .with_retry_base(Duration::from_millis(1));
+        .with_probe_backoff(fast_probes());
 
     provider.complete(request()).await.unwrap();
 
@@ -403,8 +407,7 @@ async fn retry_after_and_the_pacer_wait_concurrently_not_additively() {
     let provider = HttpProvider::new(&url, None, "m")
         .unwrap()
         .with_requests_per_minute(NonZeroU32::new(30))
-        .with_max_retries(2)
-        .with_retry_base(Duration::from_millis(1));
+        .with_probe_backoff(fast_probes());
 
     provider.complete(request()).await.unwrap();
 

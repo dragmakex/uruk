@@ -609,4 +609,10 @@ impl AttemptBudget for CallAllowance {
     async fn claim(&self, ordinal: u32) -> Result<bool> {
         CallAllowance::claim(self, ordinal).await
     }
+
+    async fn note_resend(&self, ordinal: u32, resend: u32) -> Result<()> {
+        self.store
+            .record_resend(&self.run_id, &self.task_id, self.attempt, ordinal, resend)
+            .await
+    }
 }

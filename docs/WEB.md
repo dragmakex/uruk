@@ -86,23 +86,82 @@ The Rust adapter lives in `src/web/`. It holds no state of its own;
 every response is rebuilt from durable records, so a restarted server
 shows exactly the state a fresh one derives.
 
-Runs started over the API are dispatched by a scheduler inside the serve
-process. `uruk serve` therefore takes the project scheduler lock for its
-lifetime: a second `uruk serve` on the same project fails fast with a
-lock message until the first stops. As the project's only scheduler
-owner, the serve process sweeps every few seconds for runs it should be
-driving: runs left `running` by an interrupted process are resumed on
-startup, and runs parked `waiting-for-human` are picked back up once
-no approvals remain pending. Web-started runs accept the full research
-configuration — rubric guidance, budgets, source URLs, file inputs, and
-the explicit network and literature-search grants — but computational
-execution and arbitrary tool names remain unavailable. The web surface
-has no exact-payload approve/deny step to bind them to; an anonymous cookie
+Runs started over the API are executed inside the serve process, one at
+a time (see "One run at a time" below). `uruk serve` therefore takes the
+project scheduler lock for its lifetime: a second `uruk serve` on the
+same project fails fast with a lock message until the first stops. As
+the project's only scheduler owner, the serve process also sweeps every
+few seconds for runs that belong on the queue but are not on it: a run
+parked `waiting-for-human` is re-enqueued once no approvals remain
+pending. Web-started runs accept the full research configuration —
+rubric guidance, budgets, source URLs, file inputs, and the explicit
+network and literature-search grants — but computational execution and
+arbitrary tool names remain unavailable. The web surface has no
+exact-payload approve/deny step to bind them to; an anonymous cookie
 identifies a browser, not a person who can be held to an approval. No
-request field ever names a server filesystem
-path: files enter web runs only through owner-bound uploads
-(`POST /api/uploads`), stored under a server-chosen location that never
-crosses the wire.
+request field ever names a server filesystem path: files enter web runs
+only through owner-bound uploads (`POST /api/uploads`), stored under a
+server-chosen location that never crosses the wire.
+
+## One run at a time
+
+Every browser shares one model provider, so web runs execute **one at a
+time, in the order they were started**:
+
+- `POST /api/runs` checks the goal against the safety rules first; a
+  refused goal is persisted `blocked`, with its decision, and never takes
+  a queue place. An accepted goal creates the run, its goal, its owner
+  binding, and its place on the run queue in **one SQLite transaction**
+  (table `run_queue`, migration 0006). The place is a dedicated sequence
+  number assigned at creation, never a timestamp, so two starts a
+  millisecond apart still have a definite order and the order survives a
+  restart. The place is `preparing` while the request ingests sources and
+  plans, and becomes executable (`queued`) in the same transaction that
+  records the plan. A request that dies first — a server crash, the
+  request timeout — leaves a `preparing` place the dispatcher abandons:
+  the run ends `failed` with stop condition `start_incomplete` and a
+  recorded decision, never executed, and the queue moves on. The run is
+  in state `queued` until it reaches the head; it holds no tasks yet and
+  spends nothing.
+- **One dispatcher** in the serve process executes the head of the queue
+  and only the head: it activates the entry, runs the scheduler to the
+  end, exports the report, and closes the entry. Later runs **never
+  overtake** a head that is waiting for the provider.
+- A **transient provider failure** (a connect, send, or response transport
+  error, or a 408, 425, 429, or 5xx) does not fail anything. The head stays
+  `running`, its model call waits for the upstream to recover behind a
+  process-wide availability gate (one half-open probe at a time,
+  exponential backoff capped at 30 s, `Retry-After` honored), and its
+  research clock stands still: the wall-clock budget runs from the run's
+  first start and excludes every provider wait. Only served calls count
+  against `max_model_calls`; unserved sends are audited as `resend` rows
+  in the budget ledger. A permanent refusal (another 4xx, an unparseable
+  reply) is terminal for that task at once, as before.
+- **Stop** always works and is one transaction: the run is cancelled and
+  leaves the queue, its undispatched tasks are cancelled with their
+  reservations released, and the decision is recorded together, so a
+  crash leaves the whole stop or none of it. A head waiting for the
+  provider is interrupted promptly rather than after the next probe. Tasks
+  a crash orphans `running` after a stop are settled by the sweep: charged
+  for the calls they had started, at unknown cost, and closed.
+- **Restart**: a run left `running` by an interrupted process is still the
+  head of the durable queue and is resumed first; queued runs follow in
+  order. A head whose scheduler fails on a store fault keeps its place and
+  is retried with bounded backoff rather than released and re-queued at
+  the tail. A provider wait that was open at shutdown is persisted and
+  settled when the provider serves again.
+
+The API tells the truth about all of this. The run snapshot's `run`
+object carries `queue_position` (1 = next to start; `null` once the run
+executes), `started_at` (`null` while queued; the budget runs from it),
+`paused_secs` (settled provider waits, excluded from the research clock),
+and `provider_wait` (`{since, note}` while an outage is being waited out,
+else `null`); `GET /api/runs` rows carry `queue_position` and
+`paused_since`. Run states are `queued`, `running`, `waiting-for-human`,
+`blocked`, `completed`, `budget-exhausted`, `cancelled`, and `failed`;
+queued and provider-waiting runs are never reported as failed. A run that
+was abandoned before it was ready reports `failed` with stop condition
+`start_incomplete`.
 
 Ownership lives in one additive table, `run_owners` (migration 0004):
 `run_id → owner_digest`, written in the same transaction that creates a
@@ -118,10 +177,10 @@ cannot quietly skip the check.
 | Route | Meaning |
 | --- | --- |
 | `GET /api/health` | liveness and version; public, never sets a cookie |
-| `GET /api/runs` | this browser's runs, with goal and state |
-| `POST /api/runs` | start a run owned by this browser: `{goal, mode?, ranking?, …}` |
+| `GET /api/runs` | this browser's runs, with goal, state, queue position, and provider wait |
+| `POST /api/runs` | start a run owned by this browser: `{goal, mode?, ranking?, …}`; it is enqueued, not executed at once |
 | `GET /api/runs/{id}` | complete run snapshot (view model) |
-| `POST /api/runs/{id}/stop` | durable stop request |
+| `POST /api/runs/{id}/stop` | durable stop request; works on queued and provider-waiting runs too |
 | `GET /api/runs/{id}/events` | SSE stream of snapshots |
 | `GET /api/runs/{id}/report` | exported `REPORT.md` + `manifest.json` |
 | `GET /api/runs/{id}/report.pdf` | `REPORT.pdf` download (derived on demand for pre-PDF exports) |
@@ -303,5 +362,8 @@ nothing here has been deployed.
   path fields. Everything is offline.
 - Frontend: `cd web && bun run check` runs ESLint, `tsc --noEmit`, Vitest
   (runtime parsers, formatting, the SSE reducer, form validation, agent
-  cards, the live run view with a scripted EventSource), and the
-  production build.
+  cards, the live run view with a scripted EventSource, including the
+  queued and provider-waiting states), and the production build.
+  `tests/run_queue_store.rs`, `tests/provider_availability.rs`, and
+  `tests/web_run_queue.rs` cover the durable queue, the availability
+  gate, and the dispatcher end to end, offline.

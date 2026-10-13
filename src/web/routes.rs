@@ -70,9 +70,9 @@ async fn create_or_preview(
 ) -> Result<StartOutcome> {
     let validated = start::validate(request)?;
     if validated.dry_run {
-        // A dry run persists nothing: the serve process auto-resumes every
-        // persisted `running` run, so a parked-but-created run (the CLI's
-        // dry-run shape) would dispatch itself seconds later.
+        // A dry run persists nothing: the serve process enqueues and
+        // executes every persisted nonterminal run, so a parked-but-created
+        // run (the CLI's dry-run shape) would execute itself later.
         return Ok(StartOutcome::Preview(
             start::preview(state, validated, owner).await?,
         ));
@@ -87,6 +87,9 @@ pub async fn stop_run(
     OwnedRun(run_id): OwnedRun,
 ) -> ApiResult<Json<serde_json::Value>> {
     let outcome = runtime::request_stop(state.store(), &run_id).await?;
+    // A stopped run left the queue in the same transaction; let the
+    // dispatcher move on without waiting for its tick.
+    state.wake_dispatcher();
     Ok(Json(serde_json::json!({
         "ok": true,
         "run_id": outcome.run_id.as_str(),

@@ -32,3 +32,39 @@ describe("RunsPage", () => {
     expect(action.closest(".empty-state")).not.toBeNull();
   });
 });
+
+describe("RunsPage queue facts", () => {
+  it("shows queue position and provider waits on the run cards", async () => {
+    fetchRunsMock.mockResolvedValue([
+      {
+        id: "run_queued",
+        state: "queued",
+        stop_condition: null,
+        iterations: 0,
+        question: "a queued question",
+        mode: "task",
+        created_at: "2026-10-04T14:00:00Z",
+        updated_at: "2026-10-04T14:00:00Z",
+        queue_position: 2,
+        paused_since: null,
+      },
+      {
+        id: "run_waiting",
+        state: "running",
+        stop_condition: null,
+        iterations: 0,
+        question: "a waiting question",
+        mode: "task",
+        created_at: "2026-10-04T14:00:00Z",
+        updated_at: "2026-10-04T14:00:00Z",
+        queue_position: null,
+        paused_since: "2026-10-04T14:05:00Z",
+      },
+    ]);
+    render(await RunsPage());
+
+    expect(screen.getByText(/queued, position 2/)).toBeInTheDocument();
+    expect(screen.getByText(/waiting for provider/)).toBeInTheDocument();
+    expect(screen.queryByText(/failed/)).not.toBeInTheDocument();
+  });
+});

@@ -189,21 +189,38 @@ cannot run, the report says why.
   payload hash and survive restart. Writes use `BEGIN IMMEDIATE`, so a
   concurrent control write (a stop request) during a run queues instead
   of failing.
-- **Failed work is charged.** Every attempted model call is settled, and a
-  cancelled task keeps its labelled partial artifacts. Transient provider
-  failures are retried only in the provider adapter (bounded attempts with
-  backoff and `Retry-After`, cut off by a stop request or the wall-clock
-  deadline); a failure that survives those retries is terminal for that work,
-  is recorded as a typed provider failure, and reports the attempts made
-  exactly once. Every attempt that was sent is settled as a model call,
-  including attempts before an eventual success and an attempt abandoned by
-  cancellation. Before any attempt goes out it is recorded in the budget
-  ledger and, past the task's own reservation, leased from the run's
-  remaining headroom in the same transaction, so retries can never overrun
-  `max_model_calls` or the output reserve, and a crash after the send is
-  charged on recovery at unknown cost. Work that depended on a failed task
-  is closed with it instead of waiting as queued, and a finished run holds no
-  open work.
+- **Failed work is charged; waiting is not.** Every logical model call is
+  settled, and a cancelled task keeps its labelled partial artifacts. A
+  transient provider failure (a connect, send, or response transport error,
+  or a 408, 425, 429, or 5xx) never fails the work: the provider adapter
+  waits for the upstream to recover, bounded only by a stop request. All
+  callers of one upstream wait behind one process-wide availability gate —
+  one half-open probe at a time, exponential backoff capped at 30 s, any
+  `Retry-After` honored in full — so an outage never turns into a retry
+  stampede. A permanent refusal (another 4xx, an unparseable reply, a bad
+  request) is terminal for that work at once, recorded as a typed provider
+  failure. One completion is one logical model call, claimed in the budget
+  ledger before its first send and, past the task's own reservation, leased
+  from the run's remaining headroom in the same transaction; sends repeated
+  after a transient failure are audited as `resend` ledger rows but claim
+  nothing, so an outage can exhaust neither `max_model_calls` nor the
+  output reserve. A crash mid-call is charged on recovery as that one call,
+  at unknown cost. While the provider is unavailable the run's research
+  clock stands still: the wall-clock budget runs from the run's first start,
+  excludes every provider wait, and both facts are persisted so a restart
+  resumes the same clock. Work that depended on a failed task is closed
+  with it instead of waiting as queued, and a finished run holds no open
+  work.
+- **Web runs execute one at a time, in order.** A run started over the
+  API takes a place on a durable FIFO queue in the transaction that
+  creates it (a dedicated sequence in SQLite, never a timestamp) and is
+  `queued` until every earlier run has finished; one dispatcher in the
+  serve process executes the head and only the head, so a head waiting
+  for the provider is never overtaken. Stop works on a queued run
+  (it leaves the queue at once) and on a waiting head (the wait ends
+  promptly). A restart resumes the interrupted head first, then the rest
+  in order. The API and the console show the queue position and the
+  provider wait as what they are, never as failure.
 - **Execution is contained or unavailable.** Approved programs run under macOS
   `sandbox-exec` or Linux bubblewrap with no network and writes confined to a
   task workspace; inputs must lie within the run's readable paths.
