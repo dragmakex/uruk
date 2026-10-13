@@ -146,6 +146,10 @@ function parseRunMeta(value: unknown, path: string): RunMeta {
     queue_position: numOrNullRequired(r, "queue_position", path),
     paused_secs: num(r.paused_secs, `${path}.paused_secs`),
     provider_wait: parseProviderWait(r.provider_wait, `${path}.provider_wait`),
+    queue_provider_waiting: bool(
+      r.queue_provider_waiting,
+      `${path}.queue_provider_waiting`,
+    ),
   };
 }
 

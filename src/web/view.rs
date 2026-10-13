@@ -48,6 +48,14 @@ pub struct RunMeta {
     /// waiting run is `running`, not failed: its work resumes by itself
     /// and its research clock stands still meanwhile.
     pub provider_wait: Option<ProviderWaitView>,
+    /// While this run waits on the queue (`queue_position` is set):
+    /// whether the run being executed is waiting out a provider outage,
+    /// so a queued researcher knows why nothing moves. One bit by
+    /// design: never which run is waiting, whose it is, since when, or
+    /// what the provider said. `false` once the provider serves again,
+    /// when nothing is active, and for a run that is not on the queue.
+    /// Read with `queue_position` in one store transaction.
+    pub queue_provider_waiting: bool,
 }
 
 /// A run's open wait for a transiently unavailable model provider.
@@ -271,7 +279,7 @@ pub async fn run_snapshot(store: &Store, run_id: &RunId) -> Result<RunSnapshot> 
     let goal = store.get_goal(&run.goal_id).await?;
     let plan = store.current_plan(run_id).await?;
     let timing = store.run_timing(run_id).await?;
-    let queue = store.queue_status(run_id).await?;
+    let queue = store.queue_context(run_id).await?;
     let tasks = store.list_tasks(run_id).await?;
     let usage = store.budget_usage(run_id).await?;
     let mut items = store
@@ -352,6 +360,7 @@ pub async fn run_snapshot(store: &Store, run_id: &RunId) -> Result<RunSnapshot> 
             updated_at: rfc3339(run.updated_at),
             started_at: timing.started_at.map(rfc3339),
             queue_position: queue
+                .status
                 .filter(|q| matches!(q.state, QueueState::Preparing | QueueState::Queued))
                 .map(|q| q.ahead.saturating_add(1)),
             paused_secs: timing.paused_secs,
@@ -359,6 +368,7 @@ pub async fn run_snapshot(store: &Store, run_id: &RunId) -> Result<RunSnapshot> 
                 since: rfc3339(since),
                 note: timing.pause_note.clone(),
             }),
+            queue_provider_waiting: queue.active_provider_waiting,
         },
         goal: GoalView {
             question: goal.question,

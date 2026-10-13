@@ -94,6 +94,23 @@ export function LiveRun({
     }
   }, [snapshot]);
 
+  // A provider recovery is worth saying only as a transition: the head
+  // was waiting in an earlier snapshot and is not any more, while this
+  // run still waits on the queue. A first snapshot that is simply not
+  // waiting announces nothing, and leaving the queue clears the notice.
+  // Tracked as "state derived from the previous snapshot", adjusted
+  // during render, so no effect has to set state after the fact.
+  const queueWaiting: boolean | null =
+    snapshot !== null && snapshot.run.queue_position !== null
+      ? snapshot.run.queue_provider_waiting
+      : null;
+  const [seenQueueWaiting, setSeenQueueWaiting] = useState(queueWaiting);
+  const [providerRecovered, setProviderRecovered] = useState(false);
+  if (queueWaiting !== seenQueueWaiting) {
+    setSeenQueueWaiting(queueWaiting);
+    setProviderRecovered(seenQueueWaiting === true && queueWaiting === false);
+  }
+
   async function onStop() {
     if (!window.confirm("Stop this run? Pending work is cancelled.")) return;
     setStopping(true);
@@ -145,7 +162,10 @@ export function LiveRun({
 
   const { run, goal, stats, agents, items, usage } = snapshot;
   const terminal = isTerminal(run.state);
-  const queued = run.state === "queued";
+  // A queue place, not the lifecycle state, says the run is waiting:
+  // durable recovery can put a `running` or `waiting-for-human` run
+  // back on the queue, and it waits like any other.
+  const onQueue = run.queue_position !== null;
   const note = connectionNote(stream.status);
   const method = rankingMethod(goal.budget.max_debate_turns);
 
@@ -221,22 +241,52 @@ export function LiveRun({
           </div>
         )}
 
-        {queued && (
+        {run.queue_position !== null && (
           <div
             className="empty-state"
             role="status"
             aria-label="Queued"
             style={{ marginBottom: 32, maxWidth: "none" }}
           >
-            <h2>Queued, position {run.queue_position ?? "unknown"}</h2>
+            <h2>Queued, position {run.queue_position}</h2>
             <p>
               Runs execute one at a time: yours in the order you started
               them, taking turns with other researchers&apos; runs:{" "}
-              {run.queue_position !== null
-                ? queueNote(run.queue_position)
-                : "waiting for the runs ahead"}
-              . Research begins, and the time budget starts, when this run
-              reaches its turn. Stop remains available.
+              {queueNote(run.queue_position)}. Research begins, and the time
+              budget starts, when this run reaches its turn. Stop remains
+              available.
+            </p>
+          </div>
+        )}
+
+        {onQueue && run.queue_provider_waiting && (
+          <div
+            className="error-box"
+            role="status"
+            aria-label="Model provider status"
+            style={{ marginBottom: 24 }}
+          >
+            <h2>The active run is waiting for the model provider</h2>
+            <p>
+              Your place in the queue is preserved and this run will start
+              automatically when its turn comes; no action is required. Your
+              time budget has not started.
+            </p>
+          </div>
+        )}
+
+        {onQueue && !run.queue_provider_waiting && providerRecovered && (
+          <div
+            className="empty-state"
+            role="status"
+            aria-label="Model provider status"
+            style={{ marginBottom: 24, maxWidth: "none" }}
+          >
+            <h2>Model provider available again</h2>
+            <p>
+              The queue is moving again. Your place is unchanged and this run
+              will start automatically when its turn comes; no action is
+              required.
             </p>
           </div>
         )}
@@ -272,39 +322,46 @@ export function LiveRun({
           </div>
         )}
 
-        <div className="fig-row">
-          <span className="micro">
-            Fig. run {shortRunId(run.id)}, {roundLabel(run.state, run.iterations, goal.budget.max_iterations)}
-          </span>
-          <span className="micro">
-            {stats.items} items, {stats.matches} matches
-            {stats.leader
-              ? `, leader elo ${Math.round(stats.leader.rating)}`
-              : ""}
-          </span>
-        </div>
+        {/* A run waiting on the queue has no agents, matches, or
+            candidates to show: an empty figure would only suggest activity
+            that is not there. */}
+        {!onQueue && (
+          <>
+            <div className="fig-row">
+              <span className="micro">
+                Fig. run {shortRunId(run.id)}, {roundLabel(run.state, run.iterations, goal.budget.max_iterations)}
+              </span>
+              <span className="micro">
+                {stats.items} items, {stats.matches} matches
+                {stats.leader
+                  ? `, leader elo ${Math.round(stats.leader.rating)}`
+                  : ""}
+              </span>
+            </div>
 
-        <Topology agents={agents} stats={stats} />
+            <Topology agents={agents} stats={stats} />
 
-        <details className="legend-fold" open>
-          <summary>Key</summary>
-          <div className="legend-line">
-            <span className="micro">Filled header: thinking</span>
-            <span className="micro">Dashed wire: carrying work now</span>
-            <span className="micro">Dashed box: idle</span>
-          </div>
-        </details>
+            <details className="legend-fold" open>
+              <summary>Key</summary>
+              <div className="legend-line">
+                <span className="micro">Filled header: thinking</span>
+                <span className="micro">Dashed wire: carrying work now</span>
+                <span className="micro">Dashed box: idle</span>
+              </div>
+            </details>
 
-        <section className="items-section" aria-label="Ranked candidates">
-          <div className="items-head">
-            <h2>Candidates</h2>
-            <span className="micro">
-              {usage.model_calls} of {goal.budget.max_model_calls} model calls
-              used
-            </span>
-          </div>
-          <RankingList items={items} />
-        </section>
+            <section className="items-section" aria-label="Ranked candidates">
+              <div className="items-head">
+                <h2>Candidates</h2>
+                <span className="micro">
+                  {usage.model_calls} of {goal.budget.max_model_calls} model calls
+                  used
+                </span>
+              </div>
+              <RankingList items={items} />
+            </section>
+          </>
+        )}
       </div>
     </>
   );

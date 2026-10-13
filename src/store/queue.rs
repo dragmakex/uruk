@@ -115,6 +115,23 @@ pub struct QueueStatus {
     pub ahead: u32,
 }
 
+/// What one run's snapshot needs to know about the queue, read in one
+/// transaction so the two facts describe the same instant: where the
+/// run stands, and whether the entry currently being executed is
+/// waiting out a provider outage. The latter is one bit on purpose —
+/// a run waiting behind the head learns neither which run the head is,
+/// whose it is, when its outage began, nor what the adapter reported.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QueueContext {
+    /// The run's own place, or `None` when it holds no live entry.
+    pub status: Option<QueueStatus>,
+    /// Whether a *different* run's `active` entry has an open provider
+    /// wait while this run waits on the queue (`preparing` or `queued`).
+    /// `false` for a run that is not waiting, when nothing is active,
+    /// and once the provider serves again.
+    pub active_provider_waiting: bool,
+}
+
 /// The persisted research clock of one run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunTiming {
@@ -589,16 +606,10 @@ impl Store {
 
     /// Where `run_id` stands, or `None` when it holds no live entry:
     /// its entry state and how many live entries precede it in the
-    /// projected execution order.
+    /// projected execution order. The position half of
+    /// [`Store::queue_context`].
     pub async fn queue_status(&self, run_id: &RunId) -> Result<Option<QueueStatus>> {
-        let live = self.list_queue().await?;
-        Ok(live
-            .iter()
-            .position(|e| &e.run_id == run_id)
-            .map(|index| QueueStatus {
-                state: live[index].state,
-                ahead: u32::try_from(index).unwrap_or(u32::MAX),
-            }))
+        Ok(self.queue_context(run_id).await?.status)
     }
 
     /// Projected 1-based places of every run waiting on the queue (see
@@ -720,6 +731,35 @@ impl Store {
         })
     }
 
+    /// The queue facts of `run_id`'s snapshot (see [`QueueContext`]),
+    /// read in one transaction: the projected position and the head's
+    /// open wait cannot come from two different queue states. Both are
+    /// persisted facts, so a restart reports them unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Propagates store failures.
+    pub async fn queue_context(&self, run_id: &RunId) -> Result<QueueContext> {
+        let mut tx = self.pool().begin().await?;
+        let order = projection_in_tx(&mut tx).await?;
+        let status = order
+            .iter()
+            .position(|e| &e.run_id == run_id)
+            .map(|index| QueueStatus {
+                state: order[index].state,
+                ahead: u32::try_from(index).unwrap_or(u32::MAX),
+            });
+        let waiting_on_queue =
+            status.is_some_and(|s| matches!(s.state, QueueState::Preparing | QueueState::Queued));
+        let active_provider_waiting =
+            waiting_on_queue && active_provider_waiting_in_tx(&mut tx, run_id).await?;
+        tx.commit().await?;
+        Ok(QueueContext {
+            status,
+            active_provider_waiting,
+        })
+    }
+
     /// Open a provider wait at `since` (kept if one is already open) and
     /// record `note`, the transient failure last observed. The wait never
     /// starts before the run itself did: an outage that began during an
@@ -793,6 +833,23 @@ impl Store {
         guard.commit().await?;
         Ok(true)
     }
+}
+
+/// Whether the `active` entry of a run other than `except` has an open
+/// provider wait. Reads nothing that identifies that run.
+async fn active_provider_waiting_in_tx(
+    conn: &mut SqliteConnection,
+    except: &RunId,
+) -> Result<bool> {
+    let waiting: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM run_queue q JOIN runs r ON r.id = q.run_id
+         WHERE q.state = 'active' AND q.run_id != ? AND r.paused_since IS NOT NULL
+         LIMIT 1",
+    )
+    .bind(except.as_str())
+    .fetch_optional(conn)
+    .await?;
+    Ok(waiting.is_some())
 }
 
 async fn live_entry(conn: &mut SqliteConnection, run_id: &RunId) -> Result<Option<QueueEntry>> {

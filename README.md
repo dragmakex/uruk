@@ -224,7 +224,10 @@ cannot run, the report says why.
   (it leaves the queue at once) and on a waiting head (the wait ends
   promptly). A restart resumes the interrupted head first, then the rest
   in order. The API and the console show the queue position and the
-  provider wait as what they are, never as failure.
+  provider wait as what they are, never as failure; a queued run is also
+  told, as a single yes/no, when the run being executed is waiting for
+  the provider (its place is kept, its budget has not started), and when
+  the provider is back — never which run that is, whose, or since when.
 - **Execution is contained or unavailable.** Approved programs run under macOS
   `sandbox-exec` or Linux bubblewrap with no network and writes confined to a
   task workspace; inputs must lie within the run's readable paths.

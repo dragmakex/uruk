@@ -188,9 +188,22 @@ this moment and changes when a preparation completes or a run is
 cancelled. It is `1` = next to start and `null` once the run executes.
 The object also carries `started_at` (`null` while queued; the budget runs from it),
 `paused_secs` (settled provider waits, excluded from the research clock),
-and `provider_wait` (`{since, note}` while an outage is being waited out,
-else `null`); `GET /api/runs` rows carry `queue_position` and
-`paused_since`. Run states are `queued`, `running`, `waiting-for-human`,
+`provider_wait` (`{since, note}` while an outage is being waited out,
+else `null`), and `queue_provider_waiting` — a required boolean: while
+this run holds a queue place, whether the run being executed is waiting
+out a provider outage, so a queued researcher knows why nothing moves.
+It is one bit by design: a follower never learns which run is waiting,
+whose it is, when its outage began, or what the provider said. It is
+`false` once the provider serves again, when nothing is active, and for
+any run without a queue place. `queue_position` and
+`queue_provider_waiting` are read in one SQLite transaction
+(`Store::queue_context`), so a snapshot never pairs an old projection
+with a newer head's wait, and both come from persisted facts, so a
+restart reports them unchanged. The console treats a non-null
+`queue_position` as "waiting", whatever the lifecycle state says: a
+recovered `running` or `waiting-for-human` run that was put back on
+the queue is shown queued, with no figure until it executes. `GET
+/api/runs` rows carry `queue_position` and `paused_since`. Run states are `queued`, `running`, `waiting-for-human`,
 `blocked`, `completed`, `budget-exhausted`, `cancelled`, and `failed`;
 queued and provider-waiting runs are never reported as failed. A run that
 was abandoned before it was ready reports `failed` with stop condition

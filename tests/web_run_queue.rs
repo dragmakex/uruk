@@ -963,3 +963,148 @@ async fn the_listing_shows_the_position_of_a_parked_run_put_back_on_the_queue() 
         "the position comes from the live queue entry: {run}"
     );
 }
+
+/// Exactly the keys a snapshot's `run` object may carry: a follower's
+/// view of the head's outage must not grow identity fields.
+const RUN_META_KEYS: [&str; 11] = [
+    "id",
+    "state",
+    "stop_condition",
+    "iterations",
+    "created_at",
+    "updated_at",
+    "started_at",
+    "queue_position",
+    "paused_secs",
+    "provider_wait",
+    "queue_provider_waiting",
+];
+
+fn assert_run_meta_keys(run: &serde_json::Value) {
+    let mut keys: Vec<&str> = run
+        .as_object()
+        .expect("run is an object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort_unstable();
+    let mut expected = RUN_META_KEYS.to_vec();
+    expected.sort_unstable();
+    assert_eq!(keys, expected, "run meta carries exactly the known keys");
+}
+
+/// A follower's serialized snapshot must carry none of the head's facts:
+/// not its id, not its goal, not the adapter's raw error, and not the
+/// exact instant its outage began.
+fn assert_nothing_of_the_head_leaks(snapshot: &serde_json::Value, head: &RunId, since: &str) {
+    let serialized = snapshot.to_string();
+    for secret in [
+        head.as_str(),
+        "secret goal",
+        "HTTP 503",
+        "overloaded",
+        since,
+    ] {
+        assert!(
+            !serialized.contains(secret),
+            "{secret:?} leaked into a follower's snapshot: {serialized}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_queued_follower_learns_only_that_the_head_waits_for_the_provider_until_recovery() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join(".uruk/state.sqlite");
+    let store = Store::open(&path).await.expect("open store");
+    let (app, _state) = app_over(&store, Arc::new(scripted_provider())).await;
+    // No dispatcher: the queue is driven by hand so the facts are exact.
+    let a = start(&app, "the head's secret goal").await;
+    let b = start(&app, "run b").await;
+    assert!(store.activate_queue_entry(&a).await.unwrap());
+    let started = started_at(&store, &a).await;
+    let since = started + time::Duration::seconds(10);
+    store
+        .begin_provider_wait(&a, since, "HTTP 503: overloaded")
+        .await
+        .unwrap();
+    let since_text = since
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+
+    // The follower learns one bit: the active run is waiting.
+    let snap_b = snapshot(&app, &b).await;
+    assert_eq!(snap_b["run"]["state"], "queued");
+    assert_eq!(snap_b["run"]["queue_position"], 2);
+    assert_eq!(snap_b["run"]["provider_wait"], serde_json::Value::Null);
+    assert_eq!(
+        snap_b["run"]["queue_provider_waiting"],
+        serde_json::Value::Bool(true),
+        "the head's persisted wait is projected as one bit: {}",
+        snap_b["run"]
+    );
+    assert_run_meta_keys(&snap_b["run"]);
+    assert_nothing_of_the_head_leaks(&snap_b, &a, &since_text);
+
+    // The head itself is not queued: it reports its own wait only.
+    let snap_a = snapshot(&app, &a).await;
+    assert_eq!(snap_a["run"]["state"], "running");
+    assert_eq!(snap_a["run"]["provider_wait"]["since"], since_text);
+    assert_eq!(
+        snap_a["run"]["queue_provider_waiting"],
+        serde_json::Value::Bool(false)
+    );
+    assert_run_meta_keys(&snap_a["run"]);
+
+    // A run still being prepared is waiting too, and sees the same bit.
+    store
+        .ensure_project(&uruk::records::ProjectId::from_raw("prj_test"), "test")
+        .await
+        .unwrap();
+    let (run_c, goal_c) = unprepared_run("run c");
+    store
+        .create_run_queued(&run_c, &goal_c, None)
+        .await
+        .unwrap();
+    let snap_c = serde_json::to_value(
+        uruk::web::view::run_snapshot(&store, &run_c.id)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(snap_c["run"]["queue_provider_waiting"], true);
+    assert_nothing_of_the_head_leaks(&snap_c, &a, &since_text);
+    store.close().await;
+
+    // --- restart: the projection is rebuilt from persisted facts ---
+    let store = Store::open(&path).await.expect("reopen store");
+    let (app, _state) = app_over(&store, Arc::new(scripted_provider())).await;
+    let snap_b = snapshot(&app, &b).await;
+    assert_eq!(
+        snap_b["run"]["queue_provider_waiting"], true,
+        "the follower's view survives a restart"
+    );
+
+    // Recovery clears it while the head is still active.
+    let until = since + time::Duration::seconds(30);
+    assert!(store.end_provider_wait(&a, until).await.unwrap());
+    let snap_b = snapshot(&app, &b).await;
+    assert_eq!(snap_b["run"]["state"], "queued");
+    assert_eq!(snap_b["run"]["queue_position"], 2);
+    assert_eq!(snap_b["run"]["queue_provider_waiting"], false);
+
+    // An open wait on a run that is no longer the active entry is not
+    // the queue's wait: with nothing active, the follower sees none.
+    store
+        .begin_provider_wait(&a, until, "HTTP 503: overloaded")
+        .await
+        .unwrap();
+    assert_eq!(
+        snapshot(&app, &b).await["run"]["queue_provider_waiting"],
+        true
+    );
+    store.finish_queue_entry(&a).await.unwrap();
+    let snap_b = snapshot(&app, &b).await;
+    assert_eq!(snap_b["run"]["queue_position"], 1);
+    assert_eq!(snap_b["run"]["queue_provider_waiting"], false);
+}

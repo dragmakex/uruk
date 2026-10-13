@@ -573,3 +573,38 @@ describe("parseRunOverviews with queue facts", () => {
     expect(runs[1]?.paused_since).toBe("2026-10-04T14:05:00Z");
   });
 });
+
+describe("a queued follower's view of the head's provider wait", () => {
+  it("keeps the one bit a queued run is told", () => {
+    const fixture = snapshotFixture() as { run: Record<string, unknown> };
+    fixture.run.state = "queued";
+    fixture.run.queue_position = 2;
+    fixture.run.started_at = null;
+    fixture.run.queue_provider_waiting = true;
+    const snap = parseRunSnapshot(fixture);
+    expect(snap.run.provider_wait).toBeNull();
+    expect(snap.run.queue_provider_waiting).toBe(true);
+  });
+
+  it("keeps an explicit false", () => {
+    const fixture = snapshotFixture() as { run: Record<string, unknown> };
+    fixture.run.queue_provider_waiting = false;
+    expect(parseRunSnapshot(fixture).run.queue_provider_waiting).toBe(false);
+  });
+
+  it("rejects a snapshot that omits the field", () => {
+    const fixture = snapshotFixture() as { run: Record<string, unknown> };
+    delete fixture.run.queue_provider_waiting;
+    expect(() => parseRunSnapshot(fixture)).toThrow(/run\.queue_provider_waiting/);
+  });
+
+  it("rejects a null or non-boolean value instead of coercing", () => {
+    const fixture = snapshotFixture() as { run: Record<string, unknown> };
+    fixture.run.queue_provider_waiting = null;
+    expect(() => parseRunSnapshot(fixture)).toThrow(/queue_provider_waiting/);
+    fixture.run.queue_provider_waiting = "true";
+    expect(() => parseRunSnapshot(fixture)).toThrow(/queue_provider_waiting/);
+    fixture.run.queue_provider_waiting = { since: "2026-10-04T14:03:00Z", note: null };
+    expect(() => parseRunSnapshot(fixture)).toThrow(/queue_provider_waiting/);
+  });
+});

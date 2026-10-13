@@ -57,6 +57,14 @@ export interface RunMeta {
   paused_secs: number;
   /** The outage being waited out; the run is still `running`, not failed. */
   provider_wait: ProviderWait | null;
+  /**
+   * While this run holds a queue place (`queue_position` is set):
+   * whether the run being executed is waiting out a provider outage,
+   * so the queued researcher knows why nothing moves. One bit only:
+   * never which run, whose, since when, or what the provider said.
+   * False after recovery, with nothing active, and off the queue.
+   */
+  queue_provider_waiting: boolean;
 }
 
 export interface BudgetView {

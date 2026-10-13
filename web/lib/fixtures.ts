@@ -12,6 +12,7 @@ export function snapshotFixture(): unknown {
       queue_position: null,
       paused_secs: 0,
       provider_wait: null,
+      queue_provider_waiting: false,
     },
     goal: {
       question: "Which mechanisms could explain acquired resistance?",

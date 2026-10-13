@@ -10,7 +10,7 @@ mod common;
 use std::sync::Arc;
 use time::OffsetDateTime;
 use uruk::records::*;
-use uruk::store::{QueueState, Store};
+use uruk::store::{QueueContext, QueueState, Store};
 
 /// A run and goal pair the way the web start path builds them: the run is
 /// `queued` until the dispatcher activates it.
@@ -1355,4 +1355,112 @@ async fn a_parked_run_re_enqueued_by_the_sweep_shows_its_position() {
         Some(2),
         "a waiting-for-human run with a live entry has a position"
     );
+}
+
+#[tokio::test]
+async fn the_queue_context_reads_position_and_the_heads_wait_as_one_snapshot() {
+    let (store, _dir) = open_store().await;
+    let now = OffsetDateTime::now_utc();
+    let head = enqueue(&store, now).await;
+    let follower = enqueue(&store, now).await;
+    let stranger = {
+        let (run, goal) = queued_run(now);
+        store
+            .create_run_blocked(
+                &run,
+                &goal,
+                None,
+                &Decision {
+                    id: DecisionId::new(),
+                    schema_version: SCHEMA_VERSION,
+                    run_id: run.id.clone(),
+                    kind: DecisionKind::Stop,
+                    actor: Actor::System,
+                    reason: "refused".into(),
+                    referenced: vec![],
+                    payload: serde_json::json!({}),
+                    created_at: now,
+                },
+            )
+            .await
+            .unwrap();
+        run.id
+    };
+
+    // Nothing active yet: both facts come back together, the wait false.
+    let ctx = store.queue_context(&follower).await.unwrap();
+    assert_eq!(
+        ctx,
+        QueueContext {
+            status: Some(uruk::store::QueueStatus {
+                state: QueueState::Queued,
+                ahead: 1
+            }),
+            active_provider_waiting: false,
+        }
+    );
+    assert_eq!(
+        store.queue_context(&stranger).await.unwrap(),
+        QueueContext {
+            status: None,
+            active_provider_waiting: false
+        },
+        "a run with no live entry is not on the queue and learns nothing"
+    );
+
+    assert!(store.activate_queue_entry(&head).await.unwrap());
+    let started = store.run_timing(&head).await.unwrap().started_at.unwrap();
+    let since = started + time::Duration::seconds(5);
+    store
+        .begin_provider_wait(&head, since, "HTTP 503")
+        .await
+        .unwrap();
+
+    let ctx = store.queue_context(&follower).await.unwrap();
+    assert_eq!(
+        ctx.status.map(|s| (s.state, s.ahead)),
+        Some((QueueState::Queued, 1))
+    );
+    assert!(
+        ctx.active_provider_waiting,
+        "the follower sees the head's wait"
+    );
+    let ctx = store.queue_context(&head).await.unwrap();
+    assert_eq!(ctx.status.map(|s| s.state), Some(QueueState::Active));
+    assert!(
+        !ctx.active_provider_waiting,
+        "the head's own wait is its `provider_wait`, not the queue's"
+    );
+    assert!(
+        !store
+            .queue_context(&stranger)
+            .await
+            .unwrap()
+            .active_provider_waiting,
+        "only a run on the queue is told about the head"
+    );
+
+    assert!(
+        store
+            .end_provider_wait(&head, since + time::Duration::seconds(1))
+            .await
+            .unwrap()
+    );
+    let ctx = store.queue_context(&follower).await.unwrap();
+    assert_eq!(ctx.status.map(|s| s.ahead), Some(1));
+    assert!(!ctx.active_provider_waiting, "recovery clears the bit");
+
+    // A stale open wait on a run that left the queue is not the queue's.
+    store
+        .begin_provider_wait(&head, since, "HTTP 503")
+        .await
+        .unwrap();
+    store.finish_queue_entry(&head).await.unwrap();
+    let ctx = store.queue_context(&follower).await.unwrap();
+    assert_eq!(
+        ctx.status.map(|s| s.ahead),
+        Some(0),
+        "the follower moved up"
+    );
+    assert!(!ctx.active_provider_waiting, "nothing is active");
 }
