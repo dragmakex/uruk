@@ -106,7 +106,8 @@ server-chosen location that never crosses the wire.
 ## One run at a time
 
 Every browser shares one model provider, so web runs execute **one at a
-time, in the order they were started**:
+time**: in the order they were started within one browser, and taking
+turns between browsers (see "Taking turns" below):
 
 - `POST /api/runs` checks the goal against the safety rules first; a
   refused goal is persisted `blocked`, with its decision, and never takes
@@ -123,10 +124,11 @@ time, in the order they were started**:
   recorded decision, never executed, and the queue moves on. The run is
   in state `queued` until it reaches the head; it holds no tasks yet and
   spends nothing.
-- **One dispatcher** in the serve process executes the head of the queue
-  and only the head: it activates the entry, runs the scheduler to the
-  end, exports the report, and closes the entry. Later runs **never
-  overtake** a head that is waiting for the provider.
+- **One dispatcher** in the serve process executes the *fair head* of the
+  queue and only that: it activates the entry (advancing the turn cursor
+  in the same transaction), runs the scheduler to the end, exports the
+  report, and closes the entry. Later runs **never overtake** a head that
+  is waiting for the provider.
 - A **transient provider failure** (a connect, send, or response transport
   error, or a 408, 425, 429, or 5xx) does not fail anything. The head stays
   `running`, its model call waits for the upstream to recover behind a
@@ -151,9 +153,40 @@ time, in the order they were started**:
   the tail. A provider wait that was open at shutdown is persisted and
   settled when the provider serves again.
 
+### Taking turns
+
+Between browsers the queue serves the **least recently served** browser
+next, each browser's runs in the order it started them. Six runs started
+as `A1 A2 A3 B1 C1 B2` execute as `A1 B1 C1 A2 B2 A3`. Two durable facts
+drive this: a global dispatch turn (`queue_turns`, incremented on every
+activation) and each browser's last-served turn (`queue_owners`; a
+browser never served is the most deserving). Selection takes each
+browser's *oldest* waiting run as its candidate — a later run never
+passes an earlier one of the same browser — and picks the eligible
+browser with the smallest last-served turn, ties broken by start order.
+Activation reselects, increments the turn, stamps the browser, and claims
+the run in one transaction, so a restart continues the turn order exactly
+where it was, and an interrupted active run always resumes before any
+queued run. A browser that starts its first run while another browser's
+run is active is served at the next turn, never by interrupting the
+active run; a browser whose runs all finished and that starts another
+waits behind every browser served less recently. A run still being
+prepared makes its browser ineligible until it is ready (its later runs
+cannot overtake it) without holding any other browser back; once ready,
+that browser gets one turn like any other, never a catch-up burst. Runs
+without a browser identity — engine callers, runs re-enqueued by the
+sweep, runs predating ownership — take turns as one owner named
+`engine`, in start order among themselves. Browser identities are stored
+only as one-way digests and are never served over the API.
+
 The API tells the truth about all of this. The run snapshot's `run`
-object carries `queue_position` (1 = next to start; `null` once the run
-executes), `started_at` (`null` while queued; the budget runs from it),
+object carries `queue_position` — its place in the projected execution
+order: position 1 is the run that would be selected right now, and a run
+whose browser is not currently eligible (still preparing) is listed after
+every run that could be selected. The projection reflects readiness at
+this moment and changes when a preparation completes or a run is
+cancelled. It is `1` = next to start and `null` once the run executes.
+The object also carries `started_at` (`null` while queued; the budget runs from it),
 `paused_secs` (settled provider waits, excluded from the research clock),
 and `provider_wait` (`{since, note}` while an outage is being waited out,
 else `null`); `GET /api/runs` rows carry `queue_position` and

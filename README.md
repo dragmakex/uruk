@@ -211,12 +211,16 @@ cannot run, the report says why.
   resumes the same clock. Work that depended on a failed task is closed
   with it instead of waiting as queued, and a finished run holds no open
   work.
-- **Web runs execute one at a time, in order.** A run started over the
-  API takes a place on a durable FIFO queue in the transaction that
-  creates it (a dedicated sequence in SQLite, never a timestamp) and is
-  `queued` until every earlier run has finished; one dispatcher in the
-  serve process executes the head and only the head, so a head waiting
-  for the provider is never overtaken. Stop works on a queued run
+- **Web runs execute one at a time, taking turns.** A run started over
+  the API takes a place on a durable queue in the transaction that
+  creates it (a dedicated sequence in SQLite, never a timestamp). Within
+  one browser runs execute in the order they were started; between
+  browsers the least recently served browser goes next (`A1 A2 A3 B1 C1
+  B2` executes as `A1 B1 C1 A2 B2 A3`), with the global turn and each
+  browser's last-served turn persisted so a restart continues the turn
+  order. One dispatcher in the serve process
+  executes the fair head and only that, so a head waiting for the
+  provider is never overtaken. Stop works on a queued run
   (it leaves the queue at once) and on a waiting head (the wait ends
   promptly). A restart resumes the interrupted head first, then the rest
   in order. The API and the console show the queue position and the

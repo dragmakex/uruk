@@ -1,16 +1,35 @@
 //! The durable FIFO run queue and the research clock (docs/WEB.md "One run
 //! at a time").
 //!
-//! Runs execute one at a time in enqueue order. The order is the
-//! `run_queue.seq` sequence, assigned once per enqueue and never reused;
-//! timestamps play no part. A run has at most one *live* entry
-//! (`preparing`, `queued`, or `active`); the head is the live entry with
-//! the smallest sequence, and only a `queued` head can be activated. A
-//! web run's entry is born `preparing` and becomes `queued` in the same
-//! transaction that records its plan, so a run is executable only once
-//! its start request has fully prepared it; a `preparing` head whose
-//! request died is abandoned (the run fails with `start_incomplete`) and
-//! the queue moves on. Every transition is a store fact:
+//! Runs execute one at a time. Within one owner they run in enqueue
+//! order; between owners the least recently served owner goes next.
+//! `seq` is a dedicated sequence, assigned once per enqueue and never
+//! reused; timestamps play no part. Each entry carries its `owner` (the
+//! run's browser identity digest, or [`ENGINE_OWNER`] for runs without
+//! one, which take turns as one owner). Two durable facts drive the
+//! turns: the global dispatch turn (`queue_turns`, incremented per
+//! activation) and each owner's last-served turn (`queue_owners`; absent
+//! means never served, the most deserving).
+//!
+//! The *fair head* is the active entry, or else: each owner's candidate
+//! is its oldest live entry, eligible only while `queued`; the eligible
+//! owner with the smallest last-served turn wins, ties broken by the
+//! candidate's `seq`. Only the fair head can be activated, and activating
+//! it reselects, increments the turn, stamps the owner, and claims the
+//! entry in one transaction, so a restart continues the turn order. The
+//! projected order (positions) is a simulation of that selection over the
+//! queue as it is right now: it changes when a preparation completes or a
+//! run is cancelled, and owners not currently eligible are listed after
+//! every run that could be selected.
+//!
+//! A run has at most one *live* entry (`preparing`, `queued`, or
+//! `active`). A web run's entry is born `preparing` and becomes `queued`
+//! in the same transaction that records its plan, so a run is executable
+//! only once its start request has fully prepared it. A `preparing` entry
+//! holds its owner's place in the projection but makes its owner
+//! unselectable until it is ready (FIFO within the owner), without
+//! holding any other owner back; one whose request died is abandoned (the
+//! run fails with `start_incomplete`) and the queue moves on. Every transition is a store fact:
 //! enqueue rides in the transaction that creates the run, and leaving the
 //! queue rides in the transaction that cancels, blocks, or finishes it, so
 //! a restarted server rebuilds exactly the queue the previous one had.
@@ -27,7 +46,13 @@ use crate::records::*;
 use crate::store::OwnerDigest;
 use crate::{Error, Result};
 use sqlx::{Row, SqliteConnection};
+use std::collections::HashMap;
 use time::OffsetDateTime;
+
+/// The owner key of runs that have no browser identity: engine callers,
+/// the serve-side sweep, and runs that predate ownership. They take turns
+/// as one owner, FIFO among themselves.
+pub const ENGINE_OWNER: &str = "engine";
 
 /// Lifecycle of one queue entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -69,9 +94,12 @@ impl QueueState {
 /// One row of the run queue.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueueEntry {
-    /// FIFO position: smaller runs first. Never reused.
+    /// Enqueue order: smaller first within an owner. Never reused.
     pub seq: i64,
     pub run_id: RunId,
+    /// The run's owner digest, or [`ENGINE_OWNER`]. A store-level fact;
+    /// never served over the API.
+    pub owner: String,
     pub state: QueueState,
     pub enqueued_at: OffsetDateTime,
     pub activated_at: Option<OffsetDateTime>,
@@ -79,7 +107,8 @@ pub struct QueueEntry {
 }
 
 /// Where a run stands in the queue: its entry state and how many live
-/// entries precede it (`0` means it is the head).
+/// entries precede it in the projected execution order (`0` means it is
+/// next, or already active).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct QueueStatus {
     pub state: QueueState,
@@ -135,6 +164,7 @@ fn entry_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<QueueEntry> {
     Ok(QueueEntry {
         seq: row.get::<i64, _>("seq"),
         run_id: RunId::from_raw(row.get::<String, _>("run_id")),
+        owner: row.get::<String, _>("owner"),
         state,
         enqueued_at: from_rfc3339(&row.get::<String, _>("enqueued_at"))?,
         activated_at: row
@@ -166,13 +196,157 @@ pub(crate) async fn enqueue_in_tx(
     if live.is_some() {
         return Ok(false);
     }
-    sqlx::query("INSERT INTO run_queue (run_id, state, enqueued_at) VALUES (?, ?, ?)")
+    let owner: Option<String> =
+        sqlx::query_scalar("SELECT owner_digest FROM run_owners WHERE run_id = ?")
+            .bind(run_id.as_str())
+            .fetch_optional(&mut *conn)
+            .await?;
+    let owner = owner.unwrap_or_else(|| ENGINE_OWNER.to_string());
+    // A first-time owner's baseline: one turn behind the owner just
+    // served, never negative. Persisted here so it is one durable fact
+    // with the entry; an owner already known keeps its own turn.
+    let baseline = (turn_in_tx(conn).await? - 1).max(0);
+    sqlx::query("INSERT OR IGNORE INTO queue_owners (owner, last_served) VALUES (?, ?)")
+        .bind(&owner)
+        .bind(baseline)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("INSERT INTO run_queue (run_id, owner, state, enqueued_at) VALUES (?, ?, ?, ?)")
         .bind(run_id.as_str())
+        .bind(&owner)
         .bind(initial.as_str())
         .bind(to_rfc3339(now()))
         .execute(conn)
         .await?;
     Ok(true)
+}
+
+/// The global dispatch turn so far.
+async fn turn_in_tx(conn: &mut SqliteConnection) -> Result<i64> {
+    let turn: i64 = sqlx::query_scalar("SELECT turn FROM queue_turns WHERE id = 1")
+        .fetch_one(conn)
+        .await?;
+    Ok(turn)
+}
+
+/// Each owner's last-served turn; owners never served are absent.
+async fn served_in_tx(conn: &mut SqliteConnection) -> Result<HashMap<String, i64>> {
+    let rows: Vec<(String, i64)> = sqlx::query_as("SELECT owner, last_served FROM queue_owners")
+        .fetch_all(conn)
+        .await?;
+    Ok(rows.into_iter().collect())
+}
+
+const ENTRY_COLUMNS: &str = "seq, run_id, owner, state, enqueued_at, activated_at, finished_at";
+
+/// Every live entry in enqueue order.
+async fn live_entries_in_tx(conn: &mut SqliteConnection) -> Result<Vec<QueueEntry>> {
+    let rows = sqlx::query(&format!(
+        "SELECT {ENTRY_COLUMNS} FROM run_queue WHERE state IN {LIVE} ORDER BY seq"
+    ))
+    .fetch_all(conn)
+    .await?;
+    rows.iter().map(entry_from_row).collect()
+}
+
+/// The projected execution order, read in one snapshot (the caller's
+/// transaction).
+pub(crate) async fn projection_in_tx(conn: &mut SqliteConnection) -> Result<Vec<QueueEntry>> {
+    let live = live_entries_in_tx(conn).await?;
+    let turns = turns_in_tx(conn).await?;
+    Ok(project(live, &turns))
+}
+
+/// Projected 1-based places of every run waiting on the queue, read in
+/// one snapshot. The active run is place 1 of the projection but is
+/// executing, not waiting, so it has no entry here; the next selectable
+/// run is `2` while something is active and `1` otherwise.
+pub(crate) async fn queue_positions_in_tx(
+    conn: &mut SqliteConnection,
+) -> Result<HashMap<RunId, u32>> {
+    Ok(projection_in_tx(conn)
+        .await?
+        .into_iter()
+        .enumerate()
+        .filter(|(_, e)| e.state != QueueState::Active)
+        .map(|(index, e)| {
+            (
+                e.run_id,
+                u32::try_from(index).unwrap_or(u32::MAX).saturating_add(1),
+            )
+        })
+        .collect())
+}
+
+/// The durable turn state the selection reads.
+struct Turns {
+    turn: i64,
+    served: HashMap<String, i64>,
+}
+
+async fn turns_in_tx(conn: &mut SqliteConnection) -> Result<Turns> {
+    Ok(Turns {
+        turn: turn_in_tx(conn).await?,
+        served: served_in_tx(conn).await?,
+    })
+}
+
+/// Index in `live` of the entry to select next when nothing is active:
+/// each owner's oldest live entry, eligible only while `queued`, the
+/// least recently served owner first, ties by the candidate's `seq`.
+/// `None` when no owner is eligible (empty, or only owners whose oldest
+/// run is still being prepared).
+fn select(live: &[QueueEntry], served: &HashMap<String, i64>) -> Option<usize> {
+    let mut oldest: HashMap<&str, usize> = HashMap::new();
+    for (index, entry) in live.iter().enumerate() {
+        let slot = oldest.entry(entry.owner.as_str()).or_insert(index);
+        if entry.seq < live[*slot].seq {
+            *slot = index;
+        }
+    }
+    oldest
+        .into_values()
+        .filter(|&i| live[i].state == QueueState::Queued)
+        .min_by_key(|&i| {
+            (
+                served.get(&live[i].owner).copied().unwrap_or(0),
+                live[i].seq,
+            )
+        })
+}
+
+/// The entry to execute next, if any: the active entry, or else the
+/// selection of [`select`].
+fn fair_head_of(live: &[QueueEntry], turns: &Turns) -> Option<QueueEntry> {
+    if let Some(active) = live.iter().find(|e| e.state == QueueState::Active) {
+        return Some(active.clone());
+    }
+    select(live, &turns.served).map(|i| live[i].clone())
+}
+
+/// The projected execution order: the active entry, then the selection
+/// replayed over the queue as it is right now (each pick advancing the
+/// simulated turn and the owner's last-served turn), then the entries no
+/// selection can reach today — owners whose oldest live run is still
+/// being prepared, and that owner's later runs — by owner last-served
+/// turn and `seq`. A projection on current readiness: it changes when a
+/// preparation completes or a run is cancelled.
+fn project(mut live: Vec<QueueEntry>, turns: &Turns) -> Vec<QueueEntry> {
+    let mut order = Vec::with_capacity(live.len());
+    if let Some(active) = live.iter().position(|e| e.state == QueueState::Active) {
+        order.push(live.remove(active));
+    }
+    let mut served = turns.served.clone();
+    let mut turn = turns.turn;
+    while let Some(index) = select(&live, &served) {
+        let picked = live.remove(index);
+        turn += 1;
+        served.insert(picked.owner.clone(), turn);
+        order.push(picked);
+    }
+    live.sort_by_key(|e| (served.get(&e.owner).copied().unwrap_or(0), e.seq));
+    order.extend(live);
+    order
 }
 
 /// Mark a `preparing` entry `queued`: the run is fully prepared and may
@@ -373,56 +547,78 @@ impl Store {
         Ok(true)
     }
 
-    /// Every live entry, head first.
+    /// Every live entry in projected execution order (see [`project`]): a
+    /// projection on current readiness, not the enqueue order.
     pub async fn list_queue(&self) -> Result<Vec<QueueEntry>> {
-        let rows = sqlx::query(&format!(
-            "SELECT seq, run_id, state, enqueued_at, activated_at, finished_at
-             FROM run_queue WHERE state IN {LIVE} ORDER BY seq"
-        ))
-        .fetch_all(self.pool())
-        .await?;
-        rows.iter().map(entry_from_row).collect()
+        let mut tx = self.pool().begin().await?;
+        let order = projection_in_tx(&mut tx).await?;
+        tx.commit().await?;
+        Ok(order)
     }
 
-    /// The live entry with the smallest sequence, if any.
-    pub async fn queue_head(&self) -> Result<Option<QueueEntry>> {
-        let row = sqlx::query(&format!(
-            "SELECT seq, run_id, state, enqueued_at, activated_at, finished_at
-             FROM run_queue WHERE state IN {LIVE} ORDER BY seq LIMIT 1"
-        ))
-        .fetch_optional(self.pool())
-        .await?;
-        row.as_ref().map(entry_from_row).transpose()
+    /// The entry to execute next, if any: the active entry while there is
+    /// one, otherwise the least recently served eligible owner's oldest
+    /// run (see [`select`]).
+    pub async fn fair_head(&self) -> Result<Option<QueueEntry>> {
+        let mut tx = self.pool().begin().await?;
+        let live = live_entries_in_tx(&mut tx).await?;
+        let turns = turns_in_tx(&mut tx).await?;
+        tx.commit().await?;
+        Ok(fair_head_of(&live, &turns))
     }
 
-    /// Where `run_id` stands, or `None` when it holds no live entry.
+    /// The turn at which `owner` was last served (or its baseline, for an
+    /// owner enqueued but never served); `None` for an owner the queue has
+    /// never seen.
+    pub async fn owner_last_served(&self, owner: &OwnerDigest) -> Result<Option<u64>> {
+        let turn: Option<i64> =
+            sqlx::query_scalar("SELECT last_served FROM queue_owners WHERE owner = ?")
+                .bind(owner.as_str())
+                .fetch_optional(self.pool())
+                .await?;
+        Ok(turn.map(|t| u64::try_from(t).unwrap_or(0)))
+    }
+
+    /// The global dispatch turn: how many activations have happened.
+    /// Persisted with each owner's last-served turn, so a restart
+    /// continues the turn order.
+    pub async fn queue_turn(&self) -> Result<u64> {
+        let mut conn = self.pool().acquire().await?;
+        Ok(u64::try_from(turn_in_tx(&mut conn).await?).unwrap_or(0))
+    }
+
+    /// Where `run_id` stands, or `None` when it holds no live entry:
+    /// its entry state and how many live entries precede it in the
+    /// projected execution order.
     pub async fn queue_status(&self, run_id: &RunId) -> Result<Option<QueueStatus>> {
-        let row = sqlx::query(&format!(
-            "SELECT q.state,
-                    (SELECT COUNT(*) FROM run_queue q2
-                      WHERE q2.state IN {LIVE} AND q2.seq < q.seq) AS ahead
-             FROM run_queue q WHERE q.run_id = ? AND q.state IN {LIVE}"
-        ))
-        .bind(run_id.as_str())
-        .fetch_optional(self.pool())
-        .await?;
-        row.map(|r| {
-            let state = QueueState::parse(&r.get::<String, _>("state"))
-                .ok_or_else(|| Error::validation("unknown queue state"))?;
-            Ok(QueueStatus {
-                state,
-                ahead: u32::try_from(r.get::<i64, _>("ahead")).unwrap_or(u32::MAX),
-            })
-        })
-        .transpose()
+        let live = self.list_queue().await?;
+        Ok(live
+            .iter()
+            .position(|e| &e.run_id == run_id)
+            .map(|index| QueueStatus {
+                state: live[index].state,
+                ahead: u32::try_from(index).unwrap_or(u32::MAX),
+            }))
     }
 
-    /// Make the head run active: its entry becomes `active`, the run
-    /// `running` (a durable stop request wins), and its research clock
-    /// starts if it never has. Returns `false`, changing nothing, when
-    /// `run_id` is not the queued head — another run precedes it, it is
-    /// already active, or it holds no live entry — so concurrent
-    /// claimants resolve to exactly one activation.
+    /// Projected 1-based places of every run waiting on the queue (see
+    /// [`queue_positions_in_tx`]), read in one snapshot.
+    pub async fn queue_positions(&self) -> Result<HashMap<RunId, u32>> {
+        let mut tx = self.pool().begin().await?;
+        let positions = queue_positions_in_tx(&mut tx).await?;
+        tx.commit().await?;
+        Ok(positions)
+    }
+
+    /// Make the fair head active — one transaction: the selection is
+    /// redone on the queue as it is, the global turn is incremented, the
+    /// owner is stamped as served at that turn, the entry becomes
+    /// `active`, the run becomes `running` (a durable stop request wins),
+    /// and its research clock starts if it never has. Returns `false`,
+    /// changing nothing, when `run_id` is not the queued fair head —
+    /// another owner's turn, an earlier run of its own owner, an active
+    /// run, or no live entry — so concurrent claimants resolve to exactly
+    /// one activation.
     ///
     /// # Errors
     ///
@@ -430,16 +626,12 @@ impl Store {
     pub async fn activate_queue_entry(&self, run_id: &RunId) -> Result<bool> {
         let mut guard = self.begin_write().await?;
         let conn = guard.conn();
-        let head = sqlx::query(&format!(
-            "SELECT run_id, state FROM run_queue WHERE state IN {LIVE} ORDER BY seq LIMIT 1"
-        ))
-        .fetch_optional(&mut *conn)
-        .await?;
-        let is_queued_head = head.is_some_and(|row| {
-            row.get::<String, _>("run_id") == run_id.as_str()
-                && row.get::<String, _>("state") == QueueState::Queued.as_str()
-        });
-        if !is_queued_head {
+        let live = live_entries_in_tx(conn).await?;
+        let turns = turns_in_tx(conn).await?;
+        let Some(head) = fair_head_of(&live, &turns) else {
+            return Ok(false);
+        };
+        if &head.run_id != run_id || head.state != QueueState::Queued {
             return Ok(false);
         }
         let ts = to_rfc3339(now());
@@ -449,6 +641,19 @@ impl Store {
         )
         .bind(&ts)
         .bind(run_id.as_str())
+        .execute(&mut *conn)
+        .await?;
+        let turn = turns.turn + 1;
+        sqlx::query("UPDATE queue_turns SET turn = ? WHERE id = 1")
+            .bind(turn)
+            .execute(&mut *conn)
+            .await?;
+        sqlx::query(
+            "INSERT INTO queue_owners (owner, last_served) VALUES (?, ?)
+             ON CONFLICT(owner) DO UPDATE SET last_served = excluded.last_served",
+        )
+        .bind(&head.owner)
+        .bind(turn)
         .execute(&mut *conn)
         .await?;
         let started = sqlx::query(
@@ -592,8 +797,7 @@ impl Store {
 
 async fn live_entry(conn: &mut SqliteConnection, run_id: &RunId) -> Result<Option<QueueEntry>> {
     let row = sqlx::query(&format!(
-        "SELECT seq, run_id, state, enqueued_at, activated_at, finished_at
-         FROM run_queue WHERE run_id = ? AND state IN {LIVE}"
+        "SELECT {ENTRY_COLUMNS} FROM run_queue WHERE run_id = ? AND state IN {LIVE}"
     ))
     .bind(run_id.as_str())
     .fetch_optional(conn)

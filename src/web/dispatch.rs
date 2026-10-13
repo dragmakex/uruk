@@ -1,7 +1,9 @@
 //! The run dispatcher: one task per server, executing the durable run
-//! queue head to head (docs/WEB.md "One run at a time").
+//! queue one fair head at a time (docs/WEB.md "One run at a time",
+//! "Taking turns").
 //!
-//! SQLite is the authority: the dispatcher reads the head of `run_queue`,
+//! SQLite is the authority: the dispatcher reads the fair head of
+//! `run_queue` (the active entry, or else the next owner's turn),
 //! activates it, runs the scheduler to completion, closes the entry, and
 //! looks again. The in-process [`tokio::sync::Notify`] on [`AppState`] is
 //! only a wakeup — enqueue, stop, and the sweep ring it so the loop does
@@ -79,24 +81,20 @@ pub(super) async fn run(state: AppState) {
     }
 }
 
-/// Resolve the head of the queue into something to do. Entries whose run
-/// is no longer eligible — finished, blocked, parked for a person — are
-/// closed here, and a `preparing` entry no live start request owns is
-/// abandoned, so a stale entry can never wedge the queue.
+/// Resolve the fair head of the queue into something to do. A
+/// `preparing` entry no live start request owns is abandoned first (its
+/// request died — a crash, a client timeout — before the run was safe and
+/// complete to execute, so it is never run as it is), and an entry whose
+/// run is no longer eligible — finished, blocked, parked for a person — is
+/// closed, so a stale entry can never wedge the queue.
 async fn next_head(state: &AppState) -> Result<Head> {
     let store = state.store();
-    let Some(entry) = store.queue_head().await? else {
-        return Ok(Head::Wait);
-    };
-    if entry.state == QueueState::Preparing {
-        if state.is_preparing(&entry.run_id) {
-            // Its start request is still ingesting sources and planning;
-            // the place is held, the execution waits.
-            return Ok(Head::Wait);
-        }
-        // No request in this process is preparing it: the one that created
-        // it died (a crash, a client timeout) before the run was safe and
-        // complete to execute. It is never run as it is.
+    let live = store.list_queue().await?;
+    let mut abandoned = false;
+    for entry in live
+        .iter()
+        .filter(|e| e.state == QueueState::Preparing && !state.is_preparing(&e.run_id))
+    {
         tracing::warn!(run = %entry.run_id, "abandoning a run whose start request did not complete");
         store
             .abandon_preparation(
@@ -104,8 +102,16 @@ async fn next_head(state: &AppState) -> Result<Head> {
                 "the start request did not complete the run's preparation",
             )
             .await?;
+        abandoned = true;
+    }
+    if abandoned {
+        // Look again at the queue as it now is.
         return Ok(Head::Wait);
     }
+    let Some(entry) = store.fair_head().await? else {
+        // Nothing selectable: empty, or only runs still being prepared.
+        return Ok(Head::Wait);
+    };
     let run = store.get_run(&entry.run_id).await?;
     if !eligible(store, &run).await? {
         tracing::warn!(run = %entry.run_id, state = run.state.as_str(), "closing a stale queue entry");

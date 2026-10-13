@@ -613,9 +613,11 @@ async fn a_start_interrupted_after_its_commit_never_executes_and_the_queue_moves
     let (run, goal) = unprepared_run("an interrupted start");
     store.create_run_queued(&run, &goal, None).await.unwrap();
     let a = run.id.clone();
-    // A later, complete start waits behind it.
+    // A later, complete start is the selectable run: the unprepared one
+    // is not eligible, so it is listed behind, never ahead.
     let b = start(&app, "run b").await;
-    assert_eq!(store.queue_status(&b).await.unwrap().unwrap().ahead, 1);
+    assert_eq!(store.queue_status(&b).await.unwrap().unwrap().ahead, 0);
+    assert_eq!(store.queue_status(&a).await.unwrap().unwrap().ahead, 1);
 
     state.start_dispatcher();
     wait_until(Duration::from_secs(30), "the complete run finishes", || {
@@ -731,7 +733,7 @@ async fn a_scheduler_error_keeps_the_head_in_place_and_retries() {
 
     state.start_dispatcher();
     tokio::time::sleep(Duration::from_millis(600)).await;
-    let head = store.queue_head().await.unwrap().expect("a head");
+    let head = store.fair_head().await.unwrap().expect("a head");
     assert_eq!(head.run_id, a, "the failing head keeps its place");
     assert_eq!(head.state, uruk::store::QueueState::Active);
     assert_eq!(store.get_run(&a).await.unwrap().state, RunState::Running);
@@ -830,5 +832,134 @@ async fn the_sweep_settles_tasks_orphaned_by_a_crash_after_a_stop() {
         fixture.store.queue_status(&fixture.run_id).await.unwrap(),
         None,
         "a cancelled run is never put back on the queue"
+    );
+}
+
+fn post_json_as(uri: &str, body: serde_json::Value, token: &str) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::COOKIE, format!("uruk_browser={token}"))
+        .body(Body::from(body.to_string()))
+        .expect("request")
+}
+
+async fn start_as(app: &axum::Router, goal: &str, token: &str) -> RunId {
+    let response = app
+        .clone()
+        .oneshot(post_json_as(
+            "/api/runs",
+            serde_json::json!({"goal": goal, "mode": "task", "ranking": "simple"}),
+            token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let body = body_json(response).await;
+    RunId::from_raw(body["run_id"].as_str().expect("run_id").to_string())
+}
+
+#[tokio::test]
+async fn browsers_take_turns_and_positions_show_the_projected_order() {
+    let provider = scripted_provider();
+    provider.set_available(false);
+    let (app, state, store, _dir) = fresh_app(provider.clone()).await;
+    let alice = "a".repeat(64);
+    let bob = "b".repeat(64);
+    let carol = "c".repeat(64);
+    let a1 = start_as(&app, "alice one", &alice).await;
+    let a2 = start_as(&app, "alice two", &alice).await;
+    let a3 = start_as(&app, "alice three", &alice).await;
+    let b1 = start_as(&app, "bob one", &bob).await;
+    let c1 = start_as(&app, "carol one", &carol).await;
+    let b2 = start_as(&app, "bob two", &bob).await;
+    state.start_dispatcher();
+    wait_until(
+        Duration::from_secs(10),
+        "the first run waits for the provider",
+        || {
+            let store = store.clone();
+            let a1 = a1.clone();
+            async move { store.run_timing(&a1).await.unwrap().is_paused() }
+        },
+    )
+    .await;
+
+    // Positions are the projected fair order, not the start order.
+    for (id, position) in [(&b1, 2), (&c1, 3), (&a2, 4), (&b2, 5), (&a3, 6)] {
+        let snap = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/runs/{id}"))
+                    .header(
+                        header::COOKIE,
+                        format!(
+                            "uruk_browser={}",
+                            match position {
+                                2 | 5 => &bob,
+                                3 => &carol,
+                                _ => &alice,
+                            }
+                        ),
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(snap.status(), StatusCode::OK);
+        let body = body_json(snap).await;
+        assert_eq!(body["snapshot"]["run"]["queue_position"], position, "{id}");
+    }
+
+    provider.set_available(true);
+    let all = vec![
+        a1.clone(),
+        a2.clone(),
+        a3.clone(),
+        b1.clone(),
+        c1.clone(),
+        b2.clone(),
+    ];
+    wait_until(Duration::from_secs(120), "every run finishes", || {
+        all_terminal(store.clone(), all.clone())
+    })
+    .await;
+    let mut by_start: Vec<(time::OffsetDateTime, RunId)> = Vec::new();
+    for id in &all {
+        by_start.push((started_at(&store, id).await, id.clone()));
+    }
+    by_start.sort();
+    let order: Vec<RunId> = by_start.into_iter().map(|(_, id)| id).collect();
+    assert_eq!(
+        order,
+        vec![a1, b1, c1, a2, b2, a3],
+        "one run per browser per cycle"
+    );
+}
+
+#[tokio::test]
+async fn the_listing_shows_the_position_of_a_parked_run_put_back_on_the_queue() {
+    let fixture =
+        common::fixture_owned(Mode::Task, scripted_provider(), common::BROWSER_TOKEN).await;
+    let (app, state) = app_over(&fixture.store, fixture.provider.clone()).await;
+    // Parked for a person, then released: the sweep gives it a new turn.
+    fixture
+        .store
+        .set_run_state(&fixture.run_id, RunState::WaitingForHuman, None)
+        .await
+        .unwrap();
+    let enqueued = uruk::web::resume_orphaned_runs(&state).await.unwrap();
+    assert_eq!(enqueued, vec![fixture.run_id.clone()]);
+
+    let listing = body_json(app.clone().oneshot(get("/api/runs")).await.unwrap()).await;
+    let run = &listing["runs"][0];
+    assert_eq!(run["id"], fixture.run_id.as_str());
+    assert_eq!(run["state"], "waiting-for-human");
+    assert_eq!(
+        run["queue_position"], 1,
+        "the position comes from the live queue entry: {run}"
     );
 }

@@ -20,7 +20,7 @@ pub use lock::ProjectLock;
 pub use owners::{OwnerDigest, SourceFilter};
 pub use passages::{OwnedPassageHit, PassageHit, StoredPassage, sanitize_match_query};
 pub use queries::{ItemSummary, RunOverview};
-pub use queue::{QueueEntry, QueueState, QueueStatus, RunTiming};
+pub use queue::{ENGINE_OWNER, QueueEntry, QueueState, QueueStatus, RunTiming};
 pub use search::StoredWork;
 pub use tasks::BudgetUsage;
 pub use uploads::Upload;

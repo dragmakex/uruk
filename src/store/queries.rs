@@ -42,12 +42,25 @@ pub struct RunOverview {
 /// the run's live queue entry (at most one) and how many precede it.
 pub(crate) const OVERVIEW_SELECT: &str =
     "SELECT r.id, r.state, r.stop_condition, r.iterations, r.created_at, r.updated_at,
-            r.paused_since, g.body AS goal, q.state AS queue_state,
-            (SELECT COUNT(*) FROM run_queue q2
-              WHERE q2.state IN ('queued', 'active') AND q2.seq < q.seq) AS ahead
+            r.paused_since, g.body AS goal
      FROM runs r
-     JOIN goals g ON g.id = r.goal_id
-     LEFT JOIN run_queue q ON q.run_id = r.id AND q.state IN ('queued', 'active')";
+     JOIN goals g ON g.id = r.goal_id";
+
+/// Fill `queue_position` from the projected execution order, read in the
+/// same snapshot as the overviews. A position comes from a live, waiting
+/// queue entry — whatever the run's lifecycle state (a migrated `running`
+/// run, a parked run put back on the queue) — and the active run and runs
+/// off the queue keep `None`.
+pub(crate) async fn attach_queue_positions_in_tx(
+    conn: &mut SqliteConnection,
+    overviews: &mut [RunOverview],
+) -> Result<()> {
+    let positions = super::queue::queue_positions_in_tx(conn).await?;
+    for overview in overviews.iter_mut() {
+        overview.queue_position = positions.get(&overview.id).copied();
+    }
+    Ok(())
+}
 
 pub(crate) async fn bodies<T: serde::de::DeserializeOwned>(rows: Vec<String>) -> Result<Vec<T>> {
     rows.iter().map(|b| Ok(serde_json::from_str(b)?)).collect()
@@ -71,23 +84,9 @@ pub(crate) fn overview_from_row(r: &sqlx::sqlite::SqliteRow) -> Result<RunOvervi
         mode: goal.mode,
         created_at: r.get::<String, _>("created_at"),
         updated_at: r.get::<String, _>("updated_at"),
-        queue_position: queue_position(
-            r.get::<Option<String>, _>("queue_state").as_deref(),
-            r.get::<Option<i64>, _>("ahead"),
-        ),
+        queue_position: None,
         paused_since: r.get::<Option<String>, _>("paused_since"),
     })
-}
-
-/// A queued entry's 1-based place; the active head and runs off the queue
-/// have none.
-fn queue_position(queue_state: Option<&str>, ahead: Option<i64>) -> Option<u32> {
-    match (queue_state, ahead) {
-        (Some("queued" | "preparing"), Some(ahead)) => {
-            Some(u32::try_from(ahead).unwrap_or(u32::MAX).saturating_add(1))
-        }
-        _ => None,
-    }
 }
 
 impl Store {
@@ -145,14 +144,20 @@ impl Store {
 
     /// Runs joined with their current goal, newest first (ties broken by ID
     /// so the order is deterministic).
+    /// Runs joined with their current goal, newest first, with their queue
+    /// positions, all read in one snapshot.
     pub async fn list_run_overviews(&self) -> Result<Vec<RunOverview>> {
+        let mut tx = self.pool().begin().await?;
         let rows = sqlx::query(&format!(
             "{OVERVIEW_SELECT} ORDER BY r.created_at DESC, r.id"
         ))
-        .fetch_all(self.pool())
+        .fetch_all(&mut *tx)
         .await?;
-
-        rows.iter().map(overview_from_row).collect()
+        let mut overviews: Vec<RunOverview> =
+            rows.iter().map(overview_from_row).collect::<Result<_>>()?;
+        attach_queue_positions_in_tx(&mut tx, &mut overviews).await?;
+        tx.commit().await?;
+        Ok(overviews)
     }
 
     pub async fn current_goal(&self, run_id: &RunId) -> Result<Goal> {

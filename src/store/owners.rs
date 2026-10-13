@@ -109,8 +109,10 @@ impl Store {
     }
 
     /// The owner-scoped run listing: newest first, ties broken by id, runs
-    /// of other owners and ownerless runs excluded.
+    /// of other owners and ownerless runs excluded, with queue positions,
+    /// all read in one snapshot.
     pub async fn list_run_overviews_owned(&self, owner: &OwnerDigest) -> Result<Vec<RunOverview>> {
+        let mut tx = self.pool().begin().await?;
         let rows = sqlx::query(&format!(
             "{} JOIN run_owners o ON o.run_id = r.id
              WHERE o.owner_digest = ?
@@ -118,9 +120,15 @@ impl Store {
             queries::OVERVIEW_SELECT
         ))
         .bind(owner.as_str())
-        .fetch_all(self.pool())
+        .fetch_all(&mut *tx)
         .await?;
-        rows.iter().map(queries::overview_from_row).collect()
+        let mut overviews: Vec<RunOverview> = rows
+            .iter()
+            .map(queries::overview_from_row)
+            .collect::<Result<_>>()?;
+        queries::attach_queue_positions_in_tx(&mut tx, &mut overviews).await?;
+        tx.commit().await?;
+        Ok(overviews)
     }
 
     /// The owner-scoped source library: every source recorded by one of

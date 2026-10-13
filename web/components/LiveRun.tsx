@@ -230,12 +230,13 @@ export function LiveRun({
           >
             <h2>Queued, position {run.queue_position ?? "unknown"}</h2>
             <p>
-              Runs execute one at a time in the order they were started:{" "}
+              Runs execute one at a time: yours in the order you started
+              them, taking turns with other researchers&apos; runs:{" "}
               {run.queue_position !== null
                 ? queueNote(run.queue_position)
                 : "waiting for the runs ahead"}
               . Research begins, and the time budget starts, when this run
-              reaches the head. Stop remains available.
+              reaches its turn. Stop remains available.
             </p>
           </div>
         )}
