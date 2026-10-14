@@ -84,6 +84,158 @@ fn completion_body(text: &str) -> String {
     .to_string()
 }
 
+async fn serve_stream(
+    fragments: Vec<String>,
+    hold_open: Option<Duration>,
+) -> (String, tokio::task::JoinHandle<Captured>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/v1", listener.local_addr().unwrap());
+    let handle = tokio::spawn(async move {
+        let (mut sock, _) = listener.accept().await.unwrap();
+        let mut buf = Vec::new();
+        let mut tmp = [0u8; 4096];
+        let head_end = loop {
+            let n = sock.read(&mut tmp).await.unwrap();
+            assert_ne!(n, 0, "request ended before its head");
+            buf.extend_from_slice(&tmp[..n]);
+            if let Some(pos) = find(&buf, b"\r\n\r\n") {
+                break pos + 4;
+            }
+        };
+        let head = String::from_utf8_lossy(&buf[..head_end]).into_owned();
+        let length: usize = head
+            .lines()
+            .find_map(|line| {
+                line.to_ascii_lowercase()
+                    .strip_prefix("content-length:")
+                    .map(|value| value.trim().parse().unwrap())
+            })
+            .unwrap_or(0);
+        while buf.len() < head_end + length {
+            let n = sock.read(&mut tmp).await.unwrap();
+            assert_ne!(n, 0, "request ended before its body");
+            buf.extend_from_slice(&tmp[..n]);
+        }
+        let captured = Captured {
+            head,
+            body: String::from_utf8_lossy(&buf[head_end..head_end + length]).into_owned(),
+        };
+        sock.write_all(
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n",
+        )
+        .await
+        .unwrap();
+        for fragment in fragments {
+            sock.write_all(fragment.as_bytes()).await.unwrap();
+            sock.flush().await.unwrap();
+            tokio::task::yield_now().await;
+        }
+        if let Some(duration) = hold_open {
+            tokio::time::sleep(duration).await;
+        }
+        sock.shutdown().await.ok();
+        captured
+    });
+    (url, handle)
+}
+
+#[tokio::test]
+async fn streaming_completions_survive_fragmented_sse_and_preserve_usage() {
+    let chunks = [
+        serde_json::json!({
+            "id": "chatcmpl-stream",
+            "model": "test-model",
+            "choices": [{"index": 0, "delta": {"role": "assistant", "content": "hello "}, "finish_reason": null}]
+        }),
+        serde_json::json!({
+            "id": "chatcmpl-stream",
+            "model": "test-model",
+            "choices": [{"index": 0, "delta": {"content": "world"}, "finish_reason": "stop"}]
+        }),
+        serde_json::json!({
+            "id": "chatcmpl-stream",
+            "model": "test-model",
+            "choices": [],
+            "usage": {"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15}
+        }),
+    ];
+    let wire = format!(
+        "data: {}\n\ndata: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+        chunks[0], chunks[1], chunks[2]
+    );
+    let splits = [7, 31, 79, wire.len() - 3];
+    let mut start = 0;
+    let mut fragments = Vec::new();
+    for end in splits.into_iter().chain(std::iter::once(wire.len())) {
+        fragments.push(wire[start..end].to_string());
+        start = end;
+    }
+    let (url, server) = serve_stream(fragments, None).await;
+    let provider = HttpProvider::new(&url, None, "test-model")
+        .unwrap()
+        .with_streaming(true);
+
+    let response = provider
+        .complete(ChatRequest::new("test-model", vec![Message::user("hi")]))
+        .await
+        .unwrap();
+
+    assert_eq!(response.text(), "hello world");
+    assert_eq!(response.usage.total_tokens, 15);
+    let captured = server.await.unwrap();
+    let body: serde_json::Value = serde_json::from_str(&captured.body).unwrap();
+    assert_eq!(body["stream"], true);
+    assert_eq!(body["stream_options"]["include_usage"], true);
+}
+
+#[tokio::test]
+async fn streaming_returns_at_done_without_waiting_for_http_eof() {
+    let wire = format!(
+        "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+        serde_json::json!({
+            "id": "chatcmpl-stream",
+            "model": "test-model",
+            "choices": [{"index": 0, "delta": {"content": "done"}, "finish_reason": "stop"}]
+        }),
+        serde_json::json!({
+            "choices": [],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+        })
+    );
+    let (url, server) = serve_stream(vec![wire], Some(Duration::from_secs(1))).await;
+    let provider = HttpProvider::new(&url, None, "test-model")
+        .unwrap()
+        .with_streaming(true);
+
+    let response = tokio::time::timeout(
+        Duration::from_millis(200),
+        provider.complete(ChatRequest::new("test-model", vec![Message::user("hi")])),
+    )
+    .await
+    .expect("[DONE] must finish before the server closes the HTTP body")
+    .unwrap();
+    assert_eq!(response.text(), "done");
+    server.abort();
+}
+
+#[tokio::test]
+async fn streaming_falls_back_to_a_json_completion_when_the_server_ignores_stream() {
+    let (url, server) = serve(vec![(200, completion_body("fallback"))]).await;
+    let provider = HttpProvider::new(&url, None, "test-model")
+        .unwrap()
+        .with_streaming(true);
+
+    let response = tokio::time::timeout(
+        Duration::from_millis(200),
+        provider.complete(ChatRequest::new("test-model", vec![Message::user("hi")])),
+    )
+    .await
+    .expect("JSON fallback must not enter the provider retry loop")
+    .unwrap();
+    assert_eq!(response.text(), "fallback");
+    assert_eq!(server.await.unwrap().len(), 1);
+}
+
 #[tokio::test]
 async fn posts_chat_completions_with_auth_and_parses_usage() {
     let (url, server) = serve(vec![(200, completion_body("hello"))]).await;

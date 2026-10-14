@@ -19,10 +19,12 @@
 use super::availability::{SendError, complete_through_gate};
 use super::pacing::StartPacer;
 use super::{
-    Attempts, ChatRequest, ChatResponse, ProbeBackoff, Provider, TransientFault, TransportPhase,
-    UpstreamGate,
+    Attempts, ChatRequest, ChatResponse, Choice, FinishReason, Message, ProbeBackoff, Provider,
+    TransientFault, TransportPhase, UpstreamGate, Usage,
 };
 use crate::{Error, Result};
+use serde::Deserialize;
+use std::collections::BTreeMap;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::Duration;
@@ -35,8 +37,8 @@ pub const ENV_MODEL: &str = "URUK_MODEL";
 /// `high`). Reasoning models spend most of their time thinking otherwise.
 pub const ENV_REASONING: &str = "URUK_REASONING_EFFORT";
 /// Optional positive overall completion-request timeout in seconds. This is
-/// deliberately much longer than the connect timeout because non-streaming
-/// providers do not return headers until a long generation is complete.
+/// deliberately much longer than the connect timeout because large model
+/// generations can take many minutes even when streamed.
 pub const ENV_TIMEOUT_SECS: &str = "URUK_PROVIDER_TIMEOUT_SECS";
 /// Optional request-start pacing in requests per minute. Unset keeps the
 /// per-endpoint default ([`SWISSAI_DEFAULT_RPM`] for SwissAI hosts, unpaced
@@ -47,8 +49,8 @@ pub const ENV_RPM: &str = "URUK_PROVIDER_RPM";
 /// endpoint, so providers pointed at a SwissAI host pace request starts to
 /// one per 60/14 s unless [`ENV_RPM`] overrides it.
 pub const SWISSAI_DEFAULT_RPM: u32 = 14;
-/// A 20,000-token non-streaming completion can legitimately take more than
-/// five minutes; keep the connection open while the provider is working.
+/// A 20,000-token completion can legitimately take more than five minutes;
+/// keep the connection open while the provider is working.
 pub const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 30 * 60;
 
 #[derive(Debug, Clone)]
@@ -67,6 +69,10 @@ pub struct HttpProvider {
     /// unavailable.
     probe_backoff: ProbeBackoff,
     reasoning_effort: Option<String>,
+    /// Stream response chunks so long generations keep intermediary proxies
+    /// alive. Enabled by default for SwissAI, whose proxy otherwise terminates
+    /// silent non-streaming requests at about five minutes.
+    streaming: bool,
     /// This handle's pacing target; `None` means unpaced. The shared
     /// schedule it resolves to at request time (see [`Self::pacer`]) is one
     /// per upstream identity, making the limit process-wide.
@@ -86,6 +92,218 @@ fn parse_request_timeout(value: Option<&str>) -> Result<Duration> {
         )));
     }
     Ok(Duration::from_secs(seconds))
+}
+
+const MAX_STREAM_BYTES: usize = 16 * 1024 * 1024;
+
+#[derive(Debug, Deserialize)]
+struct StreamChunk {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    model: String,
+    #[serde(default)]
+    choices: Vec<StreamChoice>,
+    #[serde(default)]
+    usage: Option<Usage>,
+    #[serde(default)]
+    cost_usd: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StreamChoice {
+    index: u32,
+    #[serde(default)]
+    delta: StreamDelta,
+    #[serde(default)]
+    finish_reason: Option<FinishReason>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct StreamDelta {
+    #[serde(default)]
+    content: Option<String>,
+}
+
+#[derive(Debug, Default)]
+struct PartialChoice {
+    content: String,
+    finish_reason: Option<FinishReason>,
+}
+
+#[derive(Debug, Default)]
+struct StreamAssembly {
+    id: String,
+    model: String,
+    choices: BTreeMap<u32, PartialChoice>,
+    usage: Option<Usage>,
+    cost_usd: Option<f64>,
+    done: bool,
+}
+
+impl StreamAssembly {
+    fn accept(&mut self, data: &str) -> std::result::Result<(), SendError> {
+        if data.trim() == "[DONE]" {
+            self.done = true;
+            return Ok(());
+        }
+        let chunk: StreamChunk = serde_json::from_str(data).map_err(|error| {
+            SendError::Permanent(Error::Provider(format!(
+                "unparseable streaming chat completion ({error}): {}",
+                clip(data, 300)
+            )))
+        })?;
+        if !chunk.id.is_empty() {
+            self.id = chunk.id;
+        }
+        if !chunk.model.is_empty() {
+            self.model = chunk.model;
+        }
+        if let Some(usage) = chunk.usage {
+            self.usage = Some(usage);
+        }
+        if chunk.cost_usd.is_some() {
+            self.cost_usd = chunk.cost_usd;
+        }
+        for choice in chunk.choices {
+            let partial = self.choices.entry(choice.index).or_default();
+            if let Some(content) = choice.delta.content {
+                partial.content.push_str(&content);
+            }
+            if choice.finish_reason.is_some() {
+                partial.finish_reason = choice.finish_reason;
+            }
+        }
+        Ok(())
+    }
+
+    fn finish(self, fallback_model: &str) -> std::result::Result<ChatResponse, SendError> {
+        if !self.done {
+            return Err(SendError::Transient(TransientFault::transport(
+                TransportPhase::Response,
+                "stream ended before the [DONE] marker",
+            )));
+        }
+        if self.choices.is_empty() {
+            return Err(SendError::Permanent(Error::Provider(
+                "streaming chat completion contained no choices".into(),
+            )));
+        }
+        let usage = self.usage.ok_or_else(|| {
+            SendError::Permanent(Error::Provider(
+                "streaming chat completion contained no usage summary".into(),
+            ))
+        })?;
+        let choices = self
+            .choices
+            .into_iter()
+            .map(|(index, partial)| {
+                let finish_reason = partial.finish_reason.ok_or_else(|| {
+                    SendError::Permanent(Error::Provider(format!(
+                        "streaming chat completion choice {index} had no finish reason"
+                    )))
+                })?;
+                Ok(Choice {
+                    index,
+                    message: Message::assistant(partial.content),
+                    finish_reason,
+                })
+            })
+            .collect::<std::result::Result<Vec<_>, SendError>>()?;
+        Ok(ChatResponse {
+            id: self.id,
+            model: if self.model.is_empty() {
+                fallback_model.to_string()
+            } else {
+                self.model
+            },
+            choices,
+            usage,
+            cost_usd: self.cost_usd,
+        })
+    }
+}
+
+fn line_ending_len(buffer: &[u8], index: usize) -> Option<usize> {
+    match buffer.get(index) {
+        Some(b'\n') => Some(1),
+        Some(b'\r') if buffer.get(index + 1) == Some(&b'\n') => Some(2),
+        Some(b'\r') => Some(1),
+        _ => None,
+    }
+}
+
+fn next_sse_event(buffer: &mut Vec<u8>) -> Option<Vec<u8>> {
+    let mut index = 0;
+    while index < buffer.len() {
+        let Some(first_len) = line_ending_len(buffer, index) else {
+            index += 1;
+            continue;
+        };
+        let next = index + first_len;
+        if let Some(second_len) = line_ending_len(buffer, next) {
+            let event = buffer[..index].to_vec();
+            buffer.drain(..next + second_len);
+            return Some(event);
+        }
+        index = next;
+    }
+    None
+}
+
+fn sse_data(event: &[u8]) -> std::result::Result<Option<String>, SendError> {
+    let text = std::str::from_utf8(event).map_err(|error| {
+        SendError::Permanent(Error::Provider(format!(
+            "streaming chat completion was not UTF-8: {error}"
+        )))
+    })?;
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    let mut values = Vec::new();
+    for line in normalized.lines() {
+        let Some(value) = line.strip_prefix("data:") else {
+            continue;
+        };
+        values.push(value.strip_prefix(' ').unwrap_or(value));
+    }
+    Ok((!values.is_empty()).then(|| values.join("\n")))
+}
+
+async fn read_streaming_response(
+    mut response: reqwest::Response,
+    request_timeout: Duration,
+    fallback_model: &str,
+) -> std::result::Result<ChatResponse, SendError> {
+    let mut received = 0usize;
+    let mut buffer = Vec::new();
+    let mut assembly = StreamAssembly::default();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| classify_request_error(error, request_timeout))?
+    {
+        received = received.checked_add(chunk.len()).ok_or_else(|| {
+            SendError::Permanent(Error::Provider("streaming response was too large".into()))
+        })?;
+        if received > MAX_STREAM_BYTES {
+            return Err(SendError::Permanent(Error::Provider(format!(
+                "streaming response exceeded {MAX_STREAM_BYTES} bytes"
+            ))));
+        }
+        buffer.extend_from_slice(&chunk);
+        while let Some(event) = next_sse_event(&mut buffer) {
+            if let Some(data) = sse_data(&event)? {
+                assembly.accept(&data)?;
+                if assembly.done {
+                    return assembly.finish(fallback_model);
+                }
+            }
+        }
+    }
+    // A trailing, unterminated event is not dispatchable SSE. If the socket
+    // closed mid-JSON, the missing [DONE] is a retryable transport truncation,
+    // not a permanent JSON-protocol failure.
+    assembly.finish(fallback_model)
 }
 
 /// Parse a `Retry-After` header value against the given wall-clock `now`.
@@ -192,6 +410,7 @@ impl HttpProvider {
             upstream,
             probe_backoff: ProbeBackoff::DEFAULT,
             reasoning_effort: None,
+            streaming: is_swissai_host(host),
             rpm: default_rpm,
         })
     }
@@ -290,6 +509,18 @@ impl HttpProvider {
         self.reasoning_effort.as_deref()
     }
 
+    /// Enable or disable SSE streaming for chat completions. SwissAI handles
+    /// default to streaming; this setter primarily supports explicit adapters
+    /// and deterministic stand-in tests.
+    pub fn with_streaming(mut self, streaming: bool) -> Self {
+        self.streaming = streaming;
+        self
+    }
+
+    pub fn streaming(&self) -> bool {
+        self.streaming
+    }
+
     pub fn base_url(&self) -> &str {
         &self.base_url
     }
@@ -314,11 +545,20 @@ impl HttpProvider {
             .await
             .map_err(|error| classify_request_error(error, self.request_timeout))?;
         let status = resp.status();
+        let event_stream = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.split(';').next())
+            .is_some_and(|mime| mime.trim().eq_ignore_ascii_case("text/event-stream"));
         let retry_after = resp
             .headers()
             .get(reqwest::header::RETRY_AFTER)
             .and_then(|v| v.to_str().ok())
             .and_then(|v| parse_retry_after(v, time::OffsetDateTime::now_utc()));
+        if status.is_success() && self.streaming && event_stream {
+            return read_streaming_response(resp, self.request_timeout, &self.model).await;
+        }
         let text = resp
             .text()
             .await
@@ -394,6 +634,10 @@ impl Provider for HttpProvider {
             .map_err(|e| Error::Provider(format!("serialising request: {e}")))?;
         if let Some(effort) = &self.reasoning_effort {
             body["reasoning_effort"] = serde_json::Value::String(effort.clone());
+        }
+        if self.streaming {
+            body["stream"] = serde_json::Value::Bool(true);
+            body["stream_options"] = serde_json::json!({"include_usage": true});
         }
         let gate = self.gate();
         let pacer = self.pacer();
@@ -500,6 +744,72 @@ mod tests {
             parse_retry_after(&header, now),
             Some(Duration::from_millis(30_600))
         );
+    }
+
+    #[test]
+    fn swissai_defaults_to_streaming_but_other_openai_endpoints_do_not() {
+        assert!(
+            HttpProvider::new("https://api.swissai.svc.cscs.ch/v1", None, "m")
+                .unwrap()
+                .streaming()
+        );
+        assert!(
+            !HttpProvider::new("https://api.openai.com/v1", None, "m")
+                .unwrap()
+                .streaming()
+        );
+    }
+
+    #[test]
+    fn an_incomplete_stream_is_retryable_instead_of_becoming_partial_output() {
+        let mut assembly = StreamAssembly::default();
+        assembly
+            .accept(
+                r#"{"choices":[{"index":0,"delta":{"content":"partial"},"finish_reason":"stop"}]}"#,
+            )
+            .unwrap();
+        let SendError::Transient(fault) = assembly.finish("m").unwrap_err() else {
+            panic!("a stream without [DONE] must be retried")
+        };
+        assert!(fault.to_string().contains("before the [DONE] marker"));
+    }
+
+    #[test]
+    fn sse_decoder_accepts_crlf_boundaries() {
+        let mut buffer = b"data: {\"choices\":[]}\r\n\r\ndata: [DONE]\r\n\r\n".to_vec();
+        let first = next_sse_event(&mut buffer).unwrap();
+        let second = next_sse_event(&mut buffer).unwrap();
+        assert_eq!(
+            sse_data(&first).unwrap().as_deref(),
+            Some("{\"choices\":[]}")
+        );
+        assert_eq!(sse_data(&second).unwrap().as_deref(), Some("[DONE]"));
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn sse_decoder_accepts_mixed_and_bare_cr_line_endings_and_a_bom() {
+        let mut buffer = b"\xef\xbb\xbfdata: one\r\ndata: two\r\rdata: [DONE]\n\r".to_vec();
+        let first = next_sse_event(&mut buffer).unwrap();
+        let second = next_sse_event(&mut buffer).unwrap();
+        assert_eq!(sse_data(&first).unwrap().as_deref(), Some("one\ntwo"));
+        assert_eq!(sse_data(&second).unwrap().as_deref(), Some("[DONE]"));
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn completed_stream_without_usage_is_rejected_instead_of_counted_as_zero() {
+        let mut assembly = StreamAssembly::default();
+        assembly
+            .accept(
+                r#"{"choices":[{"index":0,"delta":{"content":"answer"},"finish_reason":"stop"}]}"#,
+            )
+            .unwrap();
+        assembly.accept("[DONE]").unwrap();
+        let SendError::Permanent(error) = assembly.finish("m").unwrap_err() else {
+            panic!("missing usage must be a protocol error")
+        };
+        assert!(error.to_string().contains("usage"));
     }
 
     #[test]
