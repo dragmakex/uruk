@@ -3,6 +3,8 @@ import {
   elapsedBetween,
   formatClock,
   formatElo,
+  providerWaitNote,
+  queueNote,
   rankingMethod,
   roundLabel,
   shortRunId,
@@ -83,5 +85,30 @@ describe("stateLabel", () => {
 describe("formatElo", () => {
   it("rounds to a whole number as the figure does", () => {
     expect(formatElo(1412.23)).toBe("1412");
+  });
+});
+
+describe("queue and provider-wait labels", () => {
+  it("labels a queued run as queued, never as failed", () => {
+    expect(stateLabel("queued")).toBe("queued");
+    expect(roundLabel("queued", 0, 4)).toBe("queued");
+  });
+
+  it("says how many runs are ahead", () => {
+    expect(queueNote(1)).toBe("next to start");
+    expect(queueNote(2)).toBe("1 run ahead");
+    expect(queueNote(4)).toBe("3 runs ahead");
+  });
+
+  it("describes the provider wait with its recorded reason", () => {
+    expect(
+      providerWaitNote({
+        since: "2026-10-04T14:03:00Z",
+        note: "HTTP 503: overloaded",
+      }),
+    ).toBe("waiting for the model provider since 14:03 UTC (HTTP 503: overloaded)");
+    expect(
+      providerWaitNote({ since: "2026-10-04T14:03:00Z", note: null }),
+    ).toBe("waiting for the model provider since 14:03 UTC");
   });
 });

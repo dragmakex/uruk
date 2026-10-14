@@ -34,13 +34,13 @@ pub struct TaskOutcome {
 
 /// Execute one task and collect its records.
 ///
-/// Every failure the role reports is final for this task: the provider
-/// adapter has already retried transient faults within its own bound (see
-/// [`crate::provider::HttpProvider`]), so the error it returns is reported
-/// once, with the attempts it made, rather than re-run from here. Validation
-/// failures are permanent by nature, and cancellation retains labelled
-/// partial artifacts. Only storage errors propagate, since nothing can be
-/// recorded through a broken store.
+/// Every failure the role reports is final for this task: a transient
+/// provider fault never reaches here, because the adapter waits for the
+/// upstream to recover (see [`crate::provider::UpstreamGate`]), so a
+/// provider error is a permanent refusal and is reported once, not re-run.
+/// Validation failures are permanent by nature, and cancellation retains
+/// labelled partial artifacts. Only storage errors propagate, since nothing
+/// can be recorded through a broken store.
 pub async fn execute_task(ctx: &AgentContext, task: &Task) -> Result<TaskOutcome> {
     let mut batch = RecordBatch::default();
     let result = match task.role {
@@ -74,7 +74,6 @@ pub async fn execute_task(ctx: &AgentContext, task: &Task) -> Result<TaskOutcome
             None,
         ),
         Err(e @ Error::Storage(_)) | Err(e @ Error::Migration(_)) => return Err(e),
-        // The adapter's message already carries its attempt count.
         Err(Error::Provider(msg)) => (TaskState::Failed, msg, Some(FailureKind::Provider)),
         Err(Error::Budget(msg)) => (TaskState::Failed, msg, Some(FailureKind::Budget)),
         Err(e) => (TaskState::Failed, e.to_string(), Some(FailureKind::Output)),

@@ -265,9 +265,10 @@ fn legacy_provider_failure(error: &str) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FailureKind {
-    /// The model provider did not serve the request: unreachable after the
-    /// adapter's bounded retries, or a refusal such as a 4xx. Terminal for
-    /// the work; proposing it again would only repeat the attempts.
+    /// The model provider refused the request permanently (a 4xx other
+    /// than 408/425/429, a malformed reply, a bad request). Terminal for
+    /// the work; proposing it again would only repeat the refusal. A
+    /// transient outage is never recorded here: the adapter waits it out.
     Provider,
     /// The model answered, but the role could not accept the result
     /// (unparseable, truncated, rejected by validation). A stochastic miss;

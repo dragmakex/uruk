@@ -181,30 +181,15 @@ impl Store {
 
     pub async fn insert_plan(&self, plan: &Plan) -> Result<()> {
         let mut guard = self.begin_write().await?;
-        let conn = guard.conn();
-        sqlx::query(
-            "INSERT INTO plans (id, run_id, goal_id, revision, body, created_at)
-             VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(plan.id.as_str())
-        .bind(plan.run_id.as_str())
-        .bind(plan.goal_id.as_str())
-        .bind(plan.revision)
-        .bind(serde_json::to_string(plan)?)
-        .bind(to_rfc3339(plan.created_at))
-        .execute(&mut *conn)
-        .await?;
-
-        sqlx::query("UPDATE runs SET plan_id = ?, updated_at = ? WHERE id = ?")
-            .bind(plan.id.as_str())
-            .bind(to_rfc3339(now()))
-            .bind(plan.run_id.as_str())
-            .execute(&mut *conn)
-            .await?;
-
+        insert_plan_in_tx(guard.conn(), plan).await?;
         guard.commit().await
     }
 
+    /// Set a run's state. A state that takes the run out of circulation
+    /// (terminal, `blocked`, or parked `waiting-for-human`) closes its
+    /// live queue entry in the same transaction, so the next run can
+    /// start; a parked run is re-enqueued by the serve-side sweep once
+    /// its approvals are decided.
     pub async fn set_run_state(
         &self,
         run_id: &RunId,
@@ -212,6 +197,7 @@ impl Store {
         stop: Option<StopCondition>,
     ) -> Result<()> {
         let mut guard = self.begin_write().await?;
+        let conn = guard.conn();
         sqlx::query(
             "UPDATE runs SET state = ?, stop_condition = COALESCE(?, stop_condition),
                                  updated_at = ? WHERE id = ?",
@@ -220,8 +206,11 @@ impl Store {
         .bind(stop.as_ref().map(|s| s.as_str()))
         .bind(to_rfc3339(now()))
         .bind(run_id.as_str())
-        .execute(guard.conn())
+        .execute(&mut *conn)
         .await?;
+        if state.is_terminal() || matches!(state, RunState::Blocked | RunState::WaitingForHuman) {
+            super::queue::close_queue_entry_in_tx(conn, run_id).await?;
+        }
         guard.commit().await
     }
 
@@ -235,6 +224,7 @@ impl Store {
         stop: StopCondition,
     ) -> Result<bool> {
         let mut guard = self.begin_write().await?;
+        let conn = guard.conn();
         let result = sqlx::query(
             "UPDATE runs SET state = ?, stop_condition = ?, updated_at = ?
              WHERE id = ? AND state != ?",
@@ -244,8 +234,10 @@ impl Store {
         .bind(to_rfc3339(now()))
         .bind(run_id.as_str())
         .bind(RunState::Cancelled.as_str())
-        .execute(guard.conn())
+        .execute(&mut *conn)
         .await?;
+        // Finished either way: the queue moves on in the same transaction.
+        super::queue::close_queue_entry_in_tx(conn, run_id).await?;
         guard.commit().await?;
         Ok(result.rows_affected() > 0)
     }
@@ -257,27 +249,46 @@ impl Store {
     ///
     /// Returns whether the transition happened; when it did not, the caller
     /// should let its run loop observe the cancelled state and wind down.
+    ///
+    /// The research clock starts here if it never has: the wall-clock
+    /// budget runs from the first execution, not from creation, so time
+    /// spent queued is not research time (and a restart cannot move a
+    /// start that is already stamped).
     pub async fn mark_run_running(&self, run_id: &RunId) -> Result<bool> {
         let mut guard = self.begin_write().await?;
+        let conn = guard.conn();
         let result =
             sqlx::query("UPDATE runs SET state = ?, updated_at = ? WHERE id = ? AND state != ?")
                 .bind(RunState::Running.as_str())
                 .bind(to_rfc3339(now()))
                 .bind(run_id.as_str())
                 .bind(RunState::Cancelled.as_str())
-                .execute(guard.conn())
+                .execute(&mut *conn)
                 .await?;
+        if result.rows_affected() > 0 {
+            super::queue::stamp_started_in_tx(conn, run_id).await?;
+        }
         guard.commit().await?;
         Ok(result.rows_affected() > 0)
     }
 
-    /// Record a durable stop request (SPEC §9.2) unless the run is already
-    /// terminal, in one atomic step: a run that finished in the meantime is
-    /// never flipped to `cancelled` after the fact.
+    /// Stop a run as one durable fact (SPEC §9.2): the run becomes
+    /// `cancelled`, leaves the queue, every task not yet dispatched is
+    /// cancelled with its reservation released and its approvals
+    /// invalidated, and the researcher's decision is recorded — all in one
+    /// transaction, so a crash leaves either the whole stop or none of it.
+    /// Tasks already `running` are left to the live scheduler, which
+    /// settles what they consumed; those a crash orphans are settled by
+    /// [`Store::settle_orphaned_tasks`].
     ///
-    /// Returns whether the run was cancelled by this call.
-    pub async fn try_cancel_run(&self, run_id: &RunId) -> Result<bool> {
+    /// Returns `None`, changing nothing, when the run is already terminal.
+    ///
+    /// # Errors
+    ///
+    /// Propagates store failures.
+    pub async fn cancel_run(&self, run_id: &RunId, reason: &str) -> Result<Option<RunCancelled>> {
         let mut guard = self.begin_write().await?;
+        let conn = guard.conn();
         let result = sqlx::query(
             "UPDATE runs SET state = ?, stop_condition = ?, updated_at = ?
              WHERE id = ? AND state NOT IN (?, ?, ?, ?)",
@@ -290,8 +301,60 @@ impl Store {
         .bind(RunState::BudgetExhausted.as_str())
         .bind(RunState::Cancelled.as_str())
         .bind(RunState::Failed.as_str())
-        .execute(guard.conn())
+        .execute(&mut *conn)
         .await?;
+        if result.rows_affected() == 0 {
+            return Ok(None);
+        }
+        super::queue::close_queue_entry_in_tx(conn, run_id).await?;
+        let cancelled_tasks = super::tasks::cancel_pending_tasks_in_tx(conn, run_id).await?;
+        let decision = Decision {
+            id: DecisionId::new(),
+            schema_version: SCHEMA_VERSION,
+            run_id: run_id.clone(),
+            kind: DecisionKind::Stop,
+            actor: Actor::Researcher,
+            reason: reason.to_string(),
+            referenced: vec![],
+            payload: serde_json::json!({"cancelled_tasks": cancelled_tasks}),
+            created_at: now(),
+        };
+        insert_decision_in_tx(conn, &decision).await?;
+        guard.commit().await?;
+        Ok(Some(RunCancelled {
+            cancelled_tasks,
+            decision_id: decision.id,
+        }))
+    }
+
+    /// Record a durable stop request (SPEC §9.2) unless the run is already
+    /// terminal, in one atomic step: a run that finished in the meantime is
+    /// never flipped to `cancelled` after the fact.
+    ///
+    /// Returns whether the run was cancelled by this call. A cancelled run
+    /// leaves the queue in the same transaction, whether it was waiting
+    /// its turn or was the active head, so a stop is never delayed by the
+    /// dispatcher and a stopped run never holds a place.
+    pub async fn try_cancel_run(&self, run_id: &RunId) -> Result<bool> {
+        let mut guard = self.begin_write().await?;
+        let conn = guard.conn();
+        let result = sqlx::query(
+            "UPDATE runs SET state = ?, stop_condition = ?, updated_at = ?
+             WHERE id = ? AND state NOT IN (?, ?, ?, ?)",
+        )
+        .bind(RunState::Cancelled.as_str())
+        .bind(StopCondition::Cancelled.as_str())
+        .bind(to_rfc3339(now()))
+        .bind(run_id.as_str())
+        .bind(RunState::Completed.as_str())
+        .bind(RunState::BudgetExhausted.as_str())
+        .bind(RunState::Cancelled.as_str())
+        .bind(RunState::Failed.as_str())
+        .execute(&mut *conn)
+        .await?;
+        if result.rows_affected() > 0 {
+            super::queue::close_queue_entry_in_tx(conn, run_id).await?;
+        }
         guard.commit().await?;
         Ok(result.rows_affected() > 0)
     }
@@ -506,6 +569,37 @@ impl Store {
 /// Shared by [`Store::create_run`] (ownerless engine callers and tests)
 /// and [`Store::create_run_owned`] (web), so an owned run can never be
 /// committed without its owner row.
+/// What [`Store::cancel_run`] changed.
+#[derive(Debug, Clone)]
+pub struct RunCancelled {
+    /// Tasks cancelled before dispatch.
+    pub cancelled_tasks: u32,
+    pub decision_id: DecisionId,
+}
+
+/// Insert a plan revision and point the run at it.
+pub(crate) async fn insert_plan_in_tx(conn: &mut SqliteConnection, plan: &Plan) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO plans (id, run_id, goal_id, revision, body, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(plan.id.as_str())
+    .bind(plan.run_id.as_str())
+    .bind(plan.goal_id.as_str())
+    .bind(plan.revision)
+    .bind(serde_json::to_string(plan)?)
+    .bind(to_rfc3339(plan.created_at))
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query("UPDATE runs SET plan_id = ?, updated_at = ? WHERE id = ?")
+        .bind(plan.id.as_str())
+        .bind(to_rfc3339(now()))
+        .bind(plan.run_id.as_str())
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
 pub(crate) async fn insert_run_and_goal_in_tx(
     conn: &mut SqliteConnection,
     run: &Run,

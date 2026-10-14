@@ -8,6 +8,7 @@ mod lock;
 mod owners;
 mod passages;
 mod queries;
+mod queue;
 mod search;
 mod tasks;
 #[cfg(test)]
@@ -19,10 +20,11 @@ pub use lock::ProjectLock;
 pub use owners::{OwnerDigest, SourceFilter};
 pub use passages::{OwnedPassageHit, PassageHit, StoredPassage, sanitize_match_query};
 pub use queries::{ItemSummary, RunOverview};
+pub use queue::{ENGINE_OWNER, QueueContext, QueueEntry, QueueState, QueueStatus, RunTiming};
 pub use search::StoredWork;
 pub use tasks::BudgetUsage;
 pub use uploads::Upload;
-pub use writes::RecordBatch;
+pub use writes::{RecordBatch, RunCancelled};
 
 use crate::records::RunId;
 use crate::{Error, Result};

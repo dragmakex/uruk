@@ -634,10 +634,9 @@ async fn stop_request_is_observed_by_a_running_scheduler() {
     );
 }
 
-/// Failed work is charged for what it consumed (SPEC §6). A provider
-/// failure is terminal for the work: the scheduler neither re-runs the task
-/// on top of the provider's own bounded retries nor proposes the same work
-/// again under a new task id.
+/// Failed work is charged for what it consumed (SPEC §6). A permanent
+/// provider refusal is terminal for the work: the scheduler neither re-runs
+/// the task nor proposes the same work again under a new task id.
 #[tokio::test]
 async fn failed_work_is_charged_and_not_re_proposed() {
     let provider = MockProvider::new()
@@ -682,7 +681,7 @@ async fn failed_work_is_charged_and_not_re_proposed() {
         failed
             .error
             .as_deref()
-            .is_some_and(|e| e.contains("mock transient failure")),
+            .is_some_and(|e| e.contains("mock provider refused")),
         "the provider's message is kept verbatim: {failed:?}"
     );
     assert_eq!(failed.failure, Some(FailureKind::Provider), "{failed:?}");

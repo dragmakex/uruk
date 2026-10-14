@@ -4,23 +4,27 @@
 //! module, which is what OpenAI, Anthropic's compatibility endpoint, Together,
 //! Groq, vLLM, llama.cpp, Ollama and OpenRouter accept.
 //!
-//! This adapter is the one owner of retry for transient failures (429, 5xx,
-//! connection and timeout errors): bounded attempts with jittered
-//! exponential backoff, `Retry-After`, and request-start pacing live here,
-//! and the final error states the attempts made exactly once. The scheduler
-//! treats a provider error that survived these retries as final for the
-//! task, so attempts are never multiplied by a second retry loop. The loop
-//! is bounded in time by the caller's cancellation (the run's stop request
-//! or wall-clock deadline; see [`crate::agents::AgentContext::complete`]),
-//! which drops the in-flight attempt and any pending backoff.
+//! This adapter classifies every outcome of a send as served, permanently
+//! refused, or transient, and nothing more: a transient failure (a
+//! transport error, or a 408, 425, 429, or 5xx) is waited out through the
+//! process-wide [`UpstreamGate`] of the upstream — one half-open probe at a
+//! time, capped backoff, `Retry-After` honored — until the upstream serves
+//! the request. The wait is bounded only by the caller's cancellation
+//! (the run's stop request; see [`crate::agents::AgentContext::complete`]),
+//! which drops the in-flight send and any pending probe. A permanent
+//! refusal (another 4xx, an unparseable reply, a malformed request) is
+//! [`Error::Provider`] at once. Request-start pacing applies to every send,
+//! probes included.
 
+use super::availability::{SendError, complete_through_gate};
 use super::pacing::StartPacer;
-use super::{Attempts, ChatRequest, ChatResponse, Provider, budget_refused};
+use super::{
+    Attempts, ChatRequest, ChatResponse, ProbeBackoff, Provider, TransientFault, TransportPhase,
+    UpstreamGate,
+};
 use crate::{Error, Result};
-use rand::{Rng, SeedableRng};
-use rand_chacha::ChaCha8Rng;
 use std::num::NonZeroU32;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Environment variables that configure the provider.
@@ -51,17 +55,14 @@ pub struct HttpProvider {
     /// one endpoint — explicit default port, userinfo, host casing — collapse
     /// to the same identity, so they share one pacer schedule.
     upstream: String,
-    max_retries: u32,
-    retry_base: Duration,
+    /// Spacing of the probes this handle schedules while its upstream is
+    /// unavailable.
+    probe_backoff: ProbeBackoff,
     reasoning_effort: Option<String>,
     /// This handle's pacing target; `None` means unpaced. The shared
     /// schedule it resolves to at request time (see [`Self::pacer`]) is one
     /// per upstream identity, making the limit process-wide.
     rpm: Option<NonZeroU32>,
-    /// Retry-backoff jitter source. Clones share it, which is fine: each
-    /// draw is independent, so handles still avoid retrying in lockstep.
-    /// Locked only for a single draw, never across an `.await`.
-    jitter: Arc<Mutex<ChaCha8Rng>>,
 }
 
 /// Parse a `Retry-After` header value against the given wall-clock `now`.
@@ -151,11 +152,9 @@ impl HttpProvider {
             model: model.into(),
             name: format!("openai-compatible@{display_host}"),
             upstream,
-            max_retries: 3,
-            retry_base: Duration::from_millis(500),
+            probe_backoff: ProbeBackoff::DEFAULT,
             reasoning_effort: None,
             rpm: default_rpm,
-            jitter: Arc::new(Mutex::new(ChaCha8Rng::seed_from_u64(rand::random()))),
         })
     }
 
@@ -190,14 +189,11 @@ impl HttpProvider {
         Ok(Some(provider))
     }
 
-    pub fn with_max_retries(mut self, n: u32) -> Self {
-        self.max_retries = n;
-        self
-    }
-
-    /// Base delay for exponential backoff; tests shrink it.
-    pub fn with_retry_base(mut self, d: Duration) -> Self {
-        self.retry_base = d;
+    /// How this handle spaces its probes of an unavailable upstream; tests
+    /// shrink it. The gate itself is shared per upstream, so the handle
+    /// that reports a failure sets the wait before the next probe.
+    pub fn with_probe_backoff(mut self, backoff: ProbeBackoff) -> Self {
+        self.probe_backoff = backoff;
         self
     }
 
@@ -239,30 +235,6 @@ impl HttpProvider {
         })
     }
 
-    /// Seed the retry-backoff jitter; tests use this for determinism.
-    pub fn with_jitter_seed(mut self, seed: u64) -> Self {
-        self.jitter = Arc::new(Mutex::new(ChaCha8Rng::seed_from_u64(seed)));
-        self
-    }
-
-    /// Exponential backoff for `attempt` with equal jitter: uniformly drawn
-    /// from `[nominal/2, nominal]` where `nominal = retry_base * 2^attempt`.
-    /// Bounded above by the un-jittered value, so the retry budget never
-    /// grows; randomized below it, so concurrent workers spread out.
-    fn jittered_backoff(&self, attempt: u32) -> Duration {
-        let nominal = self.retry_base.saturating_mul(2u32.saturating_pow(attempt));
-        let factor = {
-            // RNG state is valid after any panic; recover a poisoned lock
-            // rather than cascading the panic into every later retry.
-            let mut rng = self
-                .jitter
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            rng.gen_range(0.5..=1.0)
-        };
-        nominal.mul_f64(factor)
-    }
-
     /// `reasoning_effort` to send with every request; `None` omits the field.
     pub fn with_reasoning_effort(mut self, effort: Option<String>) -> Self {
         self.reasoning_effort = effort;
@@ -276,6 +248,73 @@ impl HttpProvider {
     pub fn base_url(&self) -> &str {
         &self.base_url
     }
+
+    /// The process-wide availability gate of this handle's upstream.
+    fn gate(&self) -> Arc<UpstreamGate> {
+        UpstreamGate::shared(&self.upstream)
+    }
+
+    /// Send the request once and classify what came back.
+    async fn send_once(
+        &self,
+        url: &str,
+        body: &serde_json::Value,
+    ) -> std::result::Result<ChatResponse, SendError> {
+        let mut req = self.client.post(url).json(body);
+        if let Some(key) = &self.api_key {
+            req = req.bearer_auth(key);
+        }
+        let resp = req.send().await.map_err(classify_request_error)?;
+        let status = resp.status();
+        let retry_after = resp
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| parse_retry_after(v, time::OffsetDateTime::now_utc()));
+        let text = resp.text().await.map_err(|e| {
+            SendError::Transient(TransientFault::transport(
+                TransportPhase::Response,
+                e.to_string(),
+            ))
+        })?;
+        if status.is_success() {
+            return serde_json::from_str::<ChatResponse>(&text).map_err(|e| {
+                SendError::Permanent(Error::Provider(format!(
+                    "unparseable chat completion ({e}): {}",
+                    clip(&text, 300)
+                )))
+            });
+        }
+        let code = status.as_u16();
+        if TransientFault::is_transient_status(code) {
+            return Err(SendError::Transient(TransientFault::status(
+                code,
+                retry_after,
+                clip(&text, 300),
+            )));
+        }
+        Err(SendError::Permanent(Error::Provider(format!(
+            "HTTP {status}: {}",
+            clip(&text, 300)
+        ))))
+    }
+}
+
+/// A request that produced no response at all: a configuration or
+/// redirect problem is permanent; everything else is a transport fault
+/// of the upstream, waited out.
+fn classify_request_error(e: reqwest::Error) -> SendError {
+    if e.is_builder() || e.is_redirect() {
+        return SendError::Permanent(Error::Provider(format!("request failed: {e}")));
+    }
+    let phase = if e.is_connect() {
+        TransportPhase::Connect
+    } else if e.is_body() || e.is_decode() {
+        TransportPhase::Response
+    } else {
+        TransportPhase::Send
+    };
+    SendError::Transient(TransientFault::transport(phase, e.to_string()))
 }
 
 #[async_trait::async_trait]
@@ -303,97 +342,20 @@ impl Provider for HttpProvider {
         if let Some(effort) = &self.reasoning_effort {
             body["reasoning_effort"] = serde_json::Value::String(effort.clone());
         }
-        let mut attempt = 0u32;
-        // Earliest permitted start of the next attempt (retry backoff and
-        // any honored Retry-After). The pacer folds it into its slot, so the
-        // waits run concurrently — never back to back.
-        let mut floor: Option<tokio::time::Instant> = None;
-        // The most recent transient failure, for a budget refusal's report.
-        let mut last_error: Option<String> = None;
+        let gate = self.gate();
         let pacer = self.pacer();
+        complete_through_gate(
+            &gate,
+            pacer.as_deref(),
+            &self.probe_backoff,
+            attempts,
+            || self.send_once(&url, &body),
+        )
+        .await
+    }
 
-        loop {
-            // Pace every outbound attempt, the first as much as any retry.
-            match &pacer {
-                Some(pacer) => pacer.pace(floor).await,
-                None => {
-                    if let Some(floor) = floor {
-                        tokio::time::sleep_until(floor).await;
-                    }
-                }
-            }
-
-            let mut req = self.client.post(&url).json(&body);
-            if let Some(key) = &self.api_key {
-                req = req.bearer_auth(key);
-            }
-
-            // The budget is consulted before every attempt, retries
-            // included: an attempt it cannot cover is never sent.
-            let Some(sent) = attempts.try_start().await? else {
-                return Err(budget_refused(attempts, last_error.as_deref()));
-            };
-            let (transient_error, retry_after) = match req.send().await {
-                Ok(resp) => {
-                    let status = resp.status();
-                    let retry_after = (status.as_u16() == 429)
-                        .then(|| {
-                            resp.headers()
-                                .get(reqwest::header::RETRY_AFTER)?
-                                .to_str()
-                                .ok()
-                                .and_then(|v| parse_retry_after(v, time::OffsetDateTime::now_utc()))
-                        })
-                        .flatten();
-                    let body = resp
-                        .text()
-                        .await
-                        .map_err(|e| Error::Provider(format!("reading response: {e}")))?;
-                    if status.is_success() {
-                        return serde_json::from_str::<ChatResponse>(&body).map_err(|e| {
-                            Error::Provider(format!(
-                                "unparseable chat completion ({e}): {}",
-                                clip(&body, 300)
-                            ))
-                        });
-                    }
-                    let transient = status.as_u16() == 429 || status.is_server_error();
-                    let message = format!("HTTP {status}: {}", clip(&body, 300));
-                    if !transient {
-                        return Err(Error::Provider(message));
-                    }
-                    (message, retry_after)
-                }
-                Err(e) => {
-                    let transient = e.is_connect() || e.is_timeout() || e.is_request();
-                    if !transient {
-                        return Err(Error::Provider(format!("request failed: {e}")));
-                    }
-                    (format!("request failed: {e}"), None)
-                }
-            };
-
-            if attempt >= self.max_retries {
-                let noun = if sent == 1 { "attempt" } else { "attempts" };
-                return Err(Error::Provider(format!(
-                    "{transient_error} (after {sent} {noun})"
-                )));
-            }
-            // One delay serves both signals: the larger of jittered backoff
-            // and Retry-After, then expressed as a floor so a pacer wait can
-            // subsume it rather than add to it.
-            let backoff = self.jittered_backoff(attempt);
-            let delay = retry_after.map_or(backoff, |ra| ra.max(backoff));
-            floor = Some(tokio::time::Instant::now() + delay);
-            tracing::warn!(
-                attempt,
-                %transient_error,
-                delay_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
-                "provider call failed; retrying"
-            );
-            last_error = Some(transient_error);
-            attempt += 1;
-        }
+    fn upstream_gate(&self) -> Option<Arc<UpstreamGate>> {
+        Some(self.gate())
     }
 }
 
@@ -415,46 +377,6 @@ mod tests {
     use super::*;
     use time::format_description::well_known::Rfc2822;
     use time::macros::datetime;
-
-    fn provider() -> HttpProvider {
-        HttpProvider::new("http://localhost:9/v1", None, "m").unwrap()
-    }
-
-    #[test]
-    fn jittered_backoff_stays_between_half_and_full_nominal() {
-        let p = provider().with_jitter_seed(7);
-        for attempt in 0..4u32 {
-            let nominal = Duration::from_millis(500) * 2u32.pow(attempt);
-            let jittered = p.jittered_backoff(attempt);
-            assert!(
-                jittered >= nominal / 2,
-                "attempt {attempt}: {jittered:?} below {:?}",
-                nominal / 2
-            );
-            assert!(
-                jittered <= nominal,
-                "attempt {attempt}: {jittered:?} above {nominal:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn same_seed_gives_a_deterministic_backoff_sequence() {
-        let a = provider().with_jitter_seed(42);
-        let b = provider().with_jitter_seed(42);
-        let seq_a: Vec<_> = (0..4).map(|i| a.jittered_backoff(i)).collect();
-        let seq_b: Vec<_> = (0..4).map(|i| b.jittered_backoff(i)).collect();
-        assert_eq!(seq_a, seq_b);
-    }
-
-    #[test]
-    fn different_seeds_do_not_back_off_in_lockstep() {
-        let a = provider().with_jitter_seed(1);
-        let b = provider().with_jitter_seed(2);
-        let seq_a: Vec<_> = (0..4).map(|i| a.jittered_backoff(i)).collect();
-        let seq_b: Vec<_> = (0..4).map(|i| b.jittered_backoff(i)).collect();
-        assert_ne!(seq_a, seq_b, "workers must not retry in lockstep");
-    }
 
     #[test]
     fn retry_after_parses_delta_seconds() {

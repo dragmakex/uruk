@@ -3,12 +3,24 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ApiDown } from "@/components/ApiDown";
 import { ApiFailure, fetchRuns } from "@/lib/api";
-import { shortRunId, stateLabel } from "@/lib/format";
+import { queueNote, shortRunId, stateLabel } from "@/lib/format";
 import { identityCookieHeader } from "@/lib/server-identity";
 import type { RunOverview } from "@/lib/types";
 
 export const metadata: Metadata = { title: "Runs" };
 export const dynamic = "force-dynamic";
+
+/** The state as the card prints it: queued runs say where they stand, a
+ * running run waiting out a provider outage says so (it is not failed). */
+function cardState(run: RunOverview): string {
+  if (run.state === "queued" && run.queue_position !== null) {
+    return `queued, position ${run.queue_position} (${queueNote(run.queue_position)})`;
+  }
+  if (run.state === "running" && run.paused_since !== null) {
+    return "running, waiting for provider";
+  }
+  return stateLabel(run.state);
+}
 
 function RunCard({ run }: { run: RunOverview }) {
   const created = run.created_at.slice(0, 16).replace("T", " ");
@@ -18,7 +30,7 @@ function RunCard({ run }: { run: RunOverview }) {
         <span className="micro">
           run {shortRunId(run.id)}, {created} UTC
         </span>
-        <span className="micro-ink">{stateLabel(run.state)}</span>
+        <span className="micro-ink">{cardState(run)}</span>
       </div>
       <p className="run-card-question" style={{ margin: 0 }}>
         {run.question}

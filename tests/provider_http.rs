@@ -1,10 +1,11 @@
 //! The OpenAI-compatible HTTP provider against a local stand-in server
-//! (SPEC §9.1: bounded retries, timeouts, usage accounting). No live network.
+//! (SPEC §9.1: wire shape, transient waiting, usage accounting). No live
+//! network. Outage behaviour in depth is in `provider_availability.rs`.
 
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use uruk::provider::{ChatRequest, HttpProvider, Message, Provider};
+use uruk::provider::{ChatRequest, HttpProvider, Message, ProbeBackoff, Provider};
 
 /// One captured HTTP request.
 struct Captured {
@@ -149,7 +150,7 @@ async fn reasoning_effort_is_sent_when_configured() {
 }
 
 #[tokio::test]
-async fn retries_transient_failures_with_a_bound() {
+async fn transient_failures_are_waited_out_until_served() {
     let (url, server) = serve(vec![
         (503, "{\"error\": \"overloaded\"}".into()),
         (429, "{\"error\": \"rate limited\"}".into()),
@@ -158,41 +159,39 @@ async fn retries_transient_failures_with_a_bound() {
     .await;
     let provider = HttpProvider::new(&url, None, "m")
         .unwrap()
-        .with_max_retries(3)
-        .with_retry_base(Duration::from_millis(5));
+        .with_probe_backoff(ProbeBackoff::new(
+            Duration::from_millis(5),
+            Duration::from_millis(5),
+        ));
 
     let response = provider
         .complete(ChatRequest::new("m", vec![Message::user("hi")]))
         .await
         .unwrap();
     assert_eq!(response.text(), "finally");
-    assert_eq!(server.await.unwrap().len(), 3, "two retries, then success");
+    assert_eq!(server.await.unwrap().len(), 3, "two probes, then served");
 }
 
 #[tokio::test]
-async fn gives_up_after_the_retry_bound() {
-    let (url, server) = serve(vec![(500, "boom".into()), (500, "boom".into())]).await;
+async fn a_persistent_outage_never_ends_the_call_on_its_own() {
+    let (url, server) = serve((0..12).map(|_| (500, "boom".to_string())).collect()).await;
     let provider = HttpProvider::new(&url, None, "m")
         .unwrap()
-        .with_max_retries(1)
-        .with_retry_base(Duration::from_millis(5));
+        .with_probe_backoff(ProbeBackoff::new(
+            Duration::from_millis(5),
+            Duration::from_millis(5),
+        ));
 
-    let err = provider
-        .complete(ChatRequest::new("m", vec![Message::user("hi")]))
-        .await
-        .unwrap_err();
-    assert!(matches!(err, uruk::Error::Provider(_)), "{err}");
-    let message = err.to_string();
+    let outcome = tokio::time::timeout(
+        Duration::from_millis(600),
+        provider.complete(ChatRequest::new("m", vec![Message::user("hi")])),
+    )
+    .await;
     assert!(
-        message.ends_with("(after 2 attempts)"),
-        "the adapter reports the attempts it made, in plain words: {message}"
+        outcome.is_err(),
+        "the call is still waiting for the upstream, not failed: {outcome:?}"
     );
-    assert_eq!(
-        message.matches("attempt").count(),
-        1,
-        "the attempt count appears exactly once: {message}"
-    );
-    assert_eq!(server.await.unwrap().len(), 2);
+    server.abort();
 }
 
 #[tokio::test]

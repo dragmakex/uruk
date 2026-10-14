@@ -8,10 +8,14 @@
 //! Model selection stays outside research policy (SPEC §13): agents receive a
 //! `&dyn Provider` and never name a vendor.
 
+mod availability;
 mod http;
 mod mock;
 mod pacing;
 
+pub use availability::{
+    Admission, GateStatus, ProbeBackoff, TransientFault, TransportPhase, UpstreamGate,
+};
 pub use http::{
     ENV_KEY, ENV_MODEL, ENV_REASONING, ENV_RPM, ENV_URL, HttpProvider, SWISSAI_DEFAULT_RPM,
 };
@@ -208,36 +212,47 @@ impl ChatResponse {
     }
 }
 
-/// The caller's authority over whether one more outbound attempt may be
-/// sent. Implemented over durable run accounting (see
+/// The caller's authority over whether one more logical model call may be
+/// made. Implemented over durable run accounting (see
 /// [`crate::agents::CallAllowance`]); the adapter only asks.
 #[async_trait::async_trait]
 pub trait AttemptBudget: Send + Sync + std::fmt::Debug {
-    /// Claim a model call for the outbound attempt with the given
-    /// `ordinal`, unique across every completion of the task attempt (see
+    /// Claim a model call for the logical call with the given `ordinal`,
+    /// unique across every completion of the task attempt (see
     /// [`Attempts`]). `Ok(false)` means the budget cannot cover it, so the
     /// request must not go out.
     async fn claim(&self, ordinal: u32) -> Result<bool>;
+
+    /// Record that the logical call `ordinal` is being sent again (its
+    /// `resend`-th resend, from 1) after a transient upstream failure. An
+    /// audit fact, not a charge: the upstream served nothing. The default
+    /// records nothing.
+    async fn note_resend(&self, _ordinal: u32, _resend: u32) -> Result<()> {
+        Ok(())
+    }
 }
 
-/// Outbound request attempts of one completion, counted as each starts and
-/// gated by the caller's [`AttemptBudget`].
+/// The logical model calls of one completion, claimed as each starts and
+/// gated by the caller's [`AttemptBudget`], plus the resends each needed.
 ///
-/// Two counts live here. `started` is local to this completion: it is what
-/// the adapter reports ("after 3 attempts") and what the caller charges for
-/// this call. `sequence` is shared across every completion of one task
-/// attempt (a debate makes several), so each outbound request carries an
-/// ordinal that is unique task-attempt-wide; the budget keys its durable
-/// records by it, and no two requests can ever share a record.
+/// `started` is local to this completion and is what the caller charges
+/// for it: one logical call per completion, claimed before the first send.
+/// `sequence` is shared across every completion of one task attempt (a
+/// debate makes several), so each logical call carries an ordinal that is
+/// unique task-attempt-wide; the budget keys its durable records by it, and
+/// no two calls can ever share a record. Resends after a transient
+/// failure are counted and audited but claim no further call.
 ///
 /// Shared with the caller so the counts outlive the call: when cancellation
-/// drops the in-flight future, the attempt that was already sent is still
+/// drops the in-flight future, the call that was already claimed is still
 /// on record, and may still be billed (SPEC §9.2: preserve possible
-/// incurred cost). An attempt the budget refuses is never sent, so a retry
-/// can never spend a call the run does not have.
+/// incurred cost). A call the budget refuses is never sent.
 #[derive(Debug, Default)]
 pub struct Attempts {
     started: AtomicU32,
+    /// Ordinal of the logical call most recently claimed.
+    ordinal: AtomicU32,
+    resends: AtomicU32,
     sequence: Arc<AtomicU32>,
     /// `None` is unbounded: callers outside a budgeted run.
     budget: Option<Arc<dyn AttemptBudget>>,
@@ -248,15 +263,17 @@ impl Attempts {
     pub fn bounded(budget: Arc<dyn AttemptBudget>, sequence: Arc<AtomicU32>) -> Self {
         Self {
             started: AtomicU32::new(0),
+            ordinal: AtomicU32::new(0),
+            resends: AtomicU32::new(0),
             sequence,
             budget: Some(budget),
         }
     }
 
-    /// Claim a call and record that an attempt is being sent; returns this
-    /// completion's attempt number, from 1, or `None` when the budget is
-    /// spent, in which case nothing was recorded and the request must not
-    /// go out. A refused ordinal is consumed, never reused.
+    /// Claim a logical call and record that it is about to be sent;
+    /// returns this completion's call number, from 1, or `None` when the
+    /// budget is spent, in which case nothing was recorded and the request
+    /// must not go out. A refused ordinal is consumed, never reused.
     ///
     /// # Errors
     ///
@@ -268,16 +285,38 @@ impl Attempts {
         {
             return Ok(None);
         }
+        self.ordinal.store(ordinal, Ordering::SeqCst);
         Ok(Some(self.started.fetch_add(1, Ordering::SeqCst) + 1))
     }
 
-    /// Attempts started so far.
+    /// Record one more send of the current logical call after a transient
+    /// failure; returns the resend number, from 1.
+    ///
+    /// # Errors
+    ///
+    /// Propagates a failure of the budget's own store.
+    pub async fn resend(&self) -> Result<u32> {
+        let resend = self.resends.fetch_add(1, Ordering::SeqCst) + 1;
+        if let Some(budget) = &self.budget {
+            budget
+                .note_resend(self.ordinal.load(Ordering::SeqCst), resend)
+                .await?;
+        }
+        Ok(resend)
+    }
+
+    /// Logical calls claimed so far: what the caller is charged.
     pub fn count(&self) -> u32 {
         self.started.load(Ordering::SeqCst)
     }
+
+    /// Sends beyond the first of each logical call, across the completion.
+    pub fn resends(&self) -> u32 {
+        self.resends.load(Ordering::SeqCst)
+    }
 }
 
-/// The error for an attempt the budget would not cover, worded so a task
+/// The error for a call the budget would not cover, worded so a task
 /// reports budget exhaustion rather than a provider outage.
 fn budget_refused(attempts: &Attempts, last_error: Option<&str>) -> Error {
     let sent = attempts.count();
@@ -285,9 +324,9 @@ fn budget_refused(attempts: &Attempts, last_error: Option<&str>) -> Error {
     let message = match (sent, last_error) {
         (0, _) => "model-call budget exhausted before the request could be sent".to_string(),
         (n, Some(last)) => {
-            format!("model-call budget exhausted after {n} attempt{plural}; last: {last}")
+            format!("model-call budget exhausted after {n} call{plural}; last: {last}")
         }
-        (n, None) => format!("model-call budget exhausted after {n} attempt{plural}"),
+        (n, None) => format!("model-call budget exhausted after {n} call{plural}"),
     };
     Error::Budget(message)
 }
@@ -304,7 +343,7 @@ pub trait Provider: Send + Sync + std::fmt::Debug {
     /// Default model when the plan does not name one.
     fn default_model(&self) -> &str;
 
-    /// Perform one completion with one outbound request.
+    /// Perform one completion.
     ///
     /// Cancellation is the caller's concern: it races this future against a
     /// cancellation token, so implementations need not poll for it. This is
@@ -312,14 +351,19 @@ pub trait Provider: Send + Sync + std::fmt::Debug {
     /// counted and budgeted by the default [`Provider::complete_counted`].
     async fn complete(&self, request: ChatRequest) -> Result<ChatResponse>;
 
-    /// Perform one completion, calling [`Attempts::try_start`] immediately
-    /// before each outbound request so every attempt is on record (and
-    /// refused when the budget cannot cover it) even if the future is
-    /// dropped before the reply arrives.
+    /// Perform one completion, calling [`Attempts::try_start`] before the
+    /// first outbound request so the logical call is on record (and refused
+    /// when the budget cannot cover it) even if the future is dropped
+    /// before the reply arrives, and [`Attempts::resend`] before every
+    /// further send of the same call after a transient failure.
     ///
-    /// The default claims exactly one attempt and delegates to
-    /// [`Provider::complete`]. Adapters that retry internally override this
-    /// and implement `complete` by way of it with unbounded attempts.
+    /// A transient upstream failure never ends the completion: the adapter
+    /// waits for the upstream to recover (see [`UpstreamGate`]), bounded
+    /// only by the caller dropping the future. An `Err` is a permanent
+    /// refusal, a budget refusal, or a store failure.
+    ///
+    /// The default claims exactly one call and delegates to
+    /// [`Provider::complete`].
     async fn complete_counted(
         &self,
         request: ChatRequest,
@@ -329,6 +373,14 @@ pub trait Provider: Send + Sync + std::fmt::Debug {
             return Err(budget_refused(attempts, None));
         }
         self.complete(request).await
+    }
+
+    /// The availability gate of this provider's upstream, when it has one:
+    /// the scheduler watches it to tell a run paused on a provider outage
+    /// from a run doing research. `None` for providers without transient
+    /// failure handling.
+    fn upstream_gate(&self) -> Option<Arc<UpstreamGate>> {
+        None
     }
 }
 

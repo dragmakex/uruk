@@ -5,6 +5,7 @@
  */
 
 export type RunState =
+  | "queued"
   | "running"
   | "waiting-for-human"
   | "blocked"
@@ -14,6 +15,7 @@ export type RunState =
   | "failed";
 
 export const RUN_STATES: readonly RunState[] = [
+  "queued",
   "running",
   "waiting-for-human",
   "blocked",
@@ -32,6 +34,14 @@ export const TERMINAL_STATES: readonly RunState[] = [
 
 export type AgentState = "thinking" | "waiting" | "idle";
 
+/** A run's open wait for a transiently unavailable model provider. */
+export interface ProviderWait {
+  /** When the upstream was last seen unavailable (RFC 3339). */
+  since: string;
+  /** The transient failure last observed, as the adapter reported it. */
+  note: string | null;
+}
+
 export interface RunMeta {
   id: string;
   state: RunState;
@@ -39,6 +49,22 @@ export interface RunMeta {
   iterations: number;
   created_at: string;
   updated_at: string;
+  /** When the run first executed; null while queued. The budget runs from here. */
+  started_at: string | null;
+  /** Place on the run queue while `queued` (1 = next to start); null otherwise. */
+  queue_position: number | null;
+  /** Seconds of settled provider waits, excluded from the research clock. */
+  paused_secs: number;
+  /** The outage being waited out; the run is still `running`, not failed. */
+  provider_wait: ProviderWait | null;
+  /**
+   * While this run holds a queue place (`queue_position` is set):
+   * whether the run being executed is waiting out a provider outage,
+   * so the queued researcher knows why nothing moves. One bit only:
+   * never which run, whose, since when, or what the provider said.
+   * False after recovery, with nothing active, and off the queue.
+   */
+  queue_provider_waiting: boolean;
 }
 
 export interface BudgetView {
@@ -163,6 +189,10 @@ export interface RunOverview {
   mode: string;
   created_at: string;
   updated_at: string;
+  /** Place on the run queue while `queued` (1 = next to start); null otherwise. */
+  queue_position: number | null;
+  /** The open provider wait of a running run (RFC 3339), or null. */
+  paused_since: string | null;
 }
 
 export interface SourceOrigin {

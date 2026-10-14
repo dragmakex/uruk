@@ -25,6 +25,7 @@ import type {
   PassagePage,
   PassageView,
   PlanView,
+  ProviderWait,
   ReportView,
   RunMeta,
   RunOverview,
@@ -113,6 +114,25 @@ function agentState(value: unknown, path: string): AgentState {
   return s;
 }
 
+function parseProviderWait(value: unknown, path: string): ProviderWait | null {
+  if (value === null || value === undefined) return null;
+  const r = record(value, path);
+  return {
+    since: str(r.since, `${path}.since`),
+    note: strOrNull(r.note, `${path}.note`),
+  };
+}
+
+/** `null` is an explicit fact; an absent field is a contract drift. */
+function numOrNullRequired(
+  r: Record<string, unknown>,
+  key: string,
+  path: string,
+): number | null {
+  if (!(key in r)) throw new ParseError(`${path}.${key}`, "number | null", undefined);
+  return numOrNull(r[key], `${path}.${key}`);
+}
+
 function parseRunMeta(value: unknown, path: string): RunMeta {
   const r = record(value, path);
   return {
@@ -122,6 +142,14 @@ function parseRunMeta(value: unknown, path: string): RunMeta {
     iterations: num(r.iterations, `${path}.iterations`),
     created_at: str(r.created_at, `${path}.created_at`),
     updated_at: str(r.updated_at, `${path}.updated_at`),
+    started_at: strOrNull(r.started_at, `${path}.started_at`),
+    queue_position: numOrNullRequired(r, "queue_position", path),
+    paused_secs: num(r.paused_secs, `${path}.paused_secs`),
+    provider_wait: parseProviderWait(r.provider_wait, `${path}.provider_wait`),
+    queue_provider_waiting: bool(
+      r.queue_provider_waiting,
+      `${path}.queue_provider_waiting`,
+    ),
   };
 }
 
@@ -305,6 +333,8 @@ export function parseRunOverviews(value: unknown): RunOverview[] {
       mode: str(o.mode, `runs[${i}].mode`),
       created_at: str(o.created_at, `runs[${i}].created_at`),
       updated_at: str(o.updated_at, `runs[${i}].updated_at`),
+      queue_position: numOrNullRequired(o, "queue_position", `runs[${i}]`),
+      paused_since: strOrNull(o.paused_since, `runs[${i}].paused_since`),
     };
   });
 }
