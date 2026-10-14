@@ -25,28 +25,11 @@ Supervisor, the eight adapted prompt templates, approval-gated contained
 execution with reproducibility records, mid-run goal revision, an
 OpenAI-compatible HTTP provider, the web API, and the report exporter.
 The product surface is web-only: the binary's single command is
-`uruk serve`, and some engine capabilities are not yet reachable from the
-web surface (see "What a web run can do" below).
+`uruk serve`.
 
 Built on Rust 1.98 (edition 2024) with current crates: `reqwest` 0.13 over
 rustls for the model provider and retrieval, `pdf_oxide` for PDF text, and
 `dom_smoothie` (a readability port) for web pages.
-
-## Web console
-
-The browser is Uruk's only frontend. `uruk serve` — the binary's single
-command — starts a local JSON/SSE API on `127.0.0.1:7913` (axum), and
-`web/` holds the Next.js frontend for it: full run specification (goal,
-rubric, budgets, source
-URLs, file uploads, explicit network and literature-search grants, and a
-dry-run plan preview), a live agent-topology view, reports, and the
-source library. Identity is one anonymous persistent browser cookie — no
-accounts or login: each browser sees and controls only the runs it started,
-ownerless runs from older builds are never exposed over the web, and
-clearing site data permanently loses access. The cookie is a bearer token, so keep
-the API on loopback or behind a TLS proxy with `URUK_COOKIE_SECURE=true`.
-Setup, architecture, the cookie contract, and the reverse-proxy recipe
-are in [docs/WEB.md](docs/WEB.md).
 
 ## Build and test
 
@@ -123,26 +106,6 @@ Errors carry a stable `kind`
 (`validation`, `permission`, `budget`, `not_found`, `provider`, `search`,
 `cancelled`, …)
 to branch on without parsing prose.
-
-### What a web run can do
-
-A web run analyses its goal with the configured model and reports
-evidence-backed findings; it grants the engine nothing with side effects.
-No file inputs, no network retrieval, no literature search, and no tool
-execution: an anonymous cookie identifies a browser, not a person who can
-be held to a grant.
-
-**Computational execution is unavailable in the web-only product.** The
-engine runs a program only under an approval bound to the exact payload
-hash (SPEC §12), and the web console has no UI yet that shows that exact
-payload and records the researcher's approval of it. Until an
-exact-payload approval UI exists, no execution request can be granted —
-items that would need an experiment stay below `Supported` for lack of
-empirical evidence rather than anything executing silently. Ingestion,
-federated literature search,
-and contained execution remain implemented and tested in the engine
-(`src/tools`, `src/search`, `src/runtime`) and return to the surface once
-the API can attribute an exact-payload approval to someone.
 
 ## Outputs
 
@@ -239,14 +202,13 @@ cannot run, the report says why.
   per-run search grants (`search:openalex`, `search:crossref`,
   `search:arxiv` on top of the network permission) enable connectors; the
   network permission alone keeps URL-fetch-only behavior and sends zero
-  connector traffic. Web runs today grant neither (see "What a web run
-  can do"). With search enabled, query text, year filters, and the configured
-  contact email (`URUK_CONTACT_EMAIL`, polite pools) are transmitted to the
-  enabled operators (OurResearch, Crossref, arXiv/Cornell) — never source
-  contents, never the goal record. Every transmitted query is persisted
-  verbatim in a `SearchRecord` and printed in REPORT.md. Acquisition fetches
-  only URLs a connector designates as legal open-access locations; paywalled
-  works are recorded as abstract-only or unavailable, never bypassed.
+  connector traffic. With search enabled, query text, year filters, and the
+  configured contact email (`URUK_CONTACT_EMAIL`, polite pools) are
+  transmitted to the enabled operators (OurResearch, Crossref, arXiv/Cornell)
+  — never source contents, never the goal record. Every transmitted query is
+  persisted verbatim in a `SearchRecord` and printed in REPORT.md. Acquisition
+  fetches only URLs a connector designates as legal open-access locations;
+  paywalled works are recorded as abstract-only or unavailable, never bypassed.
 
 ## Layout
 
@@ -269,7 +231,7 @@ Every ingested source with a text artifact is chunked into passages and
 indexed in SQLite FTS5 inside `.uruk/state.sqlite`; prompts ground in ranked
 passages, and `GET /api/runs/{id}/passages` queries the index offline —
 this needs no network at all. With the network and search permissions
-granted (not yet possible from the web surface), discovery federates
+granted, discovery federates
 OpenAlex, Crossref, and arXiv (freely accessible public APIs — Uruk runs
 none of their code), deduplicates by DOI/arXiv/PMID/title fingerprint, fuses
 rankings with Reciprocal Rank Fusion, and acquires open-access full text
@@ -284,10 +246,6 @@ read.
 
 ## Not implemented
 
-- Web surfaces for granting file inputs, network retrieval, literature
-  search, or computational execution. All of them wait on the same
-  prerequisite: a UI that can show the exact payload being approved and
-  attribute that approval (see "What a web run can do").
 - Unpaywall open-access resolution; resolution currently uses only the OA
   locations the discovery connectors themselves designate.
 - PubMed/PMC (NCBI E-utilities) connector and JATS full-text extraction;
