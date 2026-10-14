@@ -37,7 +37,8 @@ pub struct TaskOutcome {
 /// Every failure the role reports is final for this task: a transient
 /// provider fault never reaches here, because the adapter waits for the
 /// upstream to recover (see [`crate::provider::UpstreamGate`]), so a
-/// provider error is a permanent refusal and is reported once, not re-run.
+/// provider error is a terminal request failure and is reported once, not
+/// re-run.
 /// Validation failures are permanent by nature, and cancellation retains
 /// labelled partial artifacts. Only storage errors propagate, since nothing
 /// can be recorded through a broken store.

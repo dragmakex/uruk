@@ -1,14 +1,16 @@
 //! Waiting out a transiently unavailable upstream (SPEC §9.1).
 //!
-//! A transient failure — a transport error on connect, send, or response,
-//! or a 408, 425, 429, or 5xx — is never the end of a completion. The
+//! A transient failure — any connect failure (including a connect timeout),
+//! a non-timeout send or response transport error, or a 408, 425, 429, or
+//! 5xx — is never the end of a completion. The
 //! request waits for the upstream to recover, bounded only by the
 //! caller's cancellation. A process-wide [`UpstreamGate`] per upstream
 //! keeps every waiter behind one half-open probe at a time, with
 //! exponential backoff capped by [`ProbeBackoff`] and any `Retry-After`
-//! the upstream sends honored in full. Permanent refusals — other 4xx,
-//! malformed replies, bad configuration — fail at once and are the
-//! adapter's [`crate::Error::Provider`].
+//! the upstream sends honored in full. Terminal request failures — an
+//! overall completion timeout, other 4xx, malformed replies, or bad
+//! configuration — fail at once and are the adapter's
+//! [`crate::Error::Provider`].
 //!
 //! Budget: one completion is one logical model call, claimed before its
 //! first send. Resends after a transient failure are audited as ledger
@@ -124,13 +126,6 @@ impl TransientFault {
         }
     }
 
-    pub fn timeout(after: Duration) -> Self {
-        Self::transport(
-            TransportPhase::Response,
-            format!("request timed out after {after:?} while waiting for the model provider"),
-        )
-    }
-
     /// The upstream's `Retry-After`, when the fault carried one.
     pub fn retry_after(&self) -> Option<Duration> {
         match self {
@@ -162,7 +157,9 @@ impl fmt::Display for TransientFault {
 pub(super) enum SendError {
     /// Wait and send again.
     Transient(TransientFault),
-    /// Report to the caller; the upstream is up, the request is refused.
+    /// End this logical call without changing shared upstream availability.
+    RequestTimeout(Error),
+    /// Report to the caller without declaring a provider-wide outage.
     Permanent(Error),
 }
 
@@ -478,8 +475,8 @@ impl UpstreamGate {
 /// Drive one completion to a served answer: claim the logical model call,
 /// then send through `gate` (and `pacer`, when the upstream is paced)
 /// until the upstream serves it, waiting out every transient failure.
-/// Ends only with a served reply, a permanent refusal, a budget refusal
-/// before the first send, or the caller dropping the future.
+/// Ends only with a served reply, a terminal request failure, a budget
+/// refusal before the first send, or the caller dropping the future.
 pub(super) async fn complete_through_gate<F, Fut>(
     gate: &UpstreamGate,
     pacer: Option<&StartPacer>,
@@ -515,6 +512,11 @@ where
             }
             Err(SendError::Permanent(error)) => {
                 gate.report_served(admission);
+                return Err(error);
+            }
+            Err(SendError::RequestTimeout(error)) => {
+                // One slow request is not evidence either that the upstream
+                // is down or that a concurrent outage has recovered.
                 return Err(error);
             }
             Err(SendError::Transient(fault)) => {
@@ -611,5 +613,48 @@ mod tests {
         }
         assert_eq!(probes, 1, "one probe, then open admission for the rest");
         assert!(gate.status().is_available());
+    }
+
+    #[tokio::test]
+    async fn a_request_timeout_does_not_erase_a_concurrent_outage() {
+        let gate = Arc::new(UpstreamGate::new());
+        let attempts = Arc::new(Attempts::default());
+        let entered = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let completion = tokio::spawn({
+            let gate = Arc::clone(&gate);
+            let attempts = Arc::clone(&attempts);
+            let entered = Arc::clone(&entered);
+            let release = Arc::clone(&release);
+            async move {
+                complete_through_gate(&gate, None, &ProbeBackoff::DEFAULT, &attempts, || {
+                    let entered = Arc::clone(&entered);
+                    let release = Arc::clone(&release);
+                    async move {
+                        entered.notify_one();
+                        release.notified().await;
+                        Err(SendError::RequestTimeout(Error::Provider(
+                            "request timed out".into(),
+                        )))
+                    }
+                })
+                .await
+            }
+        });
+        entered.notified().await;
+
+        let concurrent = gate.admit().await;
+        gate.report_transient(
+            concurrent,
+            &TransientFault::status(503, None, "down"),
+            &ProbeBackoff::DEFAULT,
+        );
+        release.notify_one();
+
+        assert!(matches!(completion.await.unwrap(), Err(Error::Provider(_))));
+        assert!(
+            !gate.status().is_available(),
+            "the timeout proves nothing about the concurrent outage"
+        );
     }
 }
