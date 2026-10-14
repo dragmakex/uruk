@@ -34,6 +34,10 @@ pub const ENV_MODEL: &str = "URUK_MODEL";
 /// Optional `reasoning_effort` sent with every request (`none`, `low`, `medium`,
 /// `high`). Reasoning models spend most of their time thinking otherwise.
 pub const ENV_REASONING: &str = "URUK_REASONING_EFFORT";
+/// Optional positive overall completion-request timeout in seconds. This is
+/// deliberately much longer than the connect timeout because non-streaming
+/// providers do not return headers until a long generation is complete.
+pub const ENV_TIMEOUT_SECS: &str = "URUK_PROVIDER_TIMEOUT_SECS";
 /// Optional request-start pacing in requests per minute. Unset keeps the
 /// per-endpoint default ([`SWISSAI_DEFAULT_RPM`] for SwissAI hosts, unpaced
 /// otherwise); `0` disables pacing explicitly.
@@ -43,10 +47,14 @@ pub const ENV_RPM: &str = "URUK_PROVIDER_RPM";
 /// endpoint, so providers pointed at a SwissAI host pace request starts to
 /// one per 60/14 s unless [`ENV_RPM`] overrides it.
 pub const SWISSAI_DEFAULT_RPM: u32 = 14;
+/// A 20,000-token non-streaming completion can legitimately take more than
+/// five minutes; keep the connection open while the provider is working.
+pub const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 30 * 60;
 
 #[derive(Debug, Clone)]
 pub struct HttpProvider {
     client: reqwest::Client,
+    request_timeout: Duration,
     base_url: String,
     api_key: Option<String>,
     model: String,
@@ -63,6 +71,21 @@ pub struct HttpProvider {
     /// schedule it resolves to at request time (see [`Self::pacer`]) is one
     /// per upstream identity, making the limit process-wide.
     rpm: Option<NonZeroU32>,
+}
+
+fn parse_request_timeout(value: Option<&str>) -> Result<Duration> {
+    let raw = value.unwrap_or("1800").trim();
+    let seconds = raw.parse::<u64>().map_err(|_| {
+        Error::validation(format!(
+            "{ENV_TIMEOUT_SECS} must be a positive whole number of seconds, got {raw:?}"
+        ))
+    })?;
+    if seconds == 0 {
+        return Err(Error::validation(format!(
+            "{ENV_TIMEOUT_SECS} must be greater than zero"
+        )));
+    }
+    Ok(Duration::from_secs(seconds))
 }
 
 /// Parse a `Retry-After` header value against the given wall-clock `now`.
@@ -111,6 +134,20 @@ impl HttpProvider {
         api_key: Option<String>,
         model: impl Into<String>,
     ) -> Result<Self> {
+        Self::new_with_timeout(
+            base_url,
+            api_key,
+            model,
+            Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS),
+        )
+    }
+
+    fn new_with_timeout(
+        base_url: impl Into<String>,
+        api_key: Option<String>,
+        model: impl Into<String>,
+        request_timeout: Duration,
+    ) -> Result<Self> {
         let base_url: String = base_url.into();
         let base_url = base_url.trim_end_matches('/').to_string();
         if !(base_url.starts_with("http://") || base_url.starts_with("https://")) {
@@ -120,7 +157,7 @@ impl HttpProvider {
         }
         let client = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(20))
-            .timeout(Duration::from_secs(300))
+            .timeout(request_timeout)
             .build()
             .map_err(|e| Error::Provider(format!("cannot build HTTP client: {e}")))?;
 
@@ -147,6 +184,7 @@ impl HttpProvider {
             .flatten();
         Ok(Self {
             client,
+            request_timeout,
             base_url,
             api_key,
             model: model.into(),
@@ -176,7 +214,14 @@ impl HttpProvider {
         let effort = std::env::var(ENV_REASONING)
             .ok()
             .filter(|e| !e.trim().is_empty());
-        let mut provider = Self::new(url, key, model)?.with_reasoning_effort(effort);
+        let timeout = parse_request_timeout(
+            std::env::var(ENV_TIMEOUT_SECS)
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .as_deref(),
+        )?;
+        let mut provider =
+            Self::new_with_timeout(url, key, model, timeout)?.with_reasoning_effort(effort);
         if let Some(rpm) = std::env::var(ENV_RPM).ok().filter(|v| !v.trim().is_empty()) {
             let rpm: u32 = rpm.trim().parse().map_err(|_| {
                 Error::validation(format!(
@@ -264,19 +309,20 @@ impl HttpProvider {
         if let Some(key) = &self.api_key {
             req = req.bearer_auth(key);
         }
-        let resp = req.send().await.map_err(classify_request_error)?;
+        let resp = req
+            .send()
+            .await
+            .map_err(|error| classify_request_error(error, self.request_timeout))?;
         let status = resp.status();
         let retry_after = resp
             .headers()
             .get(reqwest::header::RETRY_AFTER)
             .and_then(|v| v.to_str().ok())
             .and_then(|v| parse_retry_after(v, time::OffsetDateTime::now_utc()));
-        let text = resp.text().await.map_err(|e| {
-            SendError::Transient(TransientFault::transport(
-                TransportPhase::Response,
-                e.to_string(),
-            ))
-        })?;
+        let text = resp
+            .text()
+            .await
+            .map_err(|error| classify_request_error(error, self.request_timeout))?;
         if status.is_success() {
             return serde_json::from_str::<ChatResponse>(&text).map_err(|e| {
                 SendError::Permanent(Error::Provider(format!(
@@ -303,13 +349,20 @@ impl HttpProvider {
 /// A request that produced no response at all: a configuration or
 /// redirect problem is permanent; everything else is a transport fault
 /// of the upstream, waited out.
-fn classify_request_error(e: reqwest::Error) -> SendError {
+fn classify_request_error(e: reqwest::Error, request_timeout: Duration) -> SendError {
     if e.is_builder() || e.is_redirect() {
         return SendError::Permanent(Error::Provider(format!("request failed: {e}")));
     }
-    let phase = if e.is_connect() {
-        TransportPhase::Connect
-    } else if e.is_body() || e.is_decode() {
+    if e.is_connect() {
+        return SendError::Transient(TransientFault::transport(
+            TransportPhase::Connect,
+            e.to_string(),
+        ));
+    }
+    if e.is_timeout() {
+        return SendError::Transient(TransientFault::timeout(request_timeout));
+    }
+    let phase = if e.is_body() || e.is_decode() {
         TransportPhase::Response
     } else {
         TransportPhase::Send
@@ -447,6 +500,52 @@ mod tests {
             parse_retry_after(&header, now),
             Some(Duration::from_millis(30_600))
         );
+    }
+
+    #[test]
+    fn provider_request_timeout_defaults_to_thirty_minutes_and_is_configurable() {
+        assert_eq!(
+            parse_request_timeout(None).unwrap(),
+            Duration::from_secs(30 * 60)
+        );
+        assert_eq!(
+            parse_request_timeout(Some("2400")).unwrap(),
+            Duration::from_secs(2400)
+        );
+        for invalid in ["0", "-1", "1.5", "nope"] {
+            assert!(
+                parse_request_timeout(Some(invalid)).is_err(),
+                "invalid timeout {invalid:?} must be rejected"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn request_timeouts_are_reported_as_timeouts() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (_stream, _) = listener.accept().await.unwrap();
+            std::future::pending::<()>().await;
+        });
+        let error = reqwest::Client::builder()
+            .timeout(Duration::from_millis(20))
+            .build()
+            .unwrap()
+            .post(format!("http://{address}"))
+            .send()
+            .await
+            .unwrap_err();
+
+        let SendError::Transient(fault) = classify_request_error(error, Duration::from_millis(20))
+        else {
+            panic!("a request timeout must remain retryable");
+        };
+        assert_eq!(
+            fault.to_string(),
+            "response failed: request timed out after 20ms while waiting for the model provider"
+        );
+        server.abort();
     }
 
     #[test]

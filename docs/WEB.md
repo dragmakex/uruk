@@ -315,8 +315,9 @@ bun run dev                         # binds localhost:3000, proxies /api
 ```
 
 Open `http://localhost:3000`. A model provider is configured through the
-environment (`URUK_PROVIDER_URL`, `URUK_MODEL`, `URUK_API_KEY`, read from
-the project's `.env` when `uruk serve` starts); without one, runs
+environment (`URUK_PROVIDER_URL`, `URUK_MODEL`, `URUK_API_KEY`, and optional
+`URUK_PROVIDER_TIMEOUT_SECS`, read from the project's `.env` when `uruk serve`
+starts); without one, runs
 complete offline with a stand-in that states plainly that nothing was
 analysed.
 
