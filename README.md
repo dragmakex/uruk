@@ -58,6 +58,7 @@ URUK_MODEL=qwen3.5:9b
 URUK_API_KEY=...                              # optional for local servers
 URUK_REASONING_EFFORT=none                    # optional; stops reasoning models thinking at length
 URUK_PROVIDER_RPM=14                          # optional; paces request starts (0 disables)
+URUK_PROVIDER_TIMEOUT_SECS=1800               # optional; overall completion timeout
 ```
 
 A variable exported in the shell overrides the file.
@@ -71,6 +72,12 @@ of 14 requests/minute; every other endpoint is unpaced unless the variable
 is set. `URUK_PROVIDER_RPM=0` switches pacing off, including that default.
 One endpoint gets exactly one schedule per process: if differently-configured
 handles ever target the same endpoint, the strictest rate binds them all.
+
+`URUK_PROVIDER_TIMEOUT_SECS` is the overall deadline for one non-streaming
+completion request and defaults to 1,800 seconds (30 minutes). The separate
+connection timeout remains 20 seconds. A completion timeout is retried as a
+transient provider failure and does not consume another logical model call;
+stopping the run still cancels the in-flight request immediately.
 
 Without these, a run proceeds offline against a stand-in that performs no
 analysis. The report says so plainly rather than fabricating results.

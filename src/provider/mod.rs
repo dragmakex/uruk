@@ -17,7 +17,8 @@ pub use availability::{
     Admission, GateStatus, ProbeBackoff, TransientFault, TransportPhase, UpstreamGate,
 };
 pub use http::{
-    ENV_KEY, ENV_MODEL, ENV_REASONING, ENV_RPM, ENV_URL, HttpProvider, SWISSAI_DEFAULT_RPM,
+    DEFAULT_REQUEST_TIMEOUT_SECS, ENV_KEY, ENV_MODEL, ENV_REASONING, ENV_RPM, ENV_TIMEOUT_SECS,
+    ENV_URL, HttpProvider, SWISSAI_DEFAULT_RPM,
 };
 pub use mock::{MockProvider, MockRule, Reply};
 pub use pacing::StartPacer;

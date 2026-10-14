@@ -124,6 +124,13 @@ impl TransientFault {
         }
     }
 
+    pub fn timeout(after: Duration) -> Self {
+        Self::transport(
+            TransportPhase::Response,
+            format!("request timed out after {after:?} while waiting for the model provider"),
+        )
+    }
+
     /// The upstream's `Retry-After`, when the fault carried one.
     pub fn retry_after(&self) -> Option<Duration> {
         match self {
