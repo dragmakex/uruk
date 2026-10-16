@@ -129,8 +129,9 @@ turns between browsers (see "Taking turns" below):
   in the same transaction), runs the scheduler to the end, exports the
   report, and closes the entry. Later runs **never overtake** a head that
   is waiting for the provider.
-- A **transient provider failure** (a connect, send, or response transport
-  error, or a 408, 425, 429, or 5xx) does not fail anything. The head stays
+- A **transient provider failure** (any connect failure, including a connect
+  timeout; a non-timeout send or response transport error; or a 408, 425,
+  429, or 5xx) does not fail anything. The head stays
   `running`, its model call waits for the upstream to recover behind a
   process-wide availability gate (one half-open probe at a time,
   exponential backoff capped at 30 s, `Retry-After` honored), and its
@@ -138,7 +139,9 @@ turns between browsers (see "Taking turns" below):
   first start and excludes every provider wait. Only served calls count
   against `max_model_calls`; unserved sends are audited as `resend` rows
   in the budget ledger. A permanent refusal (another 4xx, an unparseable
-  reply) is terminal for that task at once, as before.
+  reply) is terminal for that task at once, as before. An overall completion
+  timeout is also terminal for that logical call: the request is not resent,
+  and one slow request does not close the process-wide availability gate.
 - **Stop** always works and is one transaction: the run is cancelled and
   leaves the queue, its undispatched tasks are cancelled with their
   reservations released, and the decision is recorded together, so a

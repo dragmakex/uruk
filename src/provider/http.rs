@@ -4,17 +4,20 @@
 //! module, which is what OpenAI, Anthropic's compatibility endpoint, Together,
 //! Groq, vLLM, llama.cpp, Ollama and OpenRouter accept.
 //!
-//! This adapter classifies every outcome of a send as served, permanently
-//! refused, or transient, and nothing more: a transient failure (a
-//! transport error, or a 408, 425, 429, or 5xx) is waited out through the
-//! process-wide [`UpstreamGate`] of the upstream — one half-open probe at a
-//! time, capped backoff, `Retry-After` honored — until the upstream serves
-//! the request. The wait is bounded only by the caller's cancellation
+//! This adapter classifies every outcome of a send as served, terminal for
+//! this request, or evidence of an upstream outage. An outage failure (a
+//! connect failure (including a connect timeout), non-timeout send/response
+//! transport error, or a 408, 425, 429, or 5xx) is waited out
+//! through the process-wide [`UpstreamGate`] of the upstream — one half-open
+//! probe at a time, capped backoff, `Retry-After` honored — until the upstream
+//! serves the request. The wait is bounded only by the caller's cancellation
 //! (the run's stop request; see [`crate::agents::AgentContext::complete`]),
-//! which drops the in-flight send and any pending probe. A permanent
-//! refusal (another 4xx, an unparseable reply, a malformed request) is
-//! [`Error::Provider`] at once. Request-start pacing applies to every send,
-//! probes included.
+//! which drops the in-flight send and any pending probe. A completion that
+//! reaches its configured overall timeout is request-specific: it fails once
+//! without closing the shared gate or resending a request whose outcome may
+//! be unknown. Other terminal failures (another 4xx, an unparseable reply, a
+//! malformed request) are also [`Error::Provider`] at once. Request-start
+//! pacing applies to every send, probes included.
 
 use super::availability::{SendError, complete_through_gate};
 use super::pacing::StartPacer;
@@ -34,9 +37,9 @@ pub const ENV_MODEL: &str = "URUK_MODEL";
 /// Optional `reasoning_effort` sent with every request (`none`, `low`, `medium`,
 /// `high`). Reasoning models spend most of their time thinking otherwise.
 pub const ENV_REASONING: &str = "URUK_REASONING_EFFORT";
-/// Optional positive overall completion-request timeout in seconds. This is
-/// deliberately much longer than the connect timeout because non-streaming
-/// providers do not return headers until a long generation is complete.
+/// Optional overall completion-request timeout in seconds, greater than the
+/// 20-second connect timeout. This is deliberately much longer because
+/// non-streaming providers do not return headers until generation completes.
 pub const ENV_TIMEOUT_SECS: &str = "URUK_PROVIDER_TIMEOUT_SECS";
 /// Optional request-start pacing in requests per minute. Unset keeps the
 /// per-endpoint default ([`SWISSAI_DEFAULT_RPM`] for SwissAI hosts, unpaced
@@ -50,6 +53,7 @@ pub const SWISSAI_DEFAULT_RPM: u32 = 14;
 /// A 20,000-token non-streaming completion can legitimately take more than
 /// five minutes; keep the connection open while the provider is working.
 pub const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 30 * 60;
+const CONNECT_TIMEOUT_SECS: u64 = 20;
 
 #[derive(Debug, Clone)]
 pub struct HttpProvider {
@@ -80,9 +84,10 @@ fn parse_request_timeout(value: Option<&str>) -> Result<Duration> {
             "{ENV_TIMEOUT_SECS} must be a positive whole number of seconds, got {raw:?}"
         ))
     })?;
-    if seconds == 0 {
+    if seconds <= CONNECT_TIMEOUT_SECS {
         return Err(Error::validation(format!(
-            "{ENV_TIMEOUT_SECS} must be greater than zero"
+            "{ENV_TIMEOUT_SECS} must be greater than the {CONNECT_TIMEOUT_SECS}-second \
+             connection timeout"
         )));
     }
     Ok(Duration::from_secs(seconds))
@@ -156,7 +161,7 @@ impl HttpProvider {
             )));
         }
         let client = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(20))
+            .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
             .timeout(request_timeout)
             .build()
             .map_err(|e| Error::Provider(format!("cannot build HTTP client: {e}")))?;
@@ -319,6 +324,17 @@ impl HttpProvider {
             .get(reqwest::header::RETRY_AFTER)
             .and_then(|v| v.to_str().ok())
             .and_then(|v| parse_retry_after(v, time::OffsetDateTime::now_utc()));
+        let code = status.as_u16();
+        if TransientFault::is_transient_status(code) {
+            // Headers already prove an upstream availability failure. Do not
+            // wait for an optional diagnostic body: it may itself stall until
+            // the overall completion timeout and hide the retryable status.
+            return Err(SendError::Transient(TransientFault::status(
+                code,
+                retry_after,
+                status.canonical_reason().unwrap_or("retryable response"),
+            )));
+        }
         let text = resp
             .text()
             .await
@@ -331,14 +347,6 @@ impl HttpProvider {
                 )))
             });
         }
-        let code = status.as_u16();
-        if TransientFault::is_transient_status(code) {
-            return Err(SendError::Transient(TransientFault::status(
-                code,
-                retry_after,
-                clip(&text, 300),
-            )));
-        }
         Err(SendError::Permanent(Error::Provider(format!(
             "HTTP {status}: {}",
             clip(&text, 300)
@@ -346,9 +354,12 @@ impl HttpProvider {
     }
 }
 
-/// A request that produced no response at all: a configuration or
-/// redirect problem is permanent; everything else is a transport fault
-/// of the upstream, waited out.
+/// Classify a request failure without parsing its display text.
+///
+/// Connect failures are upstream availability evidence and are waited out.
+/// An overall completion timeout after connecting is terminal for this
+/// logical call: resending could duplicate expensive work, and one slow
+/// request says nothing about the availability of the shared upstream.
 fn classify_request_error(e: reqwest::Error, request_timeout: Duration) -> SendError {
     if e.is_builder() || e.is_redirect() {
         return SendError::Permanent(Error::Provider(format!("request failed: {e}")));
@@ -360,7 +371,10 @@ fn classify_request_error(e: reqwest::Error, request_timeout: Duration) -> SendE
         ));
     }
     if e.is_timeout() {
-        return SendError::Transient(TransientFault::timeout(request_timeout));
+        return SendError::RequestTimeout(Error::Provider(format!(
+            "request timed out after {request_timeout:?} while waiting for the model provider; \
+             increase {ENV_TIMEOUT_SECS} if this completion legitimately needs longer"
+        )));
     }
     let phase = if e.is_body() || e.is_decode() {
         TransportPhase::Response
@@ -512,7 +526,11 @@ mod tests {
             parse_request_timeout(Some("2400")).unwrap(),
             Duration::from_secs(2400)
         );
-        for invalid in ["0", "-1", "1.5", "nope"] {
+        assert_eq!(
+            parse_request_timeout(Some("21")).unwrap(),
+            Duration::from_secs(21)
+        );
+        for invalid in ["0", "20", "-1", "1.5", "nope"] {
             assert!(
                 parse_request_timeout(Some(invalid)).is_err(),
                 "invalid timeout {invalid:?} must be rejected"
@@ -521,31 +539,125 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn request_timeouts_are_reported_as_timeouts() {
+    async fn completion_timeout_is_terminal_and_does_not_close_the_upstream_gate() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let accepted = Arc::new(AtomicU32::new(0));
+        let server = tokio::spawn({
+            let accepted = Arc::clone(&accepted);
+            async move {
+                let mut connections = Vec::new();
+                loop {
+                    let (stream, _) = listener.accept().await.unwrap();
+                    accepted.fetch_add(1, Ordering::SeqCst);
+                    connections.push(stream);
+                }
+            }
+        });
+        let provider = HttpProvider::new_with_timeout(
+            format!("http://{address}"),
+            None,
+            "m",
+            Duration::from_millis(20),
+        )
+        .unwrap();
+        let attempts = Attempts::default();
+
+        let error = tokio::time::timeout(
+            Duration::from_millis(100),
+            provider.complete_counted(
+                ChatRequest::new("m", vec![super::super::Message::user("hi")]),
+                &attempts,
+            ),
+        )
+        .await
+        .expect("a completion timeout must not enter the provider-outage retry loop")
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "provider: request timed out after 20ms while waiting for the model provider; \
+             increase URUK_PROVIDER_TIMEOUT_SECS if this completion legitimately needs longer"
+        );
+        assert_eq!(
+            accepted.load(Ordering::SeqCst),
+            1,
+            "the request is not resent"
+        );
+        assert_eq!(attempts.resends(), 0);
+        assert!(
+            provider.upstream_gate().unwrap().status().is_available(),
+            "one slow request is not evidence that the entire upstream is down"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn retryable_status_does_not_wait_for_a_stalled_body() {
+        use tokio::io::AsyncWriteExt;
+
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
-            let (_stream, _) = listener.accept().await.unwrap();
-            std::future::pending::<()>().await;
-        });
-        let error = reqwest::Client::builder()
-            .timeout(Duration::from_millis(20))
-            .build()
-            .unwrap()
-            .post(format!("http://{address}"))
-            .send()
-            .await
-            .unwrap_err();
+            let (mut stalled, _) = listener.accept().await.unwrap();
+            stalled
+                .write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 100\r\n\r\n")
+                .await
+                .unwrap();
 
-        let SendError::Transient(fault) = classify_request_error(error, Duration::from_millis(20))
-        else {
-            panic!("a request timeout must remain retryable");
-        };
-        assert_eq!(
-            fault.to_string(),
-            "response failed: request timed out after 20ms while waiting for the model provider"
-        );
-        server.abort();
+            let (mut recovered, _) = listener.accept().await.unwrap();
+            let body = serde_json::json!({
+                "id": "chatcmpl-1",
+                "object": "chat.completion",
+                "model": "m",
+                "choices": [{
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "ok"},
+                    "finish_reason": "stop"
+                }],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+            })
+            .to_string();
+            recovered
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                        body.len()
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+        });
+        let provider = HttpProvider::new_with_timeout(
+            format!("http://{address}"),
+            None,
+            "m",
+            Duration::from_secs(2),
+        )
+        .unwrap()
+        .with_probe_backoff(ProbeBackoff::new(
+            Duration::from_millis(1),
+            Duration::from_millis(1),
+        ));
+        let attempts = Attempts::default();
+
+        let response = tokio::time::timeout(
+            Duration::from_millis(500),
+            provider.complete_counted(
+                ChatRequest::new("m", vec![super::super::Message::user("hi")]),
+                &attempts,
+            ),
+        )
+        .await
+        .expect("the retryable status must be classified from its headers")
+        .unwrap();
+
+        assert_eq!(response.text(), "ok");
+        assert_eq!(attempts.resends(), 1);
+        server.await.unwrap();
     }
 
     #[test]

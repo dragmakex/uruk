@@ -1,7 +1,7 @@
 //! Indefinite waiting for a transiently unavailable upstream (SPEC §9.1).
 //!
-//! A transient failure — a transport error on connect, send, or response,
-//! or a 408, 425, 429, or 5xx — never ends a completion. The caller's
+//! A transient failure — any connect failure, a non-timeout send or response
+//! transport error, or a 408, 425, 429, or 5xx — never ends a completion. The caller's
 //! request waits until the upstream serves it, bounded only by the
 //! caller's cancellation. A process-wide gate per upstream turns every
 //! waiter into one half-open probe at a time, with capped backoff and
@@ -168,7 +168,7 @@ async fn more_than_four_transient_failures_then_success_is_one_served_call() {
 }
 
 #[tokio::test]
-async fn request_timeout_and_too_early_statuses_are_transient() {
+async fn http_request_timeout_and_too_early_statuses_are_transient() {
     let (url, server, received) = serve(vec![transient(408), transient(425), ok()]).await;
     provider(&url).complete(request()).await.unwrap();
     assert_eq!(received.load(Ordering::SeqCst), 3);
