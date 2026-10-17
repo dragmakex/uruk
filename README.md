@@ -76,13 +76,19 @@ handles ever target the same endpoint, the strictest rate binds them all.
 `URUK_PROVIDER_TIMEOUT_SECS` is the overall deadline for one non-streaming
 completion request and defaults to 1,800 seconds (30 minutes). The separate
 connection timeout remains 20 seconds, so the configured overall timeout must
-be greater than 20 seconds. A completion that reaches the overall
-deadline fails that task once: Uruk does not resend a request whose outcome may
-be unknown or mark the shared provider unavailable because one request was
-slow. Raise the setting when a legitimate completion needs longer. Stopping
-the run still cancels the in-flight request immediately.
+be greater than 20 seconds. The timeout bounds each send, not the logical
+completion: if it expires, Uruk enters a visible provider wait and retries
+with exponential backoff (1, 2, 4, 8, 16, then 30 seconds, honoring a longer
+`Retry-After`). The research clock pauses during recovery. A retry can
+repeat provider-side computation and incur unknown cost. Raise the setting
+when legitimate completions need longer. Stop cancels both requests and waits.
 
-Without these, a run proceeds offline against a stand-in that performs no
+Incoming API requests and each physical model attempt are recorded in SQLite's
+`request_logs`, including errors, retries, timings, and redacted request/response
+bodies. See [SQLite request diagnostics](docs/DIAGNOSTICS.md) for operator queries,
+privacy boundaries, streaming behavior, and capture limits.
+
+Without a configured HTTP provider, a run proceeds offline against a stand-in that performs no
 analysis. The report says so plainly rather than fabricating results.
 
 ## Use
@@ -164,8 +170,8 @@ cannot run, the report says why.
   of failing.
 - **Failed work is charged; waiting is not.** Every logical model call is
   settled, and a cancelled task keeps its labelled partial artifacts. A
-  transient provider failure (any connect failure, including a connect
-  timeout; a non-timeout send or response transport error;
+  transient provider failure (a connect, send, or response transport error,
+  including completion timeouts;
   or a 408, 425, 429, or 5xx) never fails the work: the provider adapter
   waits for the upstream to recover, bounded only by a stop request. All
   callers of one upstream wait behind one process-wide availability gate —
@@ -173,9 +179,8 @@ cannot run, the report says why.
   `Retry-After` honored in full — so an outage never turns into a retry
   stampede. A permanent refusal (another 4xx, an unparseable reply, a bad
   request) is terminal for that work at once, recorded as a typed provider
-  failure. Reaching the configured overall completion timeout is also
-  terminal for that request: it is not resent and does not close the shared
-  upstream gate. One completion is one logical model call, claimed in the
+  failure. Completion timeouts instead enter the same recovery loop.
+  One completion is one logical model call, claimed in the
   budget ledger before its first send and, past the task's own reservation, leased
   from the run's remaining headroom in the same transaction; sends repeated
   after a transient failure are audited as `resend` ledger rows but claim

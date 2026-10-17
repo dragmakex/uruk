@@ -13,6 +13,10 @@ use axum::response::{IntoResponse, Response};
 #[derive(Debug)]
 pub struct ApiError(pub Error);
 
+/// Private operator detail, never serialized onto the public wire.
+#[derive(Clone)]
+pub(super) struct DiagnosticError(pub String);
+
 pub type ApiResult<T> = Result<T, ApiError>;
 
 impl From<Error> for ApiError {
@@ -52,7 +56,10 @@ pub(super) fn error_body(e: &crate::Error) -> serde_json::Value {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let status = status_for(self.0.kind());
-        (status, Json(error_body(&self.0))).into_response()
+        let detail = DiagnosticError(crate::diagnostics::error_chain(&self.0));
+        let mut response = (status, Json(error_body(&self.0))).into_response();
+        response.extensions_mut().insert(detail);
+        response
     }
 }
 

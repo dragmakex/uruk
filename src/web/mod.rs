@@ -20,6 +20,7 @@
 //! `URUK_COOKIE_SECURE=true` (see `docs/WEB.md`). Binding a non-loopback
 //! address logs a loud warning but is not refused.
 
+mod audit;
 mod dispatch;
 mod error;
 mod owner;
@@ -285,7 +286,10 @@ pub fn router(state: AppState) -> Router {
             axum::http::StatusCode::REQUEST_TIMEOUT,
             timeout,
         ))
-        .layer(CompressionLayer::new());
+        .layer(axum::middleware::from_fn_with_state(
+            timeout,
+            reject_zero_deadline,
+        ));
 
     // Explicit source retrieval has its own bounded timeout and may exceed
     // the ordinary command deadline. Do not return 408 after the run row
@@ -296,7 +300,10 @@ pub fn router(state: AppState) -> Router {
             axum::http::StatusCode::REQUEST_TIMEOUT,
             start_timeout,
         ))
-        .layer(CompressionLayer::new());
+        .layer(axum::middleware::from_fn_with_state(
+            start_timeout,
+            reject_zero_deadline,
+        ));
 
     // Uploads carry whole files, so this route group alone gets a larger
     // body cap (the route-level limit overrides the router-wide one).
@@ -309,6 +316,10 @@ pub fn router(state: AppState) -> Router {
         .layer(TimeoutLayer::with_status_code(
             axum::http::StatusCode::REQUEST_TIMEOUT,
             timeout,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            timeout,
+            reject_zero_deadline,
         ))
         .layer(DefaultBodyLimit::max(state.config().max_upload_bytes));
 
@@ -336,8 +347,31 @@ pub fn router(state: AppState) -> Router {
         // the response on the way out, with tracing in between.
         .layer(PropagateRequestIdLayer::x_request_id())
         .layer(TraceLayer::new_for_http())
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            audit::record,
+        ))
+        // Compress only after diagnostics captures the uncompressed response.
+        // The default compression predicate excludes text/event-stream.
+        .layer(CompressionLayer::new())
         .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
         .with_state(state)
+}
+
+/// A zero deadline must never poll a mutating handler. Tower's timeout races
+/// a zero-duration timer against a ready handler, otherwise allowing side
+/// effects or a cancellation in the middle of initializing a transaction.
+async fn reject_zero_deadline(
+    axum::extract::State(deadline): axum::extract::State<Duration>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    if deadline.is_zero() {
+        return axum::response::IntoResponse::into_response(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+        );
+    }
+    next.run(request).await
 }
 
 /// How `uruk serve` runs the adapter.
@@ -362,6 +396,7 @@ pub struct ServeOptions {
 pub async fn serve(opts: ServeOptions) -> Result<()> {
     let _lock = ProjectLock::acquire(&opts.project)?;
     let store = Store::open(opts.project.join(STATE_DB_RELATIVE)).await?;
+    crate::diagnostics::interrupt_leftovers(&store).await?;
     let provider = crate::provider::from_env_or_offline()?;
     let state = AppState::new(store, provider, opts.config);
 

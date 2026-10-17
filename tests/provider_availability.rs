@@ -1,7 +1,7 @@
 //! Indefinite waiting for a transiently unavailable upstream (SPEC §9.1).
 //!
-//! A transient failure — any connect failure, a non-timeout send or response
-//! transport error, or a 408, 425, 429, or 5xx — never ends a completion. The caller's
+//! A transient failure — a connect, send, or response transport error
+//! (including timeouts), or a 408, 425, 429, or 5xx — never ends a completion. The caller's
 //! request waits until the upstream serves it, bounded only by the
 //! caller's cancellation. A process-wide gate per upstream turns every
 //! waiter into one half-open probe at a time, with capped backoff and
