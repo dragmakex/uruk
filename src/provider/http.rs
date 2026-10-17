@@ -6,18 +6,18 @@
 //!
 //! This adapter classifies every outcome of a send as served, terminal for
 //! this request, or evidence of an upstream outage. An outage failure (a
-//! connect failure (including a connect timeout), non-timeout send/response
-//! transport error, or a 408, 425, 429, or 5xx) is waited out
+//! connect, send, or response transport error (including timeouts), or a
+//! 408, 425, 429, or 5xx) is waited out
 //! through the process-wide [`UpstreamGate`] of the upstream — one half-open
 //! probe at a time, capped backoff, `Retry-After` honored — until the upstream
 //! serves the request. The wait is bounded only by the caller's cancellation
 //! (the run's stop request; see [`crate::agents::AgentContext::complete`]),
-//! which drops the in-flight send and any pending probe. A completion that
-//! reaches its configured overall timeout is request-specific: it fails once
-//! without closing the shared gate or resending a request whose outcome may
-//! be unknown. Other terminal failures (another 4xx, an unparseable reply, a
-//! malformed request) are also [`Error::Provider`] at once. Request-start
-//! pacing applies to every send, probes included.
+//! which drops the in-flight send and any pending probe. Each send has a
+//! finite timeout; expiry enters the same visible provider wait and retries
+//! with exponential backoff instead of terminating research. Retries may
+//! duplicate provider-side computation; its cost remains unknown. Permanent
+//! failures (another 4xx, an unparseable reply, a malformed request) are
+//! [`Error::Provider`] at once. Request-start pacing applies to every send.
 
 use super::availability::{SendError, complete_through_gate};
 use super::pacing::StartPacer;
@@ -356,10 +356,9 @@ impl HttpProvider {
 
 /// Classify a request failure without parsing its display text.
 ///
-/// Connect failures are upstream availability evidence and are waited out.
-/// An overall completion timeout after connecting is terminal for this
-/// logical call: resending could duplicate expensive work, and one slow
-/// request says nothing about the availability of the shared upstream.
+/// Connection failures and completion timeouts enter the shared recovery
+/// loop: until a usable reply arrives, the run waits visibly and probes with
+/// exponential backoff. Expiry limits each send, not the logical call.
 fn classify_request_error(e: reqwest::Error, request_timeout: Duration) -> SendError {
     if e.is_builder() || e.is_redirect() {
         return SendError::Permanent(Error::Provider(format!("request failed: {e}")));
@@ -371,10 +370,12 @@ fn classify_request_error(e: reqwest::Error, request_timeout: Duration) -> SendE
         ));
     }
     if e.is_timeout() {
-        return SendError::RequestTimeout(Error::Provider(format!(
-            "request timed out after {request_timeout:?} while waiting for the model provider; \
-             increase {ENV_TIMEOUT_SECS} if this completion legitimately needs longer"
-        )));
+        return SendError::Transient(TransientFault::transport(
+            TransportPhase::Response,
+            format!(
+                "request timed out after {request_timeout:?} while waiting for the model provider"
+            ),
+        ));
     }
     let phase = if e.is_body() || e.is_decode() {
         TransportPhase::Response
@@ -539,7 +540,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn completion_timeout_is_terminal_and_does_not_close_the_upstream_gate() {
+    async fn completion_timeouts_keep_retrying_until_cancelled() {
         use std::sync::atomic::{AtomicU32, Ordering};
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -562,50 +563,65 @@ mod tests {
             "m",
             Duration::from_millis(20),
         )
-        .unwrap();
+        .unwrap()
+        .with_probe_backoff(ProbeBackoff::new(
+            Duration::from_millis(5),
+            Duration::from_millis(20),
+        ));
         let attempts = Attempts::default();
 
-        let error = tokio::time::timeout(
-            Duration::from_millis(100),
+        let result = tokio::time::timeout(
+            Duration::from_millis(300),
             provider.complete_counted(
                 ChatRequest::new("m", vec![super::super::Message::user("hi")]),
                 &attempts,
             ),
         )
-        .await
-        .expect("a completion timeout must not enter the provider-outage retry loop")
-        .unwrap_err();
-
-        assert_eq!(
-            error.to_string(),
-            "provider: request timed out after 20ms while waiting for the model provider; \
-             increase URUK_PROVIDER_TIMEOUT_SECS if this completion legitimately needs longer"
-        );
-        assert_eq!(
-            accepted.load(Ordering::SeqCst),
-            1,
-            "the request is not resent"
-        );
-        assert_eq!(attempts.resends(), 0);
+        .await;
         assert!(
-            provider.upstream_gate().unwrap().status().is_available(),
-            "one slow request is not evidence that the entire upstream is down"
+            result.is_err(),
+            "an unavailable provider must not terminate the logical call: {result:?}"
+        );
+        assert!(
+            accepted.load(Ordering::SeqCst) >= 2,
+            "timed-out requests must be retried"
+        );
+        assert!(attempts.resends() >= 1);
+        let gate = provider.upstream_gate().unwrap();
+        assert!(
+            !gate.status().is_available(),
+            "waiting must be visible to the scheduler and research clock"
+        );
+        assert!(
+            !gate.status().probe_in_flight(),
+            "dropping the future must release the probe"
         );
         server.abort();
     }
 
     #[tokio::test]
     async fn retryable_status_does_not_wait_for_a_stalled_body() {
+        stalled_response_recovers(
+            b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 100\r\n\r\n",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn completion_timeout_recovers_after_provider_answers_again() {
+        // A successful header with a body that never arrives must also be
+        // retried; header-only availability is not a usable completion.
+        stalled_response_recovers(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n").await;
+    }
+
+    async fn stalled_response_recovers(headers: &'static [u8]) {
         use tokio::io::AsyncWriteExt;
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
             let (mut stalled, _) = listener.accept().await.unwrap();
-            stalled
-                .write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 100\r\n\r\n")
-                .await
-                .unwrap();
+            stalled.write_all(headers).await.unwrap();
 
             let (mut recovered, _) = listener.accept().await.unwrap();
             let body = serde_json::json!({
@@ -635,7 +651,11 @@ mod tests {
             format!("http://{address}"),
             None,
             "m",
-            Duration::from_secs(2),
+            if headers.starts_with(b"HTTP/1.1 200") {
+                Duration::from_millis(100)
+            } else {
+                Duration::from_secs(2)
+            },
         )
         .unwrap()
         .with_probe_backoff(ProbeBackoff::new(
@@ -645,7 +665,7 @@ mod tests {
         let attempts = Attempts::default();
 
         let response = tokio::time::timeout(
-            Duration::from_millis(500),
+            Duration::from_millis(1000),
             provider.complete_counted(
                 ChatRequest::new("m", vec![super::super::Message::user("hi")]),
                 &attempts,

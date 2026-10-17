@@ -361,8 +361,8 @@ pub trait Provider: Send + Sync + std::fmt::Debug {
     /// A transient upstream failure never ends the completion: the adapter
     /// waits for the upstream to recover (see [`UpstreamGate`]), bounded
     /// only by the caller dropping the future. An `Err` is a terminal
-    /// request failure (including an overall completion timeout), a budget
-    /// refusal, or a store failure.
+    /// request refusal, a budget refusal, or a store failure. Completion
+    /// timeouts remain inside the adapter's recovery loop.
     ///
     /// The default claims exactly one call and delegates to
     /// [`Provider::complete`].

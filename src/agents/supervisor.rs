@@ -189,16 +189,13 @@ pub fn build_plan(goal: &Goal, revision: u32) -> Plan {
         }
     }
 
-    let mut stopping = vec![
+    let stopping = vec![
         StopCondition::DeliverableSatisfied,
         StopCondition::BudgetExhausted,
         StopCondition::WorkExhausted,
         StopCondition::Cancelled,
         StopCondition::SafetyBoundary,
     ];
-    if goal.mode == Mode::Campaign {
-        stopping.push(StopCondition::ProgressStalled);
-    }
 
     let outputs = if goal.deliverables.is_empty() {
         vec!["REPORT.md".to_string()]
@@ -879,8 +876,8 @@ pub async fn select_work(
 
 /// Whether the run should stop, and why (SPEC §6).
 pub async fn should_stop(
-    store: &Store,
-    run_id: &RunId,
+    _store: &Store,
+    _run_id: &RunId,
     goal: &Goal,
     usage: &BudgetUsage,
     iterations: u32,
@@ -908,23 +905,10 @@ pub async fn should_stop(
         return Ok(Some(StopCondition::BudgetExhausted));
     }
 
-    // Progress stall: an iteration that produced no new item, review, match,
-    // evidence, or cluster.
-    if goal.mode == Mode::Campaign && iterations >= 2 {
-        let snapshots = store.list_snapshots(run_id).await?;
-        if snapshots.len() >= 2 {
-            let last = &snapshots[snapshots.len() - 1];
-            let prev = &snapshots[snapshots.len() - 2];
-            let progressed = last.items_generated > prev.items_generated
-                || last.reviews_completed > prev.reviews_completed
-                || last.matches_completed > prev.matches_completed
-                || last.external_evidence_items > prev.external_evidence_items
-                || last.clusters > prev.clusters;
-            if !progressed {
-                return Ok(Some(StopCondition::ProgressStalled));
-            }
-        }
-    }
+    // A batch with unchanged research counters is not evidence that work
+    // is exhausted: acquisitions, retries, and prerequisite work can all
+    // leave them unchanged. The scheduler stops only after checking both
+    // pending work and fresh proposals, or when an explicit limit is hit.
 
     Ok(None)
 }
@@ -1196,7 +1180,8 @@ mod tests {
             assert!(plan.roles.contains(&role.as_str().to_string()));
         }
         assert!(
-            plan.stopping_conditions
+            !plan
+                .stopping_conditions
                 .contains(&StopCondition::ProgressStalled)
         );
     }

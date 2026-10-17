@@ -210,6 +210,56 @@ async fn campaign_runs_the_discovery_loop() {
     );
 }
 
+/// Source-acquisition batches can leave research counters unchanged. On
+/// resume, those snapshots must not prevent the next review/generation round.
+#[tokio::test]
+async fn unchanged_snapshots_do_not_end_a_campaign_with_useful_work() {
+    let f = fixture_with(Mode::Campaign, MockProvider::new(), |g| {
+        g.budget.max_iterations = 10;
+        g.budget.max_model_calls = 300;
+        g.budget.max_tokens = 2_000_000;
+    })
+    .await;
+    let source = seed_source(&f, "study", "A measured improvement.").await;
+    let _ = (*f.provider)
+        .clone()
+        .merge_rules(campaign_provider(source.id.as_str()));
+    seed_item(&f, "unreviewed candidate").await;
+    for iteration in 1..=2 {
+        f.store.bump_iteration(&f.run_id).await.unwrap();
+        f.store
+            .insert_snapshot(
+                &f.run_id,
+                &CampaignSnapshot {
+                    iteration,
+                    items_generated: 1,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+    }
+
+    let summary = Scheduler::new(
+        f.store.clone(),
+        f.provider.clone(),
+        SchedulerConfig::default(),
+    )
+    .run(&f.run_id)
+    .await
+    .unwrap();
+    assert_eq!(
+        summary.iterations, 10,
+        "useful work must continue: {summary:?}"
+    );
+    assert!(
+        summary.reviews > 0,
+        "the unreviewed candidate was abandoned: {summary:?}"
+    );
+    assert!(summary.matches > 0, "the tournament never ran: {summary:?}");
+    assert!(summary.final_output_skipped.is_none(), "{summary:?}");
+}
+
 /// A campaign stops when its iteration budget runs out, preserving evidence
 /// and still producing the final deliverable from the output reserve.
 #[tokio::test]
