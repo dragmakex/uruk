@@ -83,7 +83,12 @@ with exponential backoff (1, 2, 4, 8, 16, then 30 seconds, honoring a longer
 repeat provider-side computation and incur unknown cost. Raise the setting
 when legitimate completions need longer. Stop cancels both requests and waits.
 
-Without these, a run proceeds offline against a stand-in that performs no
+Incoming API requests and each physical model attempt are recorded in SQLite's
+`request_logs`, including errors, retries, timings, and redacted request/response
+bodies. See [SQLite request diagnostics](docs/DIAGNOSTICS.md) for operator queries,
+privacy boundaries, streaming behavior, and capture limits.
+
+Without a configured HTTP provider, a run proceeds offline against a stand-in that performs no
 analysis. The report says so plainly rather than fabricating results.
 
 ## Use

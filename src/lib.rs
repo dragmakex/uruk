@@ -6,6 +6,7 @@
 //! [`store`] is the single controlled write path.
 
 pub mod agents;
+mod diagnostics;
 pub mod prompts;
 pub mod provider;
 pub mod records;

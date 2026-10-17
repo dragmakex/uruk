@@ -257,9 +257,14 @@ pub struct Attempts {
     sequence: Arc<AtomicU32>,
     /// `None` is unbounded: callers outside a budgeted run.
     budget: Option<Arc<dyn AttemptBudget>>,
+    diagnostics: Option<crate::diagnostics::LogContext>,
 }
 
 impl Attempts {
+    pub(crate) fn with_diagnostics(mut self, context: crate::diagnostics::LogContext) -> Self {
+        self.diagnostics = Some(context);
+        self
+    }
     /// Attempts gated by `budget`, numbered from the shared `sequence`.
     pub fn bounded(budget: Arc<dyn AttemptBudget>, sequence: Arc<AtomicU32>) -> Self {
         Self {
@@ -268,6 +273,7 @@ impl Attempts {
             resends: AtomicU32::new(0),
             sequence,
             budget: Some(budget),
+            diagnostics: None,
         }
     }
 

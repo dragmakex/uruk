@@ -304,17 +304,72 @@ impl HttpProvider {
         UpstreamGate::shared(&self.upstream)
     }
 
-    /// Send the request once and classify what came back.
+    /// Persist each physical send separately, including failed probes.
     async fn send_once(
         &self,
         url: &str,
         body: &serde_json::Value,
+        attempts: &Attempts,
+    ) -> std::result::Result<ChatResponse, SendError> {
+        use crate::diagnostics::{Meta, Redactor, RequestLog};
+        let mut log = if let Some(context) = &attempts.diagnostics {
+            let meta = Meta {
+                direction: "provider",
+                request_id: uuid::Uuid::new_v4().to_string(),
+                logical_id: Some(context.logical_id.clone()),
+                run_id: context.run_id.clone(),
+                task_id: context.task_id.clone(),
+                attempt: Some(attempts.resends().saturating_add(1)),
+            };
+            let mut redactor = Redactor(self.api_key.iter().cloned().collect());
+            redactor.observe_url(url);
+            let mut capture = crate::diagnostics::Capture::default();
+            capture.push(body.to_string().as_bytes());
+            capture.complete = true;
+            redactor.observe_capture(&capture);
+            let request = serde_json::json!({
+                "method":"POST", "url":crate::diagnostics::url(url),
+                "headers":{"content-type":"application/json","authorization":"[REDACTED]"},
+                "content":capture.snapshot("application/json", &redactor),
+                "timeout_ms": self.request_timeout.as_millis(),
+                "retry_policy": format!("{:?}", self.probe_backoff),
+            });
+            Some(
+                RequestLog::begin(context.store.clone(), meta, request, redactor)
+                    .await
+                    .map_err(SendError::Permanent)?,
+            )
+        } else {
+            None
+        };
+        let result = self.send_once_inner(url, body, log.as_mut()).await;
+        if let Some(log) = &mut log {
+            let (outcome, error) = match &result {
+                Ok(_) => ("success", None),
+                Err(SendError::Transient(fault)) => ("retryable", Some(fault.to_string())),
+                Err(SendError::Permanent(error)) => (
+                    "permanent_error",
+                    Some(crate::diagnostics::error_chain(error)),
+                ),
+            };
+            log.finish(outcome, error.as_deref(), None)
+                .await
+                .map_err(SendError::Permanent)?;
+        }
+        result
+    }
+
+    async fn send_once_inner(
+        &self,
+        url: &str,
+        body: &serde_json::Value,
+        mut log: Option<&mut crate::diagnostics::RequestLog>,
     ) -> std::result::Result<ChatResponse, SendError> {
         let mut req = self.client.post(url).json(body);
         if let Some(key) = &self.api_key {
             req = req.bearer_auth(key);
         }
-        let resp = req
+        let mut resp = req
             .send()
             .await
             .map_err(|error| classify_request_error(error, self.request_timeout))?;
@@ -324,21 +379,69 @@ impl HttpProvider {
             .get(reqwest::header::RETRY_AFTER)
             .and_then(|v| v.to_str().ok())
             .and_then(|v| parse_retry_after(v, time::OffsetDateTime::now_utc()));
-        let code = status.as_u16();
-        if TransientFault::is_transient_status(code) {
-            // Headers already prove an upstream availability failure. Do not
-            // wait for an optional diagnostic body: it may itself stall until
-            // the overall completion timeout and hide the retryable status.
+        if let Some(log) = &mut log {
+            log.status = Some(status.as_u16());
+            log.response =
+                serde_json::json!({"headers": crate::diagnostics::headers(resp.headers())});
+            let content_type = resp
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("text/plain")
+                .to_owned();
+            log.response_capture = Some((Default::default(), content_type));
+        }
+        // A status is classified even if its diagnostic body stalls. Limit
+        // diagnostic reads independently so errors cannot hide behind a body.
+        let read = async {
+            let mut bytes = Vec::new();
+            let mut complete = true;
+            while let Some(chunk) = resp.chunk().await? {
+                if let Some(log) = &mut log
+                    && let Some((capture, _)) = &mut log.response_capture
+                {
+                    capture.push(&chunk);
+                }
+                bytes.extend_from_slice(&chunk);
+                if !status.is_success() && bytes.len() >= crate::diagnostics::BODY_LIMIT {
+                    complete = false;
+                    break;
+                }
+            }
+            if let Some(log) = &mut log
+                && let Some((capture, _)) = &mut log.response_capture
+            {
+                capture.complete = complete;
+            }
+            Ok::<_, reqwest::Error>(String::from_utf8_lossy(&bytes).into_owned())
+        };
+        let text = if status.is_success() {
+            read.await
+                .map_err(|error| classify_request_error(error, self.request_timeout))?
+        } else {
+            match tokio::time::timeout(Duration::from_millis(100), read).await {
+                Ok(Ok(text)) => text,
+                other => {
+                    let detail = match other {
+                        Ok(Err(error)) => crate::diagnostics::error_chain(&error.without_url()),
+                        _ => "diagnostic response body exceeded 100ms read deadline".into(),
+                    };
+                    if let Some(log) = &mut log
+                        && let Some((capture, _)) = &mut log.response_capture
+                    {
+                        capture.error = Some(detail);
+                    }
+                    status.canonical_reason().unwrap_or("HTTP error").to_owned()
+                }
+            }
+        };
+        if TransientFault::is_transient_status(status.as_u16()) {
             return Err(SendError::Transient(TransientFault::status(
-                code,
+                status.as_u16(),
                 retry_after,
-                status.canonical_reason().unwrap_or("retryable response"),
+                clip(&text, 300),
             )));
         }
-        let text = resp
-            .text()
-            .await
-            .map_err(|error| classify_request_error(error, self.request_timeout))?;
         if status.is_success() {
             return serde_json::from_str::<ChatResponse>(&text).map_err(|e| {
                 SendError::Permanent(Error::Provider(format!(
@@ -360,20 +463,25 @@ impl HttpProvider {
 /// loop: until a usable reply arrives, the run waits visibly and probes with
 /// exponential backoff. Expiry limits each send, not the logical call.
 fn classify_request_error(e: reqwest::Error, request_timeout: Duration) -> SendError {
+    let e = e.without_url();
     if e.is_builder() || e.is_redirect() {
-        return SendError::Permanent(Error::Provider(format!("request failed: {e}")));
+        return SendError::Permanent(Error::Provider(format!(
+            "request failed: {}",
+            crate::diagnostics::error_chain(&e)
+        )));
     }
     if e.is_connect() {
         return SendError::Transient(TransientFault::transport(
             TransportPhase::Connect,
-            e.to_string(),
+            crate::diagnostics::error_chain(&e),
         ));
     }
     if e.is_timeout() {
         return SendError::Transient(TransientFault::transport(
             TransportPhase::Response,
             format!(
-                "request timed out after {request_timeout:?} while waiting for the model provider"
+                "request timed out after {request_timeout:?} while waiting for the model provider; {}",
+                crate::diagnostics::error_chain(&e)
             ),
         ));
     }
@@ -382,7 +490,10 @@ fn classify_request_error(e: reqwest::Error, request_timeout: Duration) -> SendE
     } else {
         TransportPhase::Send
     };
-    SendError::Transient(TransientFault::transport(phase, e.to_string()))
+    SendError::Transient(TransientFault::transport(
+        phase,
+        crate::diagnostics::error_chain(&e),
+    ))
 }
 
 #[async_trait::async_trait]
@@ -417,7 +528,7 @@ impl Provider for HttpProvider {
             pacer.as_deref(),
             &self.probe_backoff,
             attempts,
-            || self.send_once(&url, &body),
+            || self.send_once(&url, &body, attempts),
         )
         .await
     }

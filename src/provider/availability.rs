@@ -513,6 +513,14 @@ where
             }
             Err(SendError::Transient(fault)) => {
                 let next = gate.report_transient(admission, &fault, backoff);
+                if let Some(context) = &attempts.diagnostics {
+                    context
+                        .record_retry_delay(
+                            attempts.resends().saturating_add(1),
+                            next.saturating_duration_since(Instant::now()),
+                        )
+                        .await?;
+                }
                 tracing::warn!(
                     sends,
                     %fault,
