@@ -1,15 +1,14 @@
 //! Waiting out a transiently unavailable upstream (SPEC §9.1).
 //!
-//! A transient failure — any connect failure (including a connect timeout),
-//! a non-timeout send or response transport error, or a 408, 425, 429, or
-//! 5xx — is never the end of a completion. The
+//! A transient failure — a connect, send, or response transport error
+//! (including timeouts), or a 408, 425, 429, or 5xx — is never the end of
+//! a completion. The
 //! request waits for the upstream to recover, bounded only by the
 //! caller's cancellation. A process-wide [`UpstreamGate`] per upstream
 //! keeps every waiter behind one half-open probe at a time, with
 //! exponential backoff capped by [`ProbeBackoff`] and any `Retry-After`
-//! the upstream sends honored in full. Terminal request failures — an
-//! overall completion timeout, other 4xx, malformed replies, or bad
-//! configuration — fail at once and are the adapter's
+//! the upstream sends honored in full. Terminal request failures — other
+//! 4xx, malformed replies, or bad configuration — fail at once and are the adapter's
 //! [`crate::Error::Provider`].
 //!
 //! Budget: one completion is one logical model call, claimed before its
@@ -157,8 +156,6 @@ impl fmt::Display for TransientFault {
 pub(super) enum SendError {
     /// Wait and send again.
     Transient(TransientFault),
-    /// End this logical call without changing shared upstream availability.
-    RequestTimeout(Error),
     /// Report to the caller without declaring a provider-wide outage.
     Permanent(Error),
 }
@@ -514,13 +511,16 @@ where
                 gate.report_served(admission);
                 return Err(error);
             }
-            Err(SendError::RequestTimeout(error)) => {
-                // One slow request is not evidence either that the upstream
-                // is down or that a concurrent outage has recovered.
-                return Err(error);
-            }
             Err(SendError::Transient(fault)) => {
                 let next = gate.report_transient(admission, &fault, backoff);
+                if let Some(context) = &attempts.diagnostics {
+                    context
+                        .record_retry_delay(
+                            attempts.resends().saturating_add(1),
+                            next.saturating_duration_since(Instant::now()),
+                        )
+                        .await?;
+                }
                 tracing::warn!(
                     sends,
                     %fault,
@@ -616,7 +616,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_request_timeout_does_not_erase_a_concurrent_outage() {
+    async fn a_retried_timeout_does_not_erase_a_concurrent_outage() {
         let gate = Arc::new(UpstreamGate::new());
         let attempts = Arc::new(Attempts::default());
         let entered = Arc::new(Notify::new());
@@ -633,8 +633,9 @@ mod tests {
                     async move {
                         entered.notify_one();
                         release.notified().await;
-                        Err(SendError::RequestTimeout(Error::Provider(
-                            "request timed out".into(),
+                        Err(SendError::Transient(TransientFault::transport(
+                            TransportPhase::Response,
+                            "request timed out",
                         )))
                     }
                 })
@@ -651,10 +652,14 @@ mod tests {
         );
         release.notify_one();
 
-        assert!(matches!(completion.await.unwrap(), Err(Error::Provider(_))));
+        entered.notified().await;
+        assert!(!completion.is_finished(), "a timeout must remain retryable");
         assert!(
             !gate.status().is_available(),
-            "the timeout proves nothing about the concurrent outage"
+            "the timeout must not erase the concurrent outage"
         );
+        completion.abort();
+        assert!(completion.await.unwrap_err().is_cancelled());
+        assert!(!gate.status().probe_in_flight());
     }
 }

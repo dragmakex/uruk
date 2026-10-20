@@ -174,7 +174,13 @@ impl AgentContext {
         let attempts = match &self.allowance {
             Some(allowance) => Attempts::bounded(allowance.clone(), self.sequence.clone()),
             None => Attempts::default(),
-        };
+        }
+        .with_diagnostics(crate::diagnostics::LogContext {
+            store: self.store.clone(),
+            run_id: Some(self.run_id.to_string()),
+            task_id: self.allowance.as_ref().map(|a| a.task_id.to_string()),
+            logical_id: uuid::Uuid::new_v4().to_string(),
+        });
         let result = tokio::select! {
             biased;
             _ = self.cancel.cancelled() => Err(Error::Cancelled),
