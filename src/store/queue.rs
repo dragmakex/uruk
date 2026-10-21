@@ -153,9 +153,12 @@ impl RunTiming {
     }
 
     /// The wall-clock deadline as of now: start plus the budget plus every
-    /// settled wait. `None` while the run has not started. An *open* wait
-    /// is not folded in here; see [`Self::deadline_passed`].
+    /// settled wait. `None` for an unlimited (zero) budget or an unstarted
+    /// run. An *open* wait is not folded in here; see [`Self::deadline_passed`].
     pub fn deadline(&self, wall_clock_secs: u64) -> Option<OffsetDateTime> {
+        if wall_clock_secs == 0 {
+            return None;
+        }
         let budget = time::Duration::seconds(i64::try_from(wall_clock_secs).unwrap_or(i64::MAX));
         let paused = time::Duration::seconds(i64::try_from(self.paused_secs).unwrap_or(i64::MAX));
         self.started_at

@@ -147,7 +147,7 @@ async fn sync_provider_wait(store: &Store, run_id: &RunId, gate: &UpstreamGate) 
 
 /// Cancels the run's work token when the wall-clock deadline passes, so an
 /// in-flight model call ends at the deadline instead of running the run
-/// past it (SPEC §6: "Enforce a finite deadline"). The deadline is the
+/// past it. A zero budget disables this watcher. The optional deadline is the
 /// persisted research clock: it runs from the run's first start, not from
 /// this process start, so a restart cannot extend it; and it stands still
 /// while the provider is unavailable, so an outage cannot spend it. Only
@@ -164,6 +164,9 @@ impl DeadlineWatch {
         work: CancellationToken,
     ) -> Self {
         Self(tokio::spawn(async move {
+            if wall_clock_secs == 0 {
+                return;
+            }
             loop {
                 let timing = match store.run_timing(&run_id).await {
                     Ok(timing) => timing,
