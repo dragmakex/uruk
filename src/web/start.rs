@@ -341,7 +341,7 @@ pub fn validate(req: StartRunRequest) -> Result<ValidatedStart> {
             1,
             100_000,
         )?,
-        max_seconds: bounded("max_seconds", req.max_seconds.unwrap_or(3600), 1, 604_800)?,
+        max_seconds: bounded("max_seconds", req.max_seconds.unwrap_or(0), 0, 604_800)?,
         max_iterations: bounded("max_iterations", req.max_iterations.unwrap_or(10), 1, 1_000)?,
         max_acquisitions: bounded(
             "max_acquisitions",
@@ -769,11 +769,30 @@ mod tests {
     }
 
     #[test]
+    fn zero_seconds_is_unlimited_and_finite_limits_are_opt_in() {
+        for seconds in [0, 1, 3600, 604_800] {
+            let v = validate(StartRunRequest {
+                max_seconds: Some(seconds),
+                ..request("q")
+            })
+            .expect("valid time budget");
+            assert_eq!(v.max_seconds, seconds);
+        }
+        assert!(
+            validate(StartRunRequest {
+                max_seconds: Some(604_801),
+                ..request("q")
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
     fn omitted_fields_get_the_documented_defaults() {
         let v = validate(request("why do the measurements disagree")).expect("valid");
         assert_eq!(v.mode, Mode::Task);
         assert_eq!(v.max_model_calls, 200);
-        assert_eq!(v.max_seconds, 3600);
+        assert_eq!(v.max_seconds, 0);
         assert_eq!(v.max_iterations, 10);
         assert_eq!(v.max_acquisitions, 8);
         assert_eq!(v.profile, None);

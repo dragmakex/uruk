@@ -118,7 +118,7 @@ impl Permissions {
 /// Hard resource limits (SPEC §6 Budgets).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Budget {
-    /// Finite deadline, enforced even when provider cost is unknown.
+    /// Elapsed-time limit in seconds. Zero means no deadline (the default).
     pub wall_clock_secs: u64,
     pub max_model_calls: u32,
     pub max_tokens: u64,
@@ -152,7 +152,7 @@ fn default_max_acquisitions() -> u32 {
 impl Default for Budget {
     fn default() -> Self {
         Self {
-            wall_clock_secs: 3600,
+            wall_clock_secs: 0,
             max_model_calls: 200,
             max_tokens: 2_000_000,
             max_tool_executions: 50,

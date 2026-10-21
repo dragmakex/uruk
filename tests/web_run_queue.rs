@@ -382,6 +382,32 @@ async fn stop_works_promptly_for_queued_and_provider_waiting_runs() {
 }
 
 #[tokio::test]
+async fn unlimited_run_resumes_after_days_without_deadline_exhaustion() {
+    let provider = scripted_provider();
+    let f = common::fixture_with(Mode::Task, provider, |g| {
+        g.question = "assess this candidate".into();
+        g.budget.wall_clock_secs = 0;
+        g.budget.max_model_calls = 6;
+        g.budget.reserve_calls_for_output = 1;
+    })
+    .await;
+    common::seed_item(&f, "candidate").await;
+    sqlx::query("UPDATE runs SET started_at = '2020-01-01T00:00:00Z' WHERE id = ?")
+        .bind(f.run_id.as_str())
+        .execute(f.store.pool())
+        .await
+        .unwrap();
+    let scheduler = Scheduler::new(
+        f.store.clone(),
+        f.provider.clone(),
+        SchedulerConfig::default(),
+    );
+    let summary = scheduler.run(&f.run_id).await.unwrap();
+    assert_eq!(summary.state, RunState::Completed, "{summary:?}");
+    assert!(f.store.budget_usage(&f.run_id).await.unwrap().model_calls > 0);
+}
+
+#[tokio::test]
 async fn waiting_for_the_provider_consumes_neither_the_deadline_nor_the_call_budget() {
     let provider = scripted_provider();
     provider.set_available(false);

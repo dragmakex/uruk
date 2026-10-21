@@ -42,7 +42,7 @@ const DEFAULT_PAYLOAD = {
   mode: "campaign",
   ranking: "simple",
   max_model_calls: 200,
-  max_seconds: 3600,
+  max_seconds: 0,
   max_iterations: 10,
   max_acquisitions: 8,
 };
@@ -65,7 +65,7 @@ const PREVIEW: RunPreview = {
   permissions: { network: false, execute: false, allowed_tools: [] },
   budget: {
     max_model_calls: 200,
-    max_seconds: 3600,
+    max_seconds: 0,
     max_iterations: 10,
     max_debate_turns: 1,
     max_acquisitions: 8,
@@ -478,6 +478,7 @@ describe("RunForm", () => {
       await screen.findByText("generation, reflection, ranking"),
     ).toBeInTheDocument();
     expect(screen.getByText("campaign mode runs the full loop")).toBeInTheDocument();
+    expect(screen.getByText(/No time limit/)).toBeInTheDocument();
     expect(startRunMock).not.toHaveBeenCalled();
     expect(pushMock).not.toHaveBeenCalled();
   });

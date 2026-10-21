@@ -288,8 +288,13 @@ resolved text, it never slices offsets itself (`src/report/citations.rs`).
 - `profile`, `deliverables`, `preferences`, `attributes`, `constraints`:
   the goal record and rubric, as on the CLI.
 - Budgets: `max_model_calls`, `max_seconds`, `max_iterations`,
-  `max_acquisitions`, each validated against the same bounds the CLI
-  enforces.
+  `max_acquisitions`, validated by the API. `max_seconds` defaults to `0`,
+  meaning **no time limit**; a positive value (1–604800 seconds) opts into
+  an elapsed-time deadline. The browser also defaults to 0 and labels it
+  explicitly. Model-call and iteration limits still apply independently.
+  Individual provider request timeouts remain bounded and retryable.
+  Existing runs retain their recorded budgets; completed or exhausted runs
+  are not automatically restarted by this default change.
 - Sources: `input_urls` (`http(s)` only — a path-like value is refused)
   and `upload_ids` referencing this browser's uploads. A foreign and an
   unknown upload id get one identical validation error.
