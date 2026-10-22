@@ -317,7 +317,6 @@ export interface StartRunInput {
   attributes?: string[];
   constraints?: string[];
   max_model_calls?: number;
-  max_seconds?: number;
   max_iterations?: number;
   max_debate_turns?: number;
   max_acquisitions?: number;

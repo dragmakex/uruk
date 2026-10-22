@@ -18,7 +18,6 @@ const MAX_GOAL_CHARS = 8000;
 /** Budget bounds, mirrored from `src/web/start.rs` so refusals are instant. */
 const BUDGETS = {
   modelCalls: { label: "Model calls", min: 1, max: 100000, fallback: 200 },
-  seconds: { label: "Time limit (seconds)", min: 0, max: 604800, fallback: 0 },
   iterations: { label: "Iterations", min: 1, max: 1000, fallback: 10 },
   acquisitions: { label: "Source acquisitions", min: 1, max: 100, fallback: 8 },
   debateTurns: { label: "Debate turns", min: 2, max: 10, fallback: 5 },
@@ -86,7 +85,6 @@ export function RunForm() {
     attributes: useId(),
     constraints: useId(),
     modelCalls: useId(),
-    seconds: useId(),
     iterations: useId(),
     acquisitions: useId(),
     debateTurns: useId(),
@@ -107,7 +105,6 @@ export function RunForm() {
   const [attributes, setAttributes] = useState("");
   const [constraints, setConstraints] = useState("");
   const [modelCalls, setModelCalls] = useState(String(BUDGETS.modelCalls.fallback));
-  const [seconds, setSeconds] = useState(String(BUDGETS.seconds.fallback));
   const [iterations, setIterations] = useState(String(BUDGETS.iterations.fallback));
   const [acquisitions, setAcquisitions] = useState(
     String(BUDGETS.acquisitions.fallback),
@@ -175,7 +172,6 @@ export function RunForm() {
 
     const budget = {
       modelCalls: parseBudget(modelCalls, BUDGETS.modelCalls),
-      seconds: parseBudget(seconds, BUDGETS.seconds),
       iterations: parseBudget(iterations, BUDGETS.iterations),
       acquisitions: parseBudget(acquisitions, BUDGETS.acquisitions),
     };
@@ -188,7 +184,6 @@ export function RunForm() {
       mode,
       ranking,
       max_model_calls: budget.modelCalls as number,
-      max_seconds: budget.seconds as number,
       max_iterations: budget.iterations as number,
       max_acquisitions: budget.acquisitions as number,
     };
@@ -346,7 +341,6 @@ export function RunForm() {
       value: modelCalls,
       set: setModelCalls,
     },
-    { id: ids.seconds, spec: BUDGETS.seconds, value: seconds, set: setSeconds },
     {
       id: ids.iterations,
       spec: BUDGETS.iterations,
@@ -560,9 +554,6 @@ export function RunForm() {
                 value={field.value}
                 onChange={(e) => field.set(e.target.value)}
               />
-              {field.id === ids.seconds && (
-                <p className="micro">0 = no time limit (default).</p>
-              )}
             </div>
           ))}
         </div>
