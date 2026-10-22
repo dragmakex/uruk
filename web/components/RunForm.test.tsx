@@ -42,7 +42,6 @@ const DEFAULT_PAYLOAD = {
   mode: "campaign",
   ranking: "simple",
   max_model_calls: 200,
-  max_seconds: 0,
   max_iterations: 10,
   max_acquisitions: 8,
 };
@@ -73,6 +72,11 @@ const PREVIEW: RunPreview = {
 };
 
 describe("RunForm", () => {
+  it("leaves the time budget to the API without a frontend control", () => {
+    render(<RunForm />);
+    expect(screen.queryByLabelText(/Time limit/i)).not.toBeInTheDocument();
+  });
+
   it("restores retained uploads after a reload", async () => {
     fetchUploadsMock.mockResolvedValue([UPLOAD]);
     render(<RunForm />);
@@ -193,9 +197,6 @@ describe("RunForm", () => {
     const calls = screen.getByLabelText("Model calls");
     await user.clear(calls);
     await user.type(calls, "500");
-    const seconds = screen.getByLabelText("Time limit (seconds)");
-    await user.clear(seconds);
-    await user.type(seconds, "7200");
     const iterations = screen.getByLabelText("Iterations");
     await user.clear(iterations);
     await user.type(iterations, "12");
@@ -230,7 +231,6 @@ describe("RunForm", () => {
       attributes: ["novelty"],
       constraints: ["open-access sources only"],
       max_model_calls: 500,
-      max_seconds: 7200,
       max_iterations: 12,
       max_debate_turns: 7,
       max_acquisitions: 4,
@@ -472,7 +472,7 @@ describe("RunForm", () => {
     await user.click(screen.getByRole("button", { name: "Preview plan" }));
 
     expect(previewRunMock).toHaveBeenCalledWith(
-      expect.objectContaining({ goal: "a goal" }),
+      { goal: "a goal", ...DEFAULT_PAYLOAD },
     );
     expect(
       await screen.findByText("generation, reflection, ranking"),
