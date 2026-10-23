@@ -18,7 +18,7 @@ const MAX_GOAL_CHARS = 8000;
 /** Budget bounds, mirrored from `src/web/start.rs` so refusals are instant. */
 const BUDGETS = {
   modelCalls: { label: "Model calls", min: 1, max: 100000, fallback: 200 },
-  iterations: { label: "Iterations", min: 1, max: 1000, fallback: 10 },
+  iterations: { label: "Rounds", min: 1, max: 1000, fallback: 10 },
   acquisitions: { label: "Source acquisitions", min: 1, max: 100, fallback: 8 },
   debateTurns: { label: "Debate turns", min: 2, max: 10, fallback: 5 },
 } as const;
@@ -727,7 +727,7 @@ export function RunForm() {
               {preview.budget.max_seconds === 0
                 ? "No time limit"
                 : `${preview.budget.max_seconds} s`} · {preview.budget.max_iterations}{" "}
-              iterations · {preview.budget.max_debate_turns} debate turns ·{" "}
+              rounds · {preview.budget.max_debate_turns} debate turns ·{" "}
               {preview.budget.max_acquisitions} acquisitions
             </dd>
           </dl>

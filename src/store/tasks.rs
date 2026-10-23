@@ -490,8 +490,8 @@ impl Store {
     /// Reserve budget before dispatch (SPEC §6: "Reserve budget for in-flight
     /// work and final output before admitting more tasks").
     ///
-    /// Ordinary work is capped below `max_model_calls` by the output reserve;
-    /// the final deliverable (`final_output = true`) may use that reserve.
+    /// Ordinary work is capped below the call and token limits by the output
+    /// reserve; the final deliverable (`final_output = true`) may use it.
     /// Returns `Err(Error::Budget)` when the reservation would exceed a limit.
     pub async fn reserve_budget(
         &self,
@@ -512,6 +512,11 @@ impl Store {
                 .max_model_calls
                 .saturating_sub(budget.reserve_calls_for_output)
         };
+        let token_ceiling = if final_output {
+            budget.max_tokens
+        } else {
+            budget.working_token_ceiling()
+        };
 
         if usage.committed_calls() + reservation.model_calls > call_ceiling {
             return Err(Error::Budget(format!(
@@ -524,11 +529,14 @@ impl Store {
                 budget.max_model_calls
             )));
         }
-        if usage.committed_tokens() + reservation.tokens > budget.max_tokens {
+        if usage.committed_tokens() + reservation.tokens > token_ceiling {
             return Err(Error::Budget(format!(
-                "tokens: {} committed + {} requested exceeds {}",
+                "tokens: {} committed + {} requested exceeds {} \
+                 ({} of {} reserved for final output)",
                 usage.committed_tokens(),
                 reservation.tokens,
+                token_ceiling,
+                budget.output_token_reserve(),
                 budget.max_tokens
             )));
         }
@@ -561,15 +569,20 @@ impl Store {
         guard.commit().await
     }
 
-    /// Whether the final-output allowance can still pay for `calls`.
+    /// Whether the final-output allowance can still pay for the reservation.
     pub async fn can_afford_final_output(
         &self,
         run_id: &RunId,
-        calls: u32,
+        reservation: &CostReservation,
         budget: &Budget,
     ) -> Result<bool> {
         let usage = self.budget_usage(run_id).await?;
-        Ok(usage.committed_calls() + calls <= budget.max_model_calls)
+        Ok(
+            usage.committed_calls() + reservation.model_calls <= budget.max_model_calls
+                && usage.committed_tokens() + reservation.tokens <= budget.max_tokens
+                && usage.committed_tool_executions() + reservation.tool_executions
+                    <= budget.max_tool_executions,
+        )
     }
 
     pub async fn budget_usage(&self, run_id: &RunId) -> Result<BudgetUsage> {

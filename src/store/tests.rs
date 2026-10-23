@@ -694,6 +694,51 @@ async fn budget_reserves_output_allowance() {
 }
 
 #[tokio::test]
+async fn budget_reserves_output_token_allowance() {
+    let (store, run, goal) = setup().await;
+    let plan = test_plan(&run.id, &goal.id);
+    store.insert_plan(&plan).await.unwrap();
+
+    let budget = Budget {
+        max_model_calls: 10,
+        max_tokens: 100_000,
+        reserve_calls_for_output: 1,
+        ..Default::default()
+    };
+
+    let mut ordinary = test_task(&run.id, &goal.id, &plan.id, Role::Reflection);
+    ordinary.reservation.model_calls = 1;
+    ordinary.reservation.tokens = 80_000;
+    store.enqueue_task(&ordinary, None).await.unwrap();
+    store
+        .reserve_budget(&run.id, &ordinary.id, &ordinary.reservation, &budget, false)
+        .await
+        .unwrap();
+
+    let mut overflow = test_task(&run.id, &goal.id, &plan.id, Role::Reflection);
+    overflow.reservation.model_calls = 1;
+    overflow.reservation.tokens = 1;
+    store.enqueue_task(&overflow, None).await.unwrap();
+    let err = store
+        .reserve_budget(&run.id, &overflow.id, &overflow.reservation, &budget, false)
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("reserved for final output"),
+        "got: {err}"
+    );
+
+    let mut output = test_task(&run.id, &goal.id, &plan.id, Role::MetaReview);
+    output.reservation.model_calls = 1;
+    output.reservation.tokens = 20_000;
+    store.enqueue_task(&output, None).await.unwrap();
+    store
+        .reserve_budget(&run.id, &output.id, &output.reservation, &budget, true)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn settlement_is_exactly_once() {
     let (store, run, goal) = setup().await;
     let plan = test_plan(&run.id, &goal.id);

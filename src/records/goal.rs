@@ -116,6 +116,8 @@ impl Permissions {
 }
 
 /// Hard resource limits (SPEC §6 Budgets).
+pub const TOKENS_PER_MODEL_CALL_RESERVATION: u64 = 20_000;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Budget {
     /// Elapsed-time limit in seconds. Zero means no deadline (the default).
@@ -139,6 +141,18 @@ pub struct Budget {
     /// from the top of the fused ranking.
     #[serde(default = "default_max_acquisitions")]
     pub max_acquisitions: u32,
+}
+
+impl Budget {
+    /// Token allowance kept available for output calls, mirroring the model-call reserve.
+    pub fn output_token_reserve(&self) -> u64 {
+        TOKENS_PER_MODEL_CALL_RESERVATION.saturating_mul(self.reserve_calls_for_output as u64)
+    }
+
+    /// Token ceiling available to ordinary campaign work.
+    pub fn working_token_ceiling(&self) -> u64 {
+        self.max_tokens.saturating_sub(self.output_token_reserve())
+    }
 }
 
 fn default_debate_turns() -> u32 {
