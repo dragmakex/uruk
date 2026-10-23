@@ -16,10 +16,11 @@
 //! finite timeout; expiry enters the same visible provider wait and retries
 //! with exponential backoff instead of terminating research. Retries may
 //! duplicate provider-side computation; its cost remains unknown. Permanent
-//! failures (another 4xx, an unparseable reply, a malformed request) are
+//! failures (request-specific 4xx, an unparseable reply, a malformed request) are
 //! [`Error::Provider`] at once. Request-start pacing applies to every send.
 
 use super::availability::{SendError, complete_through_gate};
+use super::keys::{ApiKey, ApiKeyPool};
 use super::pacing::StartPacer;
 use super::{
     Attempts, ChatRequest, ChatResponse, ProbeBackoff, Provider, TransientFault, TransportPhase,
@@ -27,12 +28,16 @@ use super::{
 };
 use crate::{Error, Result};
 use std::num::NonZeroU32;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 /// Environment variables that configure the provider.
 pub const ENV_URL: &str = "URUK_PROVIDER_URL";
 pub const ENV_KEY: &str = "URUK_API_KEY";
+/// Directory containing one SwissAI key per `*.key` file. It is re-read for
+/// every logical completion so operators can add accounts without a restart.
+pub const ENV_KEY_DIR: &str = "URUK_API_KEY_DIR";
 pub const ENV_MODEL: &str = "URUK_MODEL";
 /// Optional `reasoning_effort` sent with every request (`none`, `low`, `medium`,
 /// `high`). Reasoning models spend most of their time thinking otherwise.
@@ -60,7 +65,7 @@ pub struct HttpProvider {
     client: reqwest::Client,
     request_timeout: Duration,
     base_url: String,
-    api_key: Option<String>,
+    api_keys: Arc<ApiKeyPool>,
     model: String,
     name: String,
     /// Normalized upstream identity, `host:effective-port`. URL spellings of
@@ -72,8 +77,8 @@ pub struct HttpProvider {
     probe_backoff: ProbeBackoff,
     reasoning_effort: Option<String>,
     /// This handle's pacing target; `None` means unpaced. The shared
-    /// schedule it resolves to at request time (see [`Self::pacer`]) is one
-    /// per upstream identity, making the limit process-wide.
+    /// schedule it resolves to at request time is one per upstream/account
+    /// identity, making each account's limit process-wide.
     rpm: Option<NonZeroU32>,
 }
 
@@ -191,7 +196,7 @@ impl HttpProvider {
             client,
             request_timeout,
             base_url,
-            api_key,
+            api_keys: Arc::new(ApiKeyPool::new(None, api_key)?),
             model: model.into(),
             name: format!("openai-compatible@{display_host}"),
             upstream,
@@ -201,8 +206,19 @@ impl HttpProvider {
         })
     }
 
-    /// Configure from `URUK_PROVIDER_URL`, `URUK_API_KEY`, and
-    /// `URUK_MODEL`. Returns `None` when no URL is set.
+    #[cfg(test)]
+    fn new_with_api_keys(
+        base_url: impl Into<String>,
+        api_keys: Vec<String>,
+        model: impl Into<String>,
+    ) -> Result<Self> {
+        let mut provider = Self::new(base_url, None, model)?;
+        provider.api_keys = Arc::new(ApiKeyPool::with_fallback(None, api_keys)?);
+        Ok(provider)
+    }
+
+    /// Configure from `URUK_PROVIDER_URL`, `URUK_API_KEY_DIR`,
+    /// `URUK_API_KEY`, and `URUK_MODEL`. Returns `None` when no URL is set.
     pub fn from_env() -> Result<Option<Self>> {
         let Ok(url) = std::env::var(ENV_URL) else {
             return Ok(None);
@@ -216,6 +232,10 @@ impl HttpProvider {
             ))
         })?;
         let key = std::env::var(ENV_KEY).ok().filter(|k| !k.trim().is_empty());
+        let key_directory = std::env::var(ENV_KEY_DIR)
+            .ok()
+            .filter(|path| !path.trim().is_empty())
+            .map(PathBuf::from);
         let effort = std::env::var(ENV_REASONING)
             .ok()
             .filter(|e| !e.trim().is_empty());
@@ -226,7 +246,8 @@ impl HttpProvider {
                 .as_deref(),
         )?;
         let mut provider =
-            Self::new_with_timeout(url, key, model, timeout)?.with_reasoning_effort(effort);
+            Self::new_with_timeout(url, key.clone(), model, timeout)?.with_reasoning_effort(effort);
+        provider.api_keys = Arc::new(ApiKeyPool::new(key_directory, key)?);
         if let Some(rpm) = std::env::var(ENV_RPM).ok().filter(|v| !v.trim().is_empty()) {
             let rpm: u32 = rpm.trim().parse().map_err(|_| {
                 Error::validation(format!(
@@ -252,8 +273,8 @@ impl HttpProvider {
     ///
     /// The target binds from this handle's next request, replacing any value
     /// set earlier on the same handle (including the SwissAI default). All
-    /// handles of one upstream identity (effective host and port) share one
-    /// process-wide schedule paced at the *strictest* target among them —
+    /// handles of one upstream/account identity share one process-wide schedule
+    /// paced at the *strictest* target among them —
     /// one start per `60/rpm` seconds, applied to every outbound attempt
     /// including retries — so the identity's starts can never exceed the
     /// stricter configured allowance. The shared rate is a process-lifetime
@@ -278,10 +299,22 @@ impl HttpProvider {
     /// paced. Resolution happens at request time, not configuration time, so
     /// a provisional target (e.g. the SwissAI default before an
     /// [`ENV_RPM`] override lands) never tightens the shared schedule.
+    #[cfg(test)]
     fn pacer(&self) -> Option<Arc<StartPacer>> {
+        self.pacer_for(None)
+    }
+
+    /// SwissAI's request allowance is per account. Each named key therefore
+    /// has an independent start schedule while all keys still share one
+    /// endpoint availability gate.
+    fn pacer_for(&self, key: Option<&ApiKey>) -> Option<Arc<StartPacer>> {
         self.rpm.map(|rpm| {
             let interval = Duration::from_secs(60).div_f64(f64::from(rpm.get()));
-            StartPacer::shared(&self.upstream, interval)
+            let identity = match key {
+                Some(key) => format!("{}|key:{}", self.upstream, key.id()),
+                None => self.upstream.clone(),
+            };
+            StartPacer::shared(&identity, interval)
         })
     }
 
@@ -310,6 +343,7 @@ impl HttpProvider {
         url: &str,
         body: &serde_json::Value,
         attempts: &Attempts,
+        key: Option<&ApiKey>,
     ) -> std::result::Result<ChatResponse, SendError> {
         use crate::diagnostics::{Meta, Redactor, RequestLog};
         let mut log = if let Some(context) = &attempts.diagnostics {
@@ -321,7 +355,11 @@ impl HttpProvider {
                 task_id: context.task_id.clone(),
                 attempt: Some(attempts.resends().saturating_add(1)),
             };
-            let mut redactor = Redactor(self.api_key.iter().cloned().collect());
+            let mut redactor = Redactor(
+                key.map(|key| key.secret().to_string())
+                    .into_iter()
+                    .collect(),
+            );
             redactor.observe_url(url);
             let mut capture = crate::diagnostics::Capture::default();
             capture.push(body.to_string().as_bytes());
@@ -342,7 +380,7 @@ impl HttpProvider {
         } else {
             None
         };
-        let result = self.send_once_inner(url, body, log.as_mut()).await;
+        let result = self.send_once_inner(url, body, log.as_mut(), key).await;
         if let Some(log) = &mut log {
             let (outcome, error) = match &result {
                 Ok(_) => ("success", None),
@@ -364,10 +402,11 @@ impl HttpProvider {
         url: &str,
         body: &serde_json::Value,
         mut log: Option<&mut crate::diagnostics::RequestLog>,
+        key: Option<&ApiKey>,
     ) -> std::result::Result<ChatResponse, SendError> {
         let mut req = self.client.post(url).json(body);
-        if let Some(key) = &self.api_key {
-            req = req.bearer_auth(key);
+        if let Some(key) = key {
+            req = req.bearer_auth(key.secret());
         }
         let mut resp = req
             .send()
@@ -439,21 +478,70 @@ impl HttpProvider {
             return Err(SendError::Transient(TransientFault::status(
                 status.as_u16(),
                 retry_after,
-                clip(&text, 300),
+                clip_redacted(&text, 300, key),
+            )));
+        }
+        if key.is_some() && matches!(status.as_u16(), 401 | 403) {
+            return Err(SendError::Transient(TransientFault::status(
+                status.as_u16(),
+                None,
+                clip_redacted(&text, 300, key),
             )));
         }
         if status.is_success() {
             return serde_json::from_str::<ChatResponse>(&text).map_err(|e| {
                 SendError::Permanent(Error::Provider(format!(
                     "unparseable chat completion ({e}): {}",
-                    clip(&text, 300)
+                    clip_redacted(&text, 300, key)
                 )))
             });
         }
         Err(SendError::Permanent(Error::Provider(format!(
             "HTTP {status}: {}",
-            clip(&text, 300)
+            clip_redacted(&text, 300, key)
         ))))
+    }
+
+    /// Try one full round-robin key cycle before declaring the provider
+    /// unavailable. Invalid requests and malformed replies stay terminal:
+    /// another credential cannot repair their payload.
+    async fn send_key_cycle(
+        &self,
+        url: &str,
+        body: &serde_json::Value,
+        attempts: &Attempts,
+    ) -> std::result::Result<ChatResponse, SendError> {
+        let keys = self.api_keys.next_keys().map_err(SendError::Permanent)?;
+        if keys.is_empty() {
+            if let Some(pacer) = self.pacer_for(None) {
+                pacer.pace(None).await;
+            }
+            return self.send_once(url, body, attempts, None).await;
+        }
+
+        let mut last_retryable = None;
+        for key in &keys {
+            let pacer = self.pacer_for(Some(key));
+            if let Some(pacer) = &pacer {
+                pacer.pace(None).await;
+            }
+            match self.send_once(url, body, attempts, Some(key)).await {
+                Ok(response) => return Ok(response),
+                Err(SendError::Transient(fault)) => {
+                    if let (Some(pacer), Some(delay)) = (&pacer, fault.retry_after()) {
+                        pacer.defer_until(tokio::time::Instant::now() + delay);
+                    }
+                    tracing::warn!(key = key.id(), "API key could not serve call; rotating");
+                    last_retryable = Some(SendError::Transient(fault));
+                }
+                Err(error @ SendError::Permanent(_)) => return Err(error),
+            }
+        }
+
+        match last_retryable.expect("a non-empty key cycle records a result") {
+            SendError::Transient(fault) => Err(SendError::Transient(fault)),
+            SendError::Permanent(_) => unreachable!("permanent errors return immediately"),
+        }
     }
 }
 
@@ -522,14 +610,9 @@ impl Provider for HttpProvider {
             body["reasoning_effort"] = serde_json::Value::String(effort.clone());
         }
         let gate = self.gate();
-        let pacer = self.pacer();
-        complete_through_gate(
-            &gate,
-            pacer.as_deref(),
-            &self.probe_backoff,
-            attempts,
-            || self.send_once(&url, &body, attempts),
-        )
+        complete_through_gate(&gate, None, &self.probe_backoff, attempts, || {
+            self.send_key_cycle(&url, &body, attempts)
+        })
         .await
     }
 
@@ -551,11 +634,253 @@ fn clip(s: &str, n: usize) -> String {
     format!("{}…", &s[..end])
 }
 
+/// Clip provider text only after removing the active credential. Some
+/// upstreams echo malformed authorization values in error bodies.
+fn clip_redacted(s: &str, n: usize, key: Option<&ApiKey>) -> String {
+    match key {
+        Some(key) => clip(&s.replace(key.secret(), "[REDACTED]"), n),
+        None => clip(s, n),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::keys::ApiKeyPool;
+    use std::path::PathBuf;
     use time::format_description::well_known::Rfc2822;
     use time::macros::datetime;
+
+    #[test]
+    fn provider_error_text_cannot_echo_the_active_key() {
+        let key = ApiKey {
+            id: "test.key".into(),
+            secret: "sk-rc-never-log-this".into(),
+        };
+        let body = format!("authorization failed for {}", key.secret());
+
+        let detail = clip_redacted(&body, 300, Some(&key));
+
+        assert_eq!(detail, "authorization failed for [REDACTED]");
+        assert!(!detail.contains(key.secret()));
+        assert!(!format!("{key:?}").contains(key.secret()));
+    }
+
+    #[test]
+    fn key_directory_is_extensible_and_round_robin() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("mia.key"), "sk-rc-mia\n").unwrap();
+        std::fs::write(directory.path().join("alex.key"), "sk-rc-alex\n").unwrap();
+        std::fs::write(directory.path().join("ignore.txt"), "sk-rc-ignore\n").unwrap();
+
+        let pool = ApiKeyPool::new(Some(PathBuf::from(directory.path())), None).unwrap();
+
+        assert_eq!(pool.next_cycle().unwrap(), ["sk-rc-alex", "sk-rc-mia"]);
+        assert_eq!(pool.next_cycle().unwrap(), ["sk-rc-mia", "sk-rc-alex"]);
+
+        std::fs::write(directory.path().join("zoe.key"), "sk-rc-zoe\n").unwrap();
+        assert_eq!(
+            pool.next_cycle().unwrap(),
+            ["sk-rc-zoe", "sk-rc-alex", "sk-rc-mia"],
+            "new .key files become available without code changes or a restart"
+        );
+    }
+
+    #[test]
+    fn key_directory_rejects_malformed_swissai_keys() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("bad.key"), "not-a-swissai-key\n").unwrap();
+
+        let error = ApiKeyPool::new(Some(directory.path().to_path_buf()), None).unwrap_err();
+        assert!(error.to_string().contains("bad.key"));
+        assert!(!error.to_string().contains("not-a-swissai-key"));
+    }
+
+    #[tokio::test]
+    async fn failed_key_rotates_before_the_provider_gate_waits() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let seen = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let server = tokio::spawn({
+            let seen = Arc::clone(&seen);
+            async move {
+                for response in [
+                    "HTTP/1.1 429 Too Many Requests\r\nContent-Length: 4\r\n\r\nslow".to_string(),
+                    successful_response("ok"),
+                ] {
+                    let (mut stream, _) = listener.accept().await.unwrap();
+                    let mut request = vec![0; 8192];
+                    let read = stream.read(&mut request).await.unwrap();
+                    let request = String::from_utf8_lossy(&request[..read]);
+                    let auth = request
+                        .lines()
+                        .find(|line| line.to_ascii_lowercase().starts_with("authorization:"))
+                        .unwrap()
+                        .trim()
+                        .to_string();
+                    seen.lock().unwrap().push(auth);
+                    stream.write_all(response.as_bytes()).await.unwrap();
+                }
+            }
+        });
+        let provider = HttpProvider::new_with_api_keys(
+            format!("http://{address}"),
+            vec!["sk-rc-one".into(), "sk-rc-two".into()],
+            "m",
+        )
+        .unwrap()
+        .with_requests_per_minute(None);
+        let attempts = Attempts::default();
+
+        let response = provider
+            .complete_counted(
+                ChatRequest::new("m", vec![super::super::Message::user("hi")]),
+                &attempts,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.text(), "ok");
+        assert_eq!(
+            attempts.resends(),
+            0,
+            "key rotation is one logical send cycle"
+        );
+        assert!(provider.upstream_gate().unwrap().status().is_available());
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [
+                "authorization: Bearer sk-rc-one",
+                "authorization: Bearer sk-rc-two"
+            ]
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn provider_wait_starts_only_after_every_key_fails() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let seen = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let server = tokio::spawn({
+            let seen = Arc::clone(&seen);
+            async move {
+                for _ in 0..2 {
+                    let (mut stream, _) = listener.accept().await.unwrap();
+                    let mut request = vec![0; 8192];
+                    let read = stream.read(&mut request).await.unwrap();
+                    let request = String::from_utf8_lossy(&request[..read]);
+                    let auth = request
+                        .lines()
+                        .find(|line| line.to_ascii_lowercase().starts_with("authorization:"))
+                        .unwrap()
+                        .trim()
+                        .to_string();
+                    seen.lock().unwrap().push(auth);
+                    stream
+                        .write_all(b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 3\r\n\r\nbad")
+                        .await
+                        .unwrap();
+                }
+            }
+        });
+        let provider = HttpProvider::new_with_api_keys(
+            format!("http://{address}"),
+            vec!["sk-rc-one".into(), "sk-rc-two".into()],
+            "m",
+        )
+        .unwrap()
+        .with_requests_per_minute(None)
+        .with_probe_backoff(ProbeBackoff::new(
+            Duration::from_secs(60),
+            Duration::from_secs(60),
+        ));
+
+        let result = tokio::time::timeout(
+            Duration::from_millis(250),
+            provider.complete(ChatRequest::new(
+                "m",
+                vec![super::super::Message::user("hi")],
+            )),
+        )
+        .await;
+
+        assert!(
+            result.is_err(),
+            "the exhausted pool should wait behind the gate"
+        );
+        assert!(!provider.upstream_gate().unwrap().status().is_available());
+        assert_eq!(
+            seen.lock().unwrap().len(),
+            2,
+            "every key is tried once first"
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn invalid_request_is_terminal_without_rotating_credentials() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = vec![0; 8192];
+            let _ = stream.read(&mut request).await.unwrap();
+            stream
+                .write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 7\r\n\r\ninvalid")
+                .await
+                .unwrap();
+            tokio::time::timeout(Duration::from_millis(150), listener.accept())
+                .await
+                .is_ok()
+        });
+        let provider = HttpProvider::new_with_api_keys(
+            format!("http://{address}"),
+            vec!["sk-rc-one".into(), "sk-rc-two".into()],
+            "m",
+        )
+        .unwrap()
+        .with_requests_per_minute(None);
+
+        let error = provider
+            .complete(ChatRequest::new(
+                "m",
+                vec![super::super::Message::user("hi")],
+            ))
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("HTTP 400"));
+        assert!(provider.upstream_gate().unwrap().status().is_available());
+        assert!(
+            !server.await.unwrap(),
+            "a permanent 4xx must not try another key"
+        );
+    }
+
+    fn successful_response(text: &str) -> String {
+        let body = serde_json::json!({
+            "id": "chatcmpl-key-rotation",
+            "model": "m",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": text},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+        })
+        .to_string();
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        )
+    }
 
     #[test]
     fn retry_after_parses_delta_seconds() {
