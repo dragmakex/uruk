@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+name=${1:-}
+name=${name,,}
+if [[ -z "$name" || "$name" != [a-z]* || "$name" == *[^a-z0-9_-]* ]]; then
+  printf 'usage: %s <account-name>\n' "$0" >&2
+  printf 'account names must start with a letter and contain only a-z, 0-9, _ or -\n' >&2
+  exit 2
+fi
+
+key_dir=${URUK_API_KEY_DIR:-"$HOME/.config/swissai"}
+key_file="$key_dir/$name.key"
+mkdir -p -- "$key_dir"
+chmod 700 -- "$key_dir"
+umask 077
+
+IFS= read -r -s -p "Swiss AI API key for $name: " key
+printf '\n'
+if [[ -z "$key" ]]; then
+  printf 'key cannot be empty\n' >&2
+  exit 1
+fi
+if [[ "$key" == *[[:space:]]* || "$key" != sk-rc-* ]]; then
+  printf 'That does not look like a Swiss AI key (expected sk-rc-… with no spaces). Nothing was saved.\n' >&2
+  exit 1
+fi
+
+temporary="$key_file.tmp.$$"
+trap 'rm -f -- "$temporary"' EXIT HUP INT TERM
+printf '%s\n' "$key" >"$temporary"
+chmod 600 -- "$temporary"
+mv -f -- "$temporary" "$key_file"
+trap - EXIT HUP INT TERM
+printf 'Saved %s\n' "$key_file"

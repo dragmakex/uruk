@@ -10,6 +10,7 @@
 
 mod availability;
 mod http;
+mod keys;
 mod mock;
 mod pacing;
 
