@@ -896,7 +896,10 @@ pub async fn should_stop(
         .saturating_sub(goal.budget.reserve_calls_for_output);
 
     if usage.committed_calls() >= working_ceiling
-        || usage.committed_tokens() >= goal.budget.max_tokens
+        || usage
+            .committed_tokens()
+            .saturating_add(TOKENS_PER_MODEL_CALL_RESERVATION)
+            > goal.budget.working_token_ceiling()
     {
         return Ok(Some(StopCondition::BudgetExhausted));
     }
@@ -1230,5 +1233,23 @@ mod tests {
         };
         assert!(w.validate().is_err());
         assert!(Weights::default().validate().is_ok());
+    }
+
+    #[tokio::test]
+    async fn output_token_reserve_stops_campaign_as_budget_exhausted() {
+        let store = Store::open_in_memory().await.unwrap();
+        let mut g = goal(Mode::Campaign, "find explanations for X", &[]);
+        g.budget.max_tokens = 100_000;
+        g.budget.reserve_calls_for_output = 1;
+        let usage = BudgetUsage {
+            tokens: 61_000,
+            ..Default::default()
+        };
+
+        let stop = should_stop(&store, &g.run_id, &g, &usage, 1, false)
+            .await
+            .unwrap();
+
+        assert_eq!(stop, Some(StopCondition::BudgetExhausted));
     }
 }

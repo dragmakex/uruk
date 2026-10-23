@@ -17,7 +17,10 @@ pub use evidence::{
     Assessment, AssessmentError, AssessmentRecord, Disposition, Evidence, EvidenceKind,
     EvidenceLink, EvidenceRelation, validate_assessment,
 };
-pub use goal::{Budget, Goal, InputRef, Mode, Permissions, Plan, Rubric, StopCondition};
+pub use goal::{
+    Budget, Goal, InputRef, Mode, Permissions, Plan, Rubric, StopCondition,
+    TOKENS_PER_MODEL_CALL_RESERVATION,
+};
 pub use ids::*;
 pub use item::{Author, HypothesisFields, ItemKind, ItemState, ResearchItem};
 pub use review::{

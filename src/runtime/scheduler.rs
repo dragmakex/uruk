@@ -490,7 +490,15 @@ impl Scheduler {
             ))
         } else if !self
             .store
-            .can_afford_final_output(run_id, FINAL_OUTPUT_CALLS, &goal.budget)
+            .can_afford_final_output(
+                run_id,
+                &CostReservation {
+                    model_calls: FINAL_OUTPUT_CALLS,
+                    tokens: TOKENS_PER_MODEL_CALL_RESERVATION * FINAL_OUTPUT_CALLS as u64,
+                    tool_executions: 0,
+                },
+                &goal.budget,
+            )
             .await?
         {
             Some(format!(
@@ -753,7 +761,7 @@ impl Scheduler {
             permissions: goal.permissions.clone(),
             reservation: CostReservation {
                 model_calls: calls,
-                tokens: 20_000 * calls as u64,
+                tokens: TOKENS_PER_MODEL_CALL_RESERVATION * calls as u64,
                 tool_executions,
             },
             state: TaskState::Pending,

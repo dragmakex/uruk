@@ -197,9 +197,10 @@ describe("RunForm", () => {
     const calls = screen.getByLabelText("Model calls");
     await user.clear(calls);
     await user.type(calls, "500");
-    const iterations = screen.getByLabelText("Iterations");
-    await user.clear(iterations);
-    await user.type(iterations, "12");
+    const rounds = screen.getByLabelText("Rounds");
+    expect(screen.queryByLabelText("Iterations")).not.toBeInTheDocument();
+    await user.clear(rounds);
+    await user.type(rounds, "12");
     const acquisitions = screen.getByLabelText("Source acquisitions");
     await user.clear(acquisitions);
     await user.type(acquisitions, "4");
@@ -478,7 +479,8 @@ describe("RunForm", () => {
       await screen.findByText("generation, reflection, ranking"),
     ).toBeInTheDocument();
     expect(screen.getByText("campaign mode runs the full loop")).toBeInTheDocument();
-    expect(screen.getByText(/No time limit/)).toBeInTheDocument();
+    expect(screen.getByText(/No time limit/)).toHaveTextContent("10 rounds");
+    expect(screen.queryByText(/10 iterations/)).not.toBeInTheDocument();
     expect(startRunMock).not.toHaveBeenCalled();
     expect(pushMock).not.toHaveBeenCalled();
   });
