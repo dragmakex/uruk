@@ -382,11 +382,10 @@ async fn stop_works_promptly_for_queued_and_provider_waiting_runs() {
 }
 
 #[tokio::test]
-async fn unlimited_run_resumes_after_days_without_deadline_exhaustion() {
+async fn a_run_with_an_old_start_time_still_completes() {
     let provider = scripted_provider();
     let f = common::fixture_with(Mode::Task, provider, |g| {
         g.question = "assess this candidate".into();
-        g.budget.wall_clock_secs = 0;
         g.budget.max_model_calls = 6;
         g.budget.reserve_calls_for_output = 1;
     })
@@ -408,12 +407,11 @@ async fn unlimited_run_resumes_after_days_without_deadline_exhaustion() {
 }
 
 #[tokio::test]
-async fn waiting_for_the_provider_consumes_neither_the_deadline_nor_the_call_budget() {
+async fn waiting_for_the_provider_consumes_no_model_calls() {
     let provider = scripted_provider();
     provider.set_available(false);
     let f = common::fixture_with(Mode::Task, provider.clone(), |g| {
         g.question = "assess this candidate".into();
-        g.budget.wall_clock_secs = 2;
         g.budget.max_model_calls = 6;
         g.budget.reserve_calls_for_output = 1;
     })
@@ -428,7 +426,7 @@ async fn waiting_for_the_provider_consumes_neither_the_deadline_nor_the_call_bud
     let run_id = f.run_id.clone();
     let handle = tokio::spawn(async move { scheduler.run(&run_id).await });
 
-    // The outage outlives the whole wall-clock budget.
+    // Keep the provider unavailable long enough to exercise repeated retries.
     tokio::time::sleep(Duration::from_millis(3200)).await;
     assert!(
         !handle.is_finished(),
@@ -815,11 +813,7 @@ async fn the_sweep_settles_tasks_orphaned_by_a_crash_after_a_stop() {
             priority: 1.0,
             priority_rationale: "test".into(),
             permissions: fixture.goal.permissions.clone(),
-            reservation: CostReservation {
-                model_calls: 1,
-                tokens: 1000,
-                tool_executions: 0,
-            },
+            reservation: CostReservation { model_calls: 1 },
             state: TaskState::Pending,
             attempts: 0,
             max_attempts: 3,
@@ -963,30 +957,6 @@ async fn browsers_take_turns_and_positions_show_the_projected_order() {
         order,
         vec![a1, b1, c1, a2, b2, a3],
         "one run per browser per cycle"
-    );
-}
-
-#[tokio::test]
-async fn the_listing_shows_the_position_of_a_parked_run_put_back_on_the_queue() {
-    let fixture =
-        common::fixture_owned(Mode::Task, scripted_provider(), common::BROWSER_TOKEN).await;
-    let (app, state) = app_over(&fixture.store, fixture.provider.clone()).await;
-    // Parked for a person, then released: the sweep gives it a new turn.
-    fixture
-        .store
-        .set_run_state(&fixture.run_id, RunState::WaitingForHuman, None)
-        .await
-        .unwrap();
-    let enqueued = uruk::web::resume_orphaned_runs(&state).await.unwrap();
-    assert_eq!(enqueued, vec![fixture.run_id.clone()]);
-
-    let listing = body_json(app.clone().oneshot(get("/api/runs")).await.unwrap()).await;
-    let run = &listing["runs"][0];
-    assert_eq!(run["id"], fixture.run_id.as_str());
-    assert_eq!(run["state"], "waiting-for-human");
-    assert_eq!(
-        run["queue_position"], 1,
-        "the position comes from the live queue entry: {run}"
     );
 }
 

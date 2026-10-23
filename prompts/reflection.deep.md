@@ -14,9 +14,9 @@ Supporting material:
 Execution available to this task: {execution}
 
 If a step can only be settled by actually running something, and execution is
-available, request it. Name only an approved program; inputs must be supplied
-sources. The request is gated by the allowlist and by human approval, and its
-result comes back as evidence for a later review to interpret.
+available, request it. Name only an allowed program; inputs must be supplied
+sources. The contained result comes back as evidence for a later review to
+interpret.
 
 Procedure:
 1. Extract the assumptions the item depends on, including the implicit ones.

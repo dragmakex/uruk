@@ -724,10 +724,8 @@ export function RunForm() {
             <dt className="micro">Budget</dt>
             <dd>
               {preview.budget.max_model_calls} calls ·{" "}
-              {preview.budget.max_seconds === 0
-                ? "No time limit"
-                : `${preview.budget.max_seconds} s`} · {preview.budget.max_iterations}{" "}
-              rounds · {preview.budget.max_debate_turns} debate turns ·{" "}
+              {preview.budget.max_iterations} rounds ·{" "}
+              {preview.budget.max_debate_turns} debate turns ·{" "}
               {preview.budget.max_acquisitions} acquisitions
             </dd>
           </dl>

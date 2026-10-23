@@ -250,7 +250,7 @@ impl AgentContext {
             return "no (no computation can be run in this task)".to_string();
         }
         format!(
-            "yes, contained; approved programs: {}. Requests require researcher approval.",
+            "yes, contained; allowlisted programs: {}.",
             p.allowed_tools.join(", ")
         )
     }

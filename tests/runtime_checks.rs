@@ -36,11 +36,7 @@ fn pending_task(f: &Fixture, role: Role, strategy: &str, inputs: Vec<String>) ->
         priority: 1.0,
         priority_rationale: "test".into(),
         permissions: f.goal.permissions.clone(),
-        reservation: CostReservation {
-            model_calls: 1,
-            tokens: 1000,
-            tool_executions: 0,
-        },
+        reservation: CostReservation { model_calls: 1 },
         state: TaskState::Pending,
         attempts: 0,
         max_attempts: 3,
@@ -428,69 +424,6 @@ async fn check_3c_cross_process_writers_queue() {
             "a cross-process write must not fail"
         );
     }
-}
-
-/// §9.3(4): approval waits survive restart, accept only the pending version,
-/// and respect denial.
-#[tokio::test]
-async fn check_4_approval_waits_survive_restart() {
-    let f = fixture(Mode::Task, MockProvider::new()).await;
-    let path = f.dir.path().join(".uruk/state.sqlite");
-
-    let mut task = pending_task(&f, Role::Tool, "exec", vec![]);
-    task.state = TaskState::WaitingForHuman;
-    f.store.enqueue_task(&task, None).await.unwrap();
-
-    let payload = serde_json::json!({"program": "python", "args": ["analyze.py"]});
-    let req = ApprovalRequest {
-        id: RequestId::new(),
-        schema_version: SCHEMA_VERSION,
-        run_id: f.run_id.clone(),
-        task_id: Some(task.id.clone()),
-        action: "execute analyze.py".into(),
-        payload: payload.clone(),
-        payload_hash: ContentHash::of_json(&payload).unwrap(),
-        state: ApprovalState::Pending,
-        decided_by: None,
-        decided_reason: None,
-        created_at: OffsetDateTime::now_utc(),
-        decided_at: None,
-    };
-    f.store.insert_approval(&req).await.unwrap();
-    f.store.close().await;
-
-    // --- restart: the wait is a persisted record, not a live thread ---
-    let store = Store::open(&path).await.unwrap();
-    let pending = store
-        .list_approvals(&f.run_id, Some(ApprovalState::Pending))
-        .await
-        .unwrap();
-    assert_eq!(pending.len(), 1, "the approval wait must survive restart");
-
-    // A changed payload cannot reuse this approval.
-    let changed =
-        ContentHash::of_json(&serde_json::json!({"program": "sh", "args": ["-c"]})).unwrap();
-    assert!(
-        store
-            .decide_approval(&req.id, true, Some(&changed), None)
-            .await
-            .is_err(),
-        "approval must bind to the exact pending payload"
-    );
-
-    // Denial is respected: the task is cancelled, not run.
-    store
-        .decide_approval(&req.id, false, Some(&req.payload_hash), Some("no".into()))
-        .await
-        .unwrap();
-    assert_eq!(
-        store.get_task(&task.id).await.unwrap().state,
-        TaskState::Cancelled
-    );
-    assert_eq!(
-        store.get_approval(&req.id).await.unwrap().state,
-        ApprovalState::Denied
-    );
 }
 
 /// §9.3(5): cancellation reaches child computations and owned processes,

@@ -31,15 +31,13 @@
 //! holding any other owner back; one whose request died is abandoned (the
 //! run fails with `start_incomplete`) and the queue moves on. Every transition is a store fact:
 //! enqueue rides in the transaction that creates the run, and leaving the
-//! queue rides in the transaction that cancels, blocks, or finishes it, so
+//! queue rides in the transaction that cancels or finishes it, so
 //! a restarted server rebuilds exactly the queue the previous one had.
 //!
-//! The research clock is persisted beside the run: `started_at` is stamped
-//! on first activation and the wall-clock budget runs from it, so time
-//! spent queued is not research time. A transient provider outage opens a
-//! pause (`paused_since`); settling it adds to `paused_secs`, and the
-//! effective deadline moves by exactly that much. An open pause survives
-//! a restart and is settled when the provider serves again.
+//! Timing facts are persisted beside the run: `started_at` is stamped on
+//! first activation. A transient provider outage opens a pause
+//! (`paused_since`); settling it adds to `paused_secs`. An open pause
+//! survives a restart and is settled when the provider serves again.
 
 use super::{Store, from_rfc3339, now, to_rfc3339};
 use crate::records::*;
@@ -59,7 +57,7 @@ pub const ENGINE_OWNER: &str = "engine";
 #[serde(rename_all = "lowercase")]
 pub enum QueueState {
     /// Created, holding its place, but its start request has not yet
-    /// finished preparing it (safety, sources, plan); not executable.
+    /// finished preparing it (sources and plan); not executable.
     Preparing,
     /// Waiting for every earlier live entry to finish.
     Queued,
@@ -132,7 +130,7 @@ pub struct QueueContext {
     pub active_provider_waiting: bool,
 }
 
-/// The persisted research clock of one run.
+/// Persisted provider-wait timing for one run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunTiming {
     pub created_at: OffsetDateTime,
@@ -150,29 +148,6 @@ impl RunTiming {
     /// Whether a provider wait is open.
     pub fn is_paused(&self) -> bool {
         self.paused_since.is_some()
-    }
-
-    /// The wall-clock deadline as of now: start plus the budget plus every
-    /// settled wait. `None` for an unlimited (zero) budget or an unstarted
-    /// run. An *open* wait is not folded in here; see [`Self::deadline_passed`].
-    pub fn deadline(&self, wall_clock_secs: u64) -> Option<OffsetDateTime> {
-        if wall_clock_secs == 0 {
-            return None;
-        }
-        let budget = time::Duration::seconds(i64::try_from(wall_clock_secs).unwrap_or(i64::MAX));
-        let paused = time::Duration::seconds(i64::try_from(self.paused_secs).unwrap_or(i64::MAX));
-        self.started_at
-            .map(|started| started.saturating_add(budget).saturating_add(paused))
-    }
-
-    /// Whether the budget is spent at `now`. Never while a wait is open:
-    /// a paused clock cannot run out.
-    pub fn deadline_passed(&self, wall_clock_secs: u64, now: OffsetDateTime) -> bool {
-        if self.is_paused() {
-            return false;
-        }
-        self.deadline(wall_clock_secs)
-            .is_some_and(|deadline| now >= deadline)
     }
 }
 
@@ -441,32 +416,6 @@ impl Store {
             .ok_or_else(|| Error::not_found(format!("queue entry for run {}", run.id)))?;
         guard.commit().await?;
         Ok(entry)
-    }
-
-    /// Create a run that is refused before it starts: the run (in the
-    /// `blocked` state the caller set), its goal, its owner binding when
-    /// there is one, and the decision explaining the refusal, in one
-    /// transaction and with no queue place, so it can never execute.
-    ///
-    /// # Errors
-    ///
-    /// Fails with [`Error::Storage`] when any insert cannot be committed;
-    /// nothing is persisted in that case.
-    pub async fn create_run_blocked(
-        &self,
-        run: &Run,
-        goal: &Goal,
-        owner: Option<&OwnerDigest>,
-        decision: &Decision,
-    ) -> Result<()> {
-        let mut guard = self.begin_write().await?;
-        let conn = guard.conn();
-        super::writes::insert_run_and_goal_in_tx(conn, run, goal).await?;
-        if let Some(owner) = owner {
-            super::owners::insert_owner_in_tx(conn, &run.id, owner).await?;
-        }
-        super::writes::insert_decision_in_tx(conn, decision).await?;
-        guard.commit().await
     }
 
     /// Give an existing, already prepared run a place at the tail of the
@@ -863,55 +812,4 @@ async fn live_entry(conn: &mut SqliteConnection, run_id: &RunId) -> Result<Optio
     .fetch_optional(conn)
     .await?;
     row.as_ref().map(entry_from_row).transpose()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use time::macros::datetime;
-
-    fn timing(
-        started: Option<OffsetDateTime>,
-        paused_secs: u64,
-        open: Option<OffsetDateTime>,
-    ) -> RunTiming {
-        RunTiming {
-            created_at: datetime!(2026-10-09 12:00:00 UTC),
-            started_at: started,
-            paused_secs,
-            paused_since: open,
-            pause_note: None,
-        }
-    }
-
-    #[test]
-    fn deadline_is_start_plus_budget_plus_settled_waits() {
-        let started = datetime!(2026-10-09 12:05:00 UTC);
-        let t = timing(Some(started), 30, None);
-        assert_eq!(
-            t.deadline(60),
-            Some(datetime!(2026-10-09 12:06:30 UTC)),
-            "queued time before the start is not counted"
-        );
-    }
-
-    #[test]
-    fn a_run_that_has_not_started_has_no_deadline() {
-        assert_eq!(timing(None, 0, None).deadline(60), None);
-        assert!(!timing(None, 0, None).deadline_passed(60, datetime!(2030-01-01 0:00 UTC)));
-    }
-
-    #[test]
-    fn an_open_wait_never_lets_the_deadline_pass() {
-        let started = datetime!(2026-10-09 12:00:00 UTC);
-        let t = timing(
-            Some(started),
-            0,
-            Some(started + time::Duration::seconds(10)),
-        );
-        assert!(!t.deadline_passed(60, started + time::Duration::hours(5)));
-        let settled = timing(Some(started), 0, None);
-        assert!(settled.deadline_passed(60, started + time::Duration::seconds(60)));
-        assert!(!settled.deadline_passed(60, started + time::Duration::seconds(59)));
-    }
 }

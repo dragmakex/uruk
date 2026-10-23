@@ -328,7 +328,7 @@ pub struct RawEvidence {
 
 /// A computational check a reviewer asks for (SPEC §5: "Reflection may
 /// request computational checks"). The Supervisor turns it into a `Tool`
-/// task gated by the allowlist and, where required, a human approval.
+/// task gated by the configured execution allowlist.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawExecRequest {
     pub program: String,
@@ -372,8 +372,6 @@ pub struct ReviewOutput {
     #[serde(default)]
     pub next_actions: Vec<String>,
     #[serde(default)]
-    pub safety_concern: Option<String>,
-    #[serde(default)]
     pub coverage_gaps: Option<String>,
     #[serde(default)]
     pub requires_execution: Vec<String>,
@@ -411,17 +409,6 @@ impl ReviewOutput {
             r.validate()?;
         }
         Ok(())
-    }
-
-    /// Whether this review reports a safety concern needing a §12 decision.
-    pub fn has_safety_concern(&self) -> bool {
-        self.safety_concern
-            .as_deref()
-            .map(|s| {
-                let t = s.trim().to_ascii_lowercase();
-                !t.is_empty() && t != "none" && t != "n/a" && t != "no concerns"
-            })
-            .unwrap_or(false)
     }
 }
 
@@ -868,7 +855,7 @@ mod tests {
             objections: vec![],
             unknowns: vec![],
             next_actions: vec![],
-            safety_concern: None,
+
             coverage_gaps: None,
             requires_execution: vec![],
             execution_requests: vec![],

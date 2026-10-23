@@ -61,7 +61,7 @@ The following architecture references are to the 2026 article; the corresponding
 | Proximity and meta-review | Organize related ideas and feed recurring critiques into subsequent work | Methods, Proximity and Meta-review agents |
 | Tools and private research material | Ground work in literature, supplied sources, databases, and specialized tools | Methods, “Tool use in Co-Scientist” |
 
-**Uruk extensions:** task mode, non-hypothesis deliverables, explicit evidence provenance, computational execution and result ingestion, reproducibility records, domain profiles, approval policies, Rust-native execution, and an optional later research market.
+**Uruk extensions:** task mode, non-hypothesis deliverables, explicit evidence provenance, computational execution and result ingestion, reproducibility records, domain profiles, Rust-native execution, and an optional later research market.
 
 Rust is Uruk's implementation requirement, not a requirement of either paper. Neither prescribes a research-credit market or establishes autonomous laboratory validation. The 2026 Code availability section identifies Python as the implementation language and says the full source is not public. Its referenced Supplementary Notes 8 and 9 are not included in `coscientist.pdf`; however, the supplied 2025 preprint includes **eight example prompts** in Appendix A.2, Figures A.1–A.8 (pp. 40–46), reproduced in §15. These examples are not a complete system prompt library or executable implementation.
 
@@ -79,7 +79,6 @@ Rust is Uruk's implementation requirement, not a requirement of either paper. Ne
 | Review synthesis without re-judging individuals | Produce actionable recurring critiques; apply them selectively to avoid narrowing every new idea to previous winners | §3.3.6; Fig. A.8 |
 | Research roadmap and expert-facing formats | Periodically update directions, discriminating experiments, and requested proposal formats; cite suggested experts without contacting them | §3.3.6; Figs. A.20–A.22 |
 | Evaluate ranking outside its own tournament | Compare to known outcomes and blinded expert judgments; Uruk additionally requires matched-cost baselines | §§4.1–4.3; Appendix A.5.2 |
-| Recheck safety after generation and evolution | A safe goal can lead to an unsafe candidate or research direction; review intermediate outputs too | §§4.4, 6 |
 
 The preprint explicitly limits its demonstrated multimodal/data integration and notes missing negative results, inaccessible literature, hallucinations, and biased auto-evaluation (§§5, 7). Accepting images, datasets, or specialized tools in Uruk does not establish that their interpretation is reliable; report modality/coverage gaps and validate each integration separately.
 
@@ -93,9 +92,9 @@ These are entry points and deliverables, not mandatory sequential stages or addi
 | Review literature | Papers, search terms, bibliography | Cited synthesis, evidence table, disagreements, gaps, search coverage |
 | Discover hypotheses | Goal, observations, prior work | Distinct testable hypotheses, mechanisms, predictions, possible falsifiers |
 | Critique existing work | Hypothesis, protocol, analysis, manuscript | Assumption checks, counterarguments, methodological defects, revision suggestions |
-| Design a study | Candidate explanation, resources, constraints | Protocol, controls, measurements, analysis plan, feasibility and approval requirements |
+| Design a study | Candidate explanation, resources, constraints | Protocol, controls, measurements, analysis plan, feasibility requirements |
 | Develop research software | Method or analysis plan, optional repository | Reviewable code and a runnable correctness check |
-| Execute computational work | Approved code/protocol, data, environment | Recorded execution, raw outputs, logs, metrics, reproducibility manifest |
+| Execute computational work | Allowlisted code/protocol, data, environment | Recorded execution, raw outputs, logs, metrics, reproducibility manifest |
 | Analyze and interpret | Dataset, observations, execution results | Validated analysis, uncertainty, alternative explanations, limitations |
 | Replicate or falsify | Published result, code, data, claim | Reproduction attempt, discrepancies, scope of support or contradiction |
 | Synthesize and communicate | Evidence, reviewed claims, target format | Research overview, report, manuscript/grant draft, figures, next-step recommendations |
@@ -118,7 +117,7 @@ A literature-only request must work without a repository or execution tool. An a
 | Execution runtime | Durable tasks, concurrency, retries, waits, cancellation, execution history | Scientific validity, hypothesis quality, research priorities |
 | Domain profiles and tools | Domain terminology, methods, rubrics, source/tool adapters, specialized nested teams | Core lifecycle, global permissions, budget increases |
 | Research records | Versioned inputs, candidate lineage, evidence, reviews, decisions, artifacts | Hidden mutable agent memory |
-| Interface | Researcher instructions, approvals, inspection, exports | Silently approving generated plans or promoting claims |
+| Interface | Researcher instructions, inspection, exports | Promoting claims without evidence |
 
 Keep the research-policy code independent of runtime-specific types. This is an ownership boundary, not a requirement to implement multiple backends or a generic runtime plugin system.
 
@@ -136,12 +135,12 @@ A goal records:
 - Source references: files, PDFs, URLs, datasets, code, images, observations, or existing project records. A repository and source list are both optional.
 - Scope, exclusions, known facts, assumptions, and practical constraints, kept distinguishable.
 - Evaluation rubric and acceptance criteria appropriate to the requested work.
-- Allowed tools, data-disclosure policy, execution permissions, and required human gates.
-- Limits on wall time, model calls/tokens, tool execution, cost where measurable, and campaign iterations.
+- Allowed tools, data-disclosure policy, and execution permissions.
+- Limits on model calls and campaign iterations. Token, tool-execution, elapsed-time, and monetary-cost usage is reported but does not stop a run.
 
 The Supervisor produces a versioned plan containing the selected roles, dependencies, proposed methods, research priorities, budgets, outputs, and stopping conditions. Following the 2025 preprint §3.2 and Fig. A.9, preserve **preferences** (desired properties), **attributes** (comparison axes), and **constraints** (requirements/limits) separately. The same plan revision supplies these to generation, review, comparison, and evolution. Ask for clarification only when missing information would materially change validity, scope, cost, or permissions. Otherwise record explicit assumptions.
 
-Low-risk work within permissions already supplied by the researcher may proceed. New privileges, external side effects, or consequential experimental choices require approval. An agent cannot approve its own expansion of scope.
+Work proceeds within the configured permission and capability envelope. Agents cannot widen that envelope.
 
 Goal or rubric changes create a revision. Subsequent tasks reference that revision; in-flight results retain their original context. The Supervisor must decide whether they remain applicable before reusing them.
 
@@ -157,8 +156,8 @@ All records have stable IDs, schema versions, creation provenance, and project/r
 | `Review` | Target item version, review strategy, assessment, evidence considered, objections, unknowns, and suggested next actions |
 | `Experiment` | Computational or external protocol, target claims, inputs, controls/checks, expected outcomes, analysis method, permissions, execution/result links |
 | `Match` | Candidate IDs, rubric revision, evidence snapshot, comparison order, judge/model identity, outcome, rationale, and rating update |
-| `Decision` | Plan change, human feedback/approval, disposition, or scheduling choice, with actor, reason, and referenced records |
-| `Task` | Role/tool and strategy, versioned inputs, prompt ID/revision/content hash, model/configuration, feedback version, dependencies, priority rationale, permission envelope, cost reservation, runtime identity, attempts, and outputs |
+| `Decision` | Plan change, human feedback, disposition, or scheduling choice, with actor, reason, and referenced records |
+| `Task` | Role/tool and strategy, versioned inputs, prompt ID/revision/content hash, model/configuration, feedback version, dependencies, priority rationale, permission envelope, model-call reservation, runtime identity, attempts, and outputs |
 | `Artifact` | Media type, immutable content/hash, producing task, storage reference, and access classification |
 
 These are data contracts, not a demand for one class, service, or database per row.
@@ -182,7 +181,7 @@ Assessments use:
 - **Refuted:** evidence contradicts the scoped claim or a necessary assumption.
 - **Inconclusive:** available checks cannot resolve the claim.
 
-These are revisable assessments, not a monotonic confidence ladder. Every assessment beyond Untested references a Review or Decision explaining its basis. Supported and Refuted require claim-relevant evidence beyond agent opinion. Novelty, usefulness, feasibility, and safety are separate assessments, not synonyms for truth.
+These are revisable assessments, not a monotonic confidence ladder. Every assessment beyond Untested references a Review or Decision explaining its basis. Supported and Refuted require claim-relevant evidence beyond agent opinion. Novelty, usefulness, and feasibility are separate assessments, not synonyms for truth.
 
 Workflow disposition (`active`, `blocked`, `archived`, `duplicate`) is separate from scientific assessment. A duplicate keeps a link to its representative and all provenance. A blocked tool says nothing about whether a claim is true.
 
@@ -208,7 +207,7 @@ Scheduling is Uruk policy; launching, waiting, retrying, and cancellation belong
 
 Produce questions, focus areas, hypotheses, or candidate proposals. Use the paper's strategies: literature exploration, simulated scientific debate, iterative assumption identification, and research expansion from prior feedback.
 
-Ground suggestions in supplied sources or approved retrieval. Identify what is established, inferred, and speculative. When sources are unavailable, return provisional ideas with explicit grounding/novelty limitations.
+Ground suggestions in supplied sources or permitted retrieval. Identify what is established, inferred, and speculative. When sources are unavailable, return provisional ideas with explicit grounding/novelty limitations.
 
 ### Reflection
 
@@ -216,7 +215,7 @@ Critically assess an existing item or result using the appropriate strategy:
 
 | Strategy from the paper | Use |
 |---|---|
-| Initial | Cheap goal-alignment, correctness, novelty, feasibility, and safety screening |
+| Initial | Cheap goal-alignment, correctness, novelty, and feasibility screening |
 | Full | Source-grounded review, including prior work and conflicting evidence |
 | Deep verification | Decompose and independently check assumptions; distinguish fatal from repairable defects |
 | Observation | Check whether the proposal explains existing observations better than alternatives |
@@ -277,7 +276,7 @@ Keep the hypothesis prompts specific to discovery/proposal work. Literature-only
 Interpret request → select necessary work → run/review → deliver artifact + limitations
 ```
 
-Examples: Reflection can critique a supplied protocol directly; Meta-review can synthesize a supplied evidence set; an approved analysis can execute and then undergo Reflection. No discovery loop is inserted merely to exercise all roles.
+Examples: Reflection can critique a supplied protocol directly; Meta-review can synthesize a supplied evidence set; an allowlisted analysis can execute and then undergo Reflection. No discovery loop is inserted merely to exercise all roles.
 
 ### Campaign mode
 
@@ -288,39 +287,39 @@ Ground / generate → reflect → compare → evolve → meta-review → next re
                          ↘ tools / experiments ↗
 ```
 
-This is not a global stage barrier. Separate items can be generated, reviewed, tested, or ranked concurrently. Dependencies are local: review needs its target, analysis needs its data, comparison needs reviewed candidates, and an experiment needs its approved protocol.
+This is not a global stage barrier. Separate items can be generated, reviewed, tested, or ranked concurrently. Dependencies are local: review needs its target, analysis needs its data, comparison needs reviewed candidates, and an experiment needs its protocol.
 
 Supervisor selects eligible work using non-negative weights informed by missing reviews, new evidence, uncertain assumptions, tournament coverage, underexplored clusters, and estimated information gain per cost. Reserve some exploration capacity so low-ranked or new directions cannot starve. Numerical weights are Uruk configuration, not paper-prescribed constants.
 
 Following 2025 §§3.2–3.3, persist periodic summary snapshots: candidates generated/awaiting review, review and match coverage, cluster coverage, task failures, resource use, and outcomes by Generation/Evolution strategy. Track novelty/feasibility objections and external-evidence results separately from debate wins. Use these summaries to adjust work weights and identify diminishing returns; do not optimize the scheduler solely for increasing Elo.
 
-The published Generation and Ranking debate prompts (Figs. A.2, A.5) target 3–5 conversational turns, capped at 10. Uruk counts a turn as one model contribution and enforces the cap in Rust, with stricter task/run budgets taking precedence; tool calls are metered separately. A debate can finish earlier or return partial/insufficient-basis output at the cap. Do not start an unbudgeted eleventh call just to force a conclusion.
+The published Generation and Ranking debate prompts (Figs. A.2, A.5) target 3–5 conversational turns, capped at 10. Uruk counts a turn as one model contribution and enforces the cap in Rust, with stricter model-call and iteration limits taking precedence. Tool calls are reported but not capped. A debate can finish earlier or return partial/insufficient-basis output at the cap.
 
 The runtime enforces bounded concurrency and tool-specific limits. Separate task workspaces prevent concurrent writers from modifying the same research code or artifacts. Scientific records are committed through one controlled write path; model agents return proposed records rather than updating shared state directly.
 
 ### Human interaction
 
-At any point, the researcher can add sources, seed ideas, provide reviews, change constraints, request a particular analysis, approve/deny work, or stop. Persist that input before acting on it. Plan revisions must invalidate stale approvals and refresh comparisons if the rubric changes.
+At any point, the researcher can add sources, seed ideas, provide reviews, change constraints, request a particular analysis, or stop. Persist that input before acting on it. Plan revisions refresh comparisons if the rubric changes.
 
 External experiments may take days or weeks: export the protocol, park the dependent work, and accept results later with provenance. Do not leave a worker or model conversation running while waiting for a person. Independent permitted work may continue.
 
 ### Budgets, failure, and stopping
 
-- Runs have no elapsed-time deadline by default (`wall_clock_secs = 0`). A positive wall-clock budget opts into a finite deadline. Enforce task/iteration limits independently even when provider cost is unknown. Report unknown cost instead of recording zero.
-- Reserve budget for in-flight work and final output before admitting more tasks. Nested tool teams share the parent budget; they cannot mint a new one.
-- Charge what was served; wait out what was not. One completion is one logical model call, claimed before its first send; a transient provider failure (a connect, send, or response transport error, including completion timeouts; or a 408, 425, 429, or 5xx) is waited out by the provider adapter behind one availability gate per upstream — one half-open probe at a time, capped backoff, `Retry-After` honored — bounded only by cancellation, never by an attempt count. The sends it repeats are audited, not charged, so an outage can exhaust neither the call budget nor the wall-clock budget, which stands still while the provider is unavailable. The configured completion timeout bounds each send, not the logical call: expiry enters the same recovery gate and exponential backoff. Repeating a timed-out send can duplicate provider-side computation and incur unknown cost; this is an explicit availability-first policy. A permanent refusal is terminal for the work at once. Do not retry negative scientific results until they look positive.
-- Mark unavailable optional capabilities and choose a permitted alternative, or return a blocked/partial result. Never imply the missing check passed.
-- Stop when the task deliverable is satisfied, limits are reached, permitted work is exhausted, the researcher cancels, or a safety boundary is violated. A campaign continues while useful work and budget remain; unchanged adjacent research snapshots alone never justify stopping, because acquisition and prerequisite batches may not change those counters. Check queued tasks and fresh proposals before declaring work exhausted.
+- Runs have no token, tool-execution, elapsed-time, or monetary-cost ceiling. Enforce model-call and iteration limits independently, and report unknown cost instead of recording zero.
+- Reserve model-call capacity for in-flight work and final output before admitting more tasks. Nested tool teams share the parent model-call budget; they cannot mint a new one.
+- Charge what was served; wait out what was not. One completion is one logical model call, claimed before its first send; a transient provider failure (a connect, send, or response transport error, including completion timeouts; or a 408, 425, 429, or 5xx) is waited out by the provider adapter behind one availability gate per upstream — one half-open probe at a time, capped backoff, `Retry-After` honored — bounded only by cancellation, never by an attempt count. The sends it repeats are audited, not charged, so an outage cannot exhaust the call budget. The configured completion timeout bounds each send, not the logical call: expiry enters the same recovery gate and exponential backoff. Repeating a timed-out send can duplicate provider-side computation and incur unknown cost; this is an explicit availability-first policy. A permanent refusal is terminal for the work at once. Do not retry negative scientific results until they look positive.
+- Mark unavailable optional capabilities and choose a permitted alternative, or return a partial result. Never imply the missing check passed.
+- Stop when the task deliverable is satisfied, active model-work limits are reached, permitted work is exhausted, or the researcher cancels. A campaign continues while useful work and model-call capacity remain; unchanged adjacent research snapshots alone never justify stopping, because acquisition and prerequisite batches may not change those counters. Check queued tasks and fresh proposals before declaring work exhausted.
 - Cancellation stops admission, requests cancellation of attached work, and terminates owned subprocesses after a bounded grace period. Late results retain their cancellation context.
 - Always preserve completed evidence and generate a status/partial-output manifest without needing another paid model call. Final Meta-review runs only if permitted and budgeted; report when it was skipped.
 
-Run states distinguish `queued`, `running`, `waiting-for-human`, `blocked`, `completed`, `budget-exhausted`, `cancelled`, and `failed`. A scientifically negative result can be a successfully completed task. Web runs execute one at a time, in start order within one owner and least-recently-served between owners, from a durable queue with a persisted global turn and per-owner last-served turn (docs/WEB.md); a queued run has started nothing and spends nothing, and its wall-clock budget runs from its first execution.
+Run states distinguish `queued`, `running`, `completed`, `budget-exhausted`, `cancelled`, and `failed`. A scientifically negative result can be a successfully completed task. Web runs execute one at a time, in start order within one owner and least-recently-served between owners, from a durable queue with a persisted global turn and per-owner last-served turn (docs/WEB.md); a queued run has started nothing and spends nothing.
 
 ## 7. Evaluation and tournament
 
-The default discovery rubric follows the paper: goal alignment, plausibility/correctness, novelty, testability, and safety. Add domain-appropriate criteria such as explanatory power, feasibility, expected impact, measurement validity, reproducibility, and cost.
+The default discovery rubric follows the paper: goal alignment, plausibility/correctness, novelty, and testability. Add domain-appropriate criteria such as explanatory power, feasibility, expected impact, measurement validity, reproducibility, and cost.
 
-Do not apply novelty as a requirement to replication, or clinical feasibility to a mathematical conjecture. Unsafe or out-of-scope candidates cannot offset a failed gate by scoring well elsewhere.
+Do not apply novelty as a requirement to replication, or clinical feasibility to a mathematical conjecture. Out-of-scope candidates cannot offset a failed requirement by scoring well elsewhere.
 
 For a tournament:
 
@@ -349,7 +348,7 @@ The market allocates scarce research effort among competing candidates, clusters
 |---|---|---|
 | Elo | Relative quality under a versioned comparison rubric | Ranking; updated only by matches |
 | Research credits | Internal allocation of permission to spend research effort | A fixed run pool and recorded allocation/transfer rules |
-| Actual resource budget | Tokens, calls, compute time, wall time, and monetary cost | Researcher-approved hard limits, enforced by the runtime |
+| Actual resource usage | Tokens, calls, compute time, elapsed time, and monetary cost | Reported usage; model calls and iterations retain configured limits |
 
 Credits are virtual accounting units, not money, tokens for sale, or a claim on real funds. Credit transfers never increase the actual budget. Wealth, bids, stakes, or credits spent never directly change Elo or scientific assessment.
 
@@ -408,13 +407,12 @@ Use `serde` for persisted and provider-facing data, but also validate semantic c
 ### 9.2 Persistence and recovery
 
 - One scheduler process owns a project at a time, enforced by an OS-held project lock. Other processes may inspect state or submit durable control requests; they must not start a competing scheduler. This is a single-machine v1 design, not a distributed execution guarantee.
-- Store research records, task attempts, approvals, budget reservations, scheduling decisions, the run queue, and each run's research clock (first start, provider waits) in `.uruk/state.sqlite`. The persisted task set is the queue's source of truth; in-memory ready lists are rebuildable. The run queue is a dedicated sequence with a persisted global turn and per-owner last-served turn, and a restart resumes its interrupted head first, then continues the turn order. No message broker or second writable research store.
+- Store research records, task attempts, model-call reservations, scheduling decisions, the run queue, and provider waits in `.uruk/state.sqlite`. The persisted task set is the queue's source of truth; in-memory ready lists are rebuildable. The run queue is a dedicated sequence with a persisted global turn and per-owner last-served turn, and a restart resumes its interrupted head first, then continues the turn order. No message broker or second writable research store.
 - Persist task identity, versioned inputs, permission envelope, selected strategy, and budget reservation before dispatch. Record nondeterministic scheduling choices rather than drawing new ones during recovery.
-- On completion, validate outputs and commit the task outcome, referenced research records, budget settlement, and any applicable rating update atomically. Unique task/match/settlement keys make duplicate result delivery harmless. Short serialized transactions must not span external calls.
+- On completion, validate outputs and commit the task outcome, referenced research records, usage settlement, and any applicable rating update atomically. Unique task/match/settlement keys make duplicate result delivery harmless. Short serialized transactions must not span external calls.
 - Write and durably finalize immutable artifacts before committing references to them. A crash may leave an unreferenced artifact, but must not leave a successful task pointing to an incomplete file. JSONL/Markdown exports are derived snapshots, not mutable authority.
-- Resume the same run and task identities. Reuse committed results, restore pending approvals, and rebuild eligible work from recorded dependencies. Reconcile unfinished attempts and owned subprocesses before resuming execution.
+- Resume the same run and task identities. Reuse committed results and rebuild eligible work from recorded dependencies. Reconcile unfinished attempts and owned subprocesses before resuming execution.
 - Local state application is idempotent; external effects are **not exactly-once**. An action may have succeeded before the process lost its result. Reconcile through the provider/tool's request identity when possible; otherwise mark it uncertain and require review before retrying an unsafe action. Preserve possible incurred cost rather than assuming it was free.
-- Approval waits are persisted records, not live worker threads. Decisions target the exact request payload/version and survive restart. A changed request needs a new approval.
 
 Context summaries and rankings are derived from durable scientific records; they are not a separate agent-memory database. Reusable extraction may be cached by source hash and tool version. Distinct stochastic trials need distinct task identities/seeds and must not collapse into one cached result or count reused results as independent replications.
 
@@ -426,20 +424,20 @@ Before adding live model calls, Rust integration tests with temporary SQLite dat
 
 1. Concurrent reviews obey global/tool limits while unrelated work progresses independently.
 2. Completed evidence selects new tasks and bounded iterations, rather than only traversing a predeclared static pipeline.
-3. Kill/restart at dispatch and completion boundaries without duplicate research records, budget settlement, or Elo updates; uncertain external outcomes are surfaced.
-4. Approval/external-data waits survive restart, accept only the pending version, and respect denial.
+3. Kill/restart at dispatch and completion boundaries without duplicate research records, usage settlement, or Elo updates; uncertain external outcomes are surfaced.
+4. Provider and external-data waits survive restart without duplicating work.
 5. Cancellation reaches child computations and owned processes, retaining labelled partial outputs.
 6. A report and evidence manifest can be exported from persisted state without a provider or external workflow service.
 
 ## 10. Domain profiles
 
-A profile supplies terminology, example prompts, review rubrics, source mappings, tool configuration, and domain-specific safety/validation rules. Start with plain configuration and existing adapters, not a plugin SDK. Profiles may narrow permissions, never widen the researcher's grants.
+A profile supplies terminology, example prompts, review rubrics, source mappings, tool configuration, and domain-specific validation rules. Start with plain configuration and existing adapters, not a plugin SDK. Profiles may narrow permissions, never widen the researcher's grants.
 
 Examples, not a promise to ship every integration in v1:
 
 | Profile | Domain tools/evidence | Key review concerns |
 |---|---|---|
-| General research | Supplied documents, approved search/retrieval | Source quality, contradictory claims, coverage, traceability |
+| General research | Supplied documents, permitted search/retrieval | Source quality, contradictory claims, coverage, traceability |
 | Computational research | Rust computations, datasets, supplied notebooks, external simulation or theorem-checking tools | Assumptions, controls, numerical/statistical correctness, reproducibility |
 | Experimental science | Literature/databases, protocol design, externally supplied results | Feasibility, ethics, controls, uncertainty, independent validation |
 
@@ -465,11 +463,11 @@ GET  /api/runs/{id}/passages?q=…    # offline FTS5 passage search
 GET  /api/library                   # sources across this browser's runs
 ```
 
-Web runs grant no permissions beyond provider disclosure. In particular, computational execution is unavailable in the web-only product: execution requires an approval bound to the exact payload hash, and until the console has an exact-payload approval UI, no such approval can be granted.
+Web runs grant no permissions beyond provider disclosure. In particular, computational execution is unavailable in the web-only product.
 
-Store the normalized goal, effective configuration, permissions, budgets, model/tool/prompt versions, and input hashes for every run. Approval references an immutable request identifying the exact action, inputs, scope, and limits. Changing that payload requires a new approval.
+Store the normalized goal, effective configuration, permissions, model-work limits, model/tool/prompt versions, and input hashes for every run.
 
-The run snapshot shows the current goal revision, the run's queue position while it waits its turn, any provider outage it is waiting out, completed/running/blocked work, human requests, resource use, evidence changes, and leading candidates where applicable. No finding, null result, and no available tool are distinct outcomes. “No discovery” is not an execution error.
+The run snapshot shows the current goal revision, the run's queue position while it waits its turn, any provider outage it is waiting out, completed/running work, resource use, evidence changes, and leading candidates where applicable. No finding, null result, and no available tool are distinct outcomes. “No discovery” is not an execution error.
 
 A run exports only applicable artifacts under `runs/<run-id>/`:
 
@@ -494,16 +492,14 @@ Every report distinguishes:
 
 Writing/grant/manuscript tasks use only recorded sources and results. Never invent experiments, authorship, sample sizes, citations, or successful replications to make a draft complete.
 
-## 12. Safety and research integrity
+## 12. Security and research integrity
 
 - Enforce filesystem, network, process, and provider permissions at execution boundaries, including nested teams and tools. Agent prompts alone are not enforcement.
 - Treat PDFs, retrieved pages, datasets, repositories, and tool output as untrusted data, not authority to change instructions or grant permissions.
-- Keep raw inputs read-only; write to task-owned workspaces. External writes, messaging, uploads, paid service usage beyond the approved budget, and publication require explicit authorization.
+- Keep raw inputs read-only; write to task-owned workspaces. External writes, messaging, uploads, paid service usage and publication must remain inside the configured capability and permission envelope.
 - Separate retrieval access from provider disclosure. “No web search” does not mean “no data leaves the machine.” Local-only data must never reach remote models, embeddings, telemetry, or caches.
 - Literature-search disclosure is explicit opt-in, not implicit. Only an explicit search grant enables the connectors, as allowlist entries `search:openalex`, `search:crossref`, `search:arxiv` on top of the network permission; the network permission alone retains URL-fetch-only behavior and sends zero connector traffic. (Neither grant is available from the web surface yet.) With search enabled, the data transmitted to each operator is exactly: query text, year filters, and the configured contact email (`URUK_CONTACT_EMAIL`) — never source contents, never the goal record. Every transmitted query is persisted verbatim in a `SearchRecord` and printed in the report, so the disclosure is auditable after the fact. Acquisition fetches only URLs a connector designates as legal open-access locations; works without one are recorded as abstract-only or unavailable, never obtained by bypassing a paywall.
 - Minimize/redact sensitive content before logs and model requests. Credentials are injected through approved runtime mechanisms, never embedded in research records.
-- High-stakes biomedical, human-subject, animal, hazardous, or dual-use work requires qualified oversight and applicable institutional approvals. Unsupported or unsafe requests are blocked; a generic user approval does not waive these constraints.
-- Following 2025 §6, check the initial goal, generated/evolved candidates, and emerging research directions separately. A safe goal is not blanket approval for unsafe intermediate work. Record a scoped refusal/need-for-review decision without continuing a blocked candidate through the tournament.
 - Preserve negative results, failed attempts, and protocol deviations. Never optimize by selectively reporting successes or repeatedly testing until a desired outcome appears.
 - Report limitations of source access, model reasoning, evaluator bias, and domain expertise. Agent consensus and rising Elo are not independent scientific validation.
 
@@ -514,7 +510,7 @@ Writing/grant/manuscript tasks use only recorded sources and results. Never inve
 1. Establish one Rust Cargo package with shared records, SQLite persistence, and the minimal Tokio runtime. Pass the recovery/cancellation checks in §9 with mock agents/tools.
 2. Add source/artifact ingestion, grounded task mode, basic Reflection/Meta-review, versioned prompt rendering/validation, and the Rust report exporter.
 3. Add the campaign roles and adapted §15 strategies, bounded adaptive scheduling/debates, Proximity, evidence-aware comparisons, immutable Evolution, and feedback.
-4. Add an approved local computational tool and reproducibility/result ingestion. External experimental results can be supplied manually.
+4. Add an allowlisted local computational tool and reproducibility/result ingestion. External experimental results can be supplied manually.
 5. Add literature search (implemented in the engine, opt-in via the search grants; not yet reachable from the web surface): local FTS5 passage retrieval over every ingested text artifact, federated discovery against the free scholarly APIs (OpenAlex, Crossref, arXiv), RRF fusion with DOI/arXiv/PMID/title-fingerprint dedup, and open-access acquisition through the ordinary ingestion pipeline, resolved locally from discovery data (arXiv PDF → OpenAlex `best_oa_location`/`oa_url`), with the audit trail (verbatim queries, per-connector ranks and raw-response hashes in each work record, unavailable works) persisted and reported. Unpaywall and PubMed/PMC are not implemented.
 
 Start with supplied documents plus one retrieval route and one configured model provider. Keep model selection outside research policy; add providers and specialized integrations when required. No mandatory market, vector database, hosted UI, laboratory connector, or general-purpose workflow framework.
@@ -533,16 +529,15 @@ Use Rust unit/integration tests with small deterministic fixtures, temporary SQL
 | Observation review | A fixture with non-discriminating observations returns neutral; a missing-piece label alone cannot become Supported; proposed disproof requires claim-relevant evidence |
 | Bounded debate | Generation and Ranking stop at the configured cap (never more than 10 model contributions); incomplete discussion does not fabricate a final winner |
 | Judge inputs | Candidate presentation order can be reversed; substantive reviews remain while independent numeric scores, Elo, and credits are absent |
-| Intermediate safety | A permitted goal cannot admit a blocked generated/evolved candidate; later directions are checked rather than inheriting blanket approval |
 | Computational task | Execute a permitted analysis on a tiny dataset, record input/code hashes and actual outputs, provide a rerun check; failed execution cannot become support |
 | Discovery campaign | Seed multiple ideas, review/compare them, create a child without mutating its parent, and carry a recorded meta-critique into later work |
 | Evidence integrity | New contradictory evidence causes re-review/stale-ranking notices; duplicate citations and agent votes cannot become independent corroboration |
 | Tournament integrity | Elo updates once per match, draws behave correctly, insufficient evidence causes no update, and rubric revisions do not share a cohort |
-| Researcher intervention | Human ideas and feedback survive restart; approval/denial applies only to the exact request; changed inputs cannot reuse approval |
-| Runtime safety | Concurrency/budget limits hold, cancellation reaches children, denied tools cannot execute, uncertain side effects are not blindly retried |
+| Researcher intervention | Human ideas and feedback survive restart and steer subsequent work without rewriting prior records |
+| Runtime containment | Concurrency and model-work limits hold, cancellation reaches children, unpermitted tools cannot execute, uncertain side effects are not blindly retried |
 | Domain independence | A literature task and a computational fixture use the same core records; a missing scientific tool is reported as unavailable, not a scientific result |
 | Rust implementation | Build and run the complete application without a Node/Python orchestration service; external research tools are optional capabilities |
-| Partial completion | Budget exhaustion or a crash preserves completed evidence and permits a clearly labelled report without another model call |
+| Partial completion | Model-work exhaustion or a crash preserves completed evidence and permits a clearly labelled report without another model call |
 
 These establish product behavior, not scientific usefulness. Evaluate usefulness separately on researcher-selected tasks using blinded expert review, citation correctness, method checks, held-out reproduction results where available, and time/cost to a useful deliverable. Include failures and negative results. Improvement in self-judged Elo alone is insufficient.
 
@@ -932,4 +927,3 @@ Response:
 ```
 
 **Uruk adaptation:** This is qualitative review synthesis, not a statistical meta-analysis of experiments. Include relevant match critiques and failed-check summaries with provenance. For each recurring issue, cite supporting records, note counterexamples/limited scope, recommend a check, and identify which roles should receive it. Do not create new findings or change rankings here. Keep this strategy separate from Meta-review's research-overview/report strategy, which may summarize individual candidates under §5.
-

@@ -13,8 +13,8 @@ Item under review:
 {item}
 
 Screen for goal alignment, evident correctness problems, whether the requested
-qualities ({idea_attributes}) are present, practical feasibility, and any
-safety concern. Novelty matters only if the criteria above ask for it.
+qualities ({idea_attributes}) are present, and practical feasibility. Novelty
+matters only if the criteria above ask for it.
 
 You have not consulted sources. Your objections are reasoning, not evidence,
 and cannot by themselves establish that a claim is true or false.
@@ -30,6 +30,5 @@ Respond with a single JSON object and no other text:
      "suggested_check": "<a bounded action that would resolve it>"}
   ],
   "unknowns": ["<what this screening could not determine>", "..."],
-  "next_actions": ["<bounded follow-up>", "..."],
-  "safety_concern": "<concern, or 'none'>"
+  "next_actions": ["<bounded follow-up>", "..."]
 }

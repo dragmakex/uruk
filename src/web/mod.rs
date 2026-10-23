@@ -69,8 +69,7 @@ pub struct WebConfig {
     /// How many uploads one browser identity may hold at a time.
     pub max_uploads_per_owner: usize,
     /// How often `serve` sweeps for runs that belong on the queue but are
-    /// not on it (parked runs whose approvals were decided), and the
-    /// dispatcher's idle tick between wakeups.
+    /// not on it, and the dispatcher's idle tick between wakeups.
     pub reconcile_interval: Duration,
     /// Whether the browser-identity cookie carries the `Secure` attribute.
     /// `false` fits the documented local HTTP setup; any deployment behind
@@ -389,8 +388,7 @@ pub struct ServeOptions {
 /// in queue order, and SPEC §9.2 allows one scheduler owner per project,
 /// so a second `uruk serve` on the same project fails fast with a lock
 /// message. Because this process is the only scheduler owner, it also
-/// sweeps for runs that belong on the queue but are not on it (runs
-/// parked `waiting-for-human` whose approvals were decided) on
+/// sweeps for runs that belong on the queue but are not on it on
 /// [`WebConfig::reconcile_interval`]. A restart changes nothing about the
 /// queue: the interrupted head is resumed first, then the rest in order.
 pub async fn serve(opts: ServeOptions) -> Result<()> {

@@ -34,15 +34,12 @@ pub struct RunMeta {
     pub iterations: u32,
     pub created_at: String,
     pub updated_at: String,
-    /// When the run first executed; `null` while it is still queued. The
-    /// wall-clock budget runs from here, not from `created_at`.
+    /// When the run first executed; `null` while it is still queued.
     pub started_at: Option<String>,
     /// Place on the run queue while `state` is `queued`: `1` is next to
     /// start. `null` once the run executes.
     pub queue_position: Option<u32>,
-    /// Seconds of settled provider waits, excluded from the research
-    /// clock; the clock is `updated_at - started_at - paused_secs` for a
-    /// finished run.
+    /// Seconds of settled provider waits.
     pub paused_secs: u64,
     /// The provider outage the run is currently waiting out, if any. A
     /// waiting run is `running`, not failed: its work resumes by itself
@@ -83,9 +80,7 @@ pub struct GoalView {
 pub struct BudgetView {
     pub max_model_calls: u32,
     pub max_iterations: u32,
-    pub wall_clock_secs: u64,
     pub max_debate_turns: u32,
-    pub max_tokens: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -102,7 +97,7 @@ pub struct TaskCounts {
     pub pending: u32,
     pub blocked: u32,
     pub running: u32,
-    pub waiting_for_human: u32,
+
     pub completed: u32,
     pub failed: u32,
     pub cancelled: u32,
@@ -115,7 +110,7 @@ impl TaskCounts {
             TaskState::Pending => self.pending += 1,
             TaskState::Blocked => self.blocked += 1,
             TaskState::Running => self.running += 1,
-            TaskState::WaitingForHuman => self.waiting_for_human += 1,
+
             TaskState::Completed => self.completed += 1,
             TaskState::Failed => self.failed += 1,
             TaskState::Cancelled => self.cancelled += 1,
@@ -125,7 +120,7 @@ impl TaskCounts {
 
     /// Work not yet finished: what the supervisor still holds open.
     pub fn open(&self) -> u32 {
-        self.pending + self.blocked + self.running + self.waiting_for_human
+        self.pending + self.blocked + self.running
     }
 }
 
@@ -144,8 +139,8 @@ pub struct TaskFacts {
 #[derive(Debug, Serialize)]
 pub struct AgentPanel {
     pub role: String,
-    /// `thinking` (a task is running), `waiting` (work queued or parked on a
-    /// human), or `idle` (nothing open).
+    /// `thinking` (a task is running), `waiting` (work is queued), or `idle`
+    /// (nothing open).
     pub state: String,
     pub counts: TaskCounts,
     /// The oldest currently running task, when there is one.
@@ -175,7 +170,6 @@ pub struct Stats {
     pub sources: u32,
     pub works: u32,
     pub searches: u32,
-    pub pending_approvals: u32,
     pub workers_busy: u32,
     pub workers_total: u32,
     pub leader: Option<Leader>,
@@ -194,7 +188,7 @@ pub struct Leader {
 fn worker_state(counts: &TaskCounts) -> &'static str {
     if counts.running > 0 {
         "thinking"
-    } else if counts.pending + counts.blocked + counts.waiting_for_human > 0 {
+    } else if counts.pending + counts.blocked > 0 {
         "waiting"
     } else {
         "idle"
@@ -204,7 +198,7 @@ fn worker_state(counts: &TaskCounts) -> &'static str {
 /// Supervisor state: it is "thinking" while the run is live and work is
 /// open anywhere, "waiting" when live but quiescent, otherwise idle.
 fn supervisor_state(run_state: RunState, open_tasks: u32) -> &'static str {
-    if run_state.is_terminal() || run_state == RunState::Blocked {
+    if run_state.is_terminal() {
         "idle"
     } else if open_tasks > 0 {
         "thinking"
@@ -292,11 +286,6 @@ pub async fn run_snapshot(store: &Store, run_id: &RunId) -> Result<RunSnapshot> 
     let sources = store.list_sources(run_id).await?.len() as u32;
     let works = store.list_works(run_id).await?.len() as u32;
     let searches = store.list_search_records(run_id).await?.len() as u32;
-    let pending_approvals = store
-        .list_approvals(run_id, Some(ApprovalState::Pending))
-        .await?
-        .len() as u32;
-
     // Worker roles come from the plan; roles that already have tasks but
     // fell out of a revised plan still get a panel so no work is hidden.
     let by_role = tasks_by_role(&tasks);
@@ -378,9 +367,7 @@ pub async fn run_snapshot(store: &Store, run_id: &RunId) -> Result<RunSnapshot> 
             budget: BudgetView {
                 max_model_calls: goal.budget.max_model_calls,
                 max_iterations: goal.budget.max_iterations,
-                wall_clock_secs: goal.budget.wall_clock_secs,
                 max_debate_turns: goal.budget.max_debate_turns,
-                max_tokens: goal.budget.max_tokens,
             },
         },
         plan: plan.map(|p| PlanView {
@@ -398,7 +385,6 @@ pub async fn run_snapshot(store: &Store, run_id: &RunId) -> Result<RunSnapshot> 
             sources,
             works,
             searches,
-            pending_approvals,
             workers_busy,
             workers_total: roles.len() as u32,
             leader,
@@ -437,15 +423,6 @@ mod tests {
     }
 
     #[test]
-    fn a_parked_human_gate_is_waiting() {
-        let c = TaskCounts {
-            waiting_for_human: 1,
-            ..TaskCounts::default()
-        };
-        assert_eq!(worker_state(&c), "waiting");
-    }
-
-    #[test]
     fn no_open_work_is_idle() {
         assert_eq!(worker_state(&counts(0, 0, 5)), "idle");
         assert_eq!(worker_state(&TaskCounts::default()), "idle");
@@ -457,7 +434,6 @@ mod tests {
         assert_eq!(supervisor_state(RunState::Running, 0), "waiting");
         assert_eq!(supervisor_state(RunState::Completed, 3), "idle");
         assert_eq!(supervisor_state(RunState::Cancelled, 0), "idle");
-        assert_eq!(supervisor_state(RunState::Blocked, 1), "idle");
     }
 
     fn summary(id: &str, rating: Option<f64>) -> ItemSummary {

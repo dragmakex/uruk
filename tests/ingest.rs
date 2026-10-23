@@ -297,10 +297,10 @@ async fn url_retrieval_is_gated_and_extracts_the_article() {
 }
 
 /// A goal revision creates a new goal and plan revision, starts a fresh
-/// rating cohort when the rubric changed, invalidates pending approvals, and
+/// rating cohort when the rubric changed, and
 /// reopens a finished run so it can be resumed (SPEC §4.1, §6, §7).
 #[tokio::test]
-async fn revise_starts_a_new_cohort_and_invalidates_approvals() {
+async fn revise_starts_a_new_cohort() {
     use uruk::agents::supervisor::{self, GoalChanges};
     use uruk::runtime::{Scheduler, SchedulerConfig};
 
@@ -344,23 +344,6 @@ async fn revise_starts_a_new_cohort_and_invalidates_approvals() {
         .unwrap();
     assert!(old_rating.rating > INITIAL_ELO);
 
-    // A pending approval under the old revision.
-    let payload = serde_json::json!({"program": "sh"});
-    let req = ApprovalRequest {
-        id: RequestId::new(),
-        schema_version: SCHEMA_VERSION,
-        run_id: f.run_id.clone(),
-        task_id: None,
-        action: "run something".into(),
-        payload: payload.clone(),
-        payload_hash: ContentHash::of_json(&payload).unwrap(),
-        state: ApprovalState::Pending,
-        decided_by: None,
-        decided_reason: None,
-        created_at: time::OffsetDateTime::now_utc(),
-        decided_at: None,
-    };
-    f.store.insert_approval(&req).await.unwrap();
     f.store
         .set_run_state(
             &f.run_id,
@@ -370,32 +353,19 @@ async fn revise_starts_a_new_cohort_and_invalidates_approvals() {
         .await
         .unwrap();
 
-    // Nothing to change is refused; a blocked goal is refused before persisting.
+    // Nothing to change is refused.
     assert!(
         supervisor::revise(&f.store, &f.run_id, GoalChanges::default())
             .await
             .is_err()
     );
-    let blocked = supervisor::revise(
-        &f.store,
-        &f.run_id,
-        GoalChanges {
-            question: Some("enhance transmissibility of a human pathogen".into()),
-            ..Default::default()
-        },
-    )
-    .await;
-    assert!(
-        matches!(blocked, Err(uruk::Error::Permission(_))),
-        "{blocked:?}"
-    );
-    assert_eq!(f.store.current_goal(&f.run_id).await.unwrap().revision, 0);
 
-    // A rubric change.
+    // A rubric and question change.
     let revised = supervisor::revise(
         &f.store,
         &f.run_id,
         GoalChanges {
+            question: Some("enhance transmissibility of a human pathogen".into()),
             attributes: vec!["reproducible".into(), "cheap".into()],
             reason: Some("the lab can only afford cheap tests".into()),
             ..Default::default()
@@ -408,11 +378,6 @@ async fn revise_starts_a_new_cohort_and_invalidates_approvals() {
     assert_ne!(
         revised.plan.id, f.plan.id,
         "a changed rubric is a new plan revision"
-    );
-    assert_eq!(revised.invalidated_approvals, 1);
-    assert_eq!(
-        f.store.get_approval(&req.id).await.unwrap().state,
-        ApprovalState::Invalidated
     );
     assert_eq!(
         f.store

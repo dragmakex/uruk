@@ -201,9 +201,8 @@ fn render_constraints(ctx: &AgentContext) -> String {
 
     let b = &ctx.goal.budget;
     parts.push(format!(
-        "Remaining budget envelope: at most {} model calls and {} tool executions for \
-         the whole run.",
-        b.max_model_calls, b.max_tool_executions
+        "Remaining budget envelope: at most {} model calls for the whole run.",
+        b.max_model_calls
     ));
 
     parts.join("\n")

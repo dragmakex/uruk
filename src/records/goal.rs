@@ -96,8 +96,6 @@ pub struct Permissions {
     /// SPEC §12 keeps this separate from `network`: "No web search" does not
     /// mean "no data leaves the machine."
     pub disclose_to_provider: bool,
-    /// Work requiring a human gate before dispatch.
-    pub require_approval_for: Vec<String>,
 }
 
 impl Permissions {
@@ -115,21 +113,12 @@ impl Permissions {
     }
 }
 
-/// Hard resource limits (SPEC §6 Budgets).
-pub const TOKENS_PER_MODEL_CALL_RESERVATION: u64 = 20_000;
-
+/// Limits that define the requested amount of model work.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Budget {
-    /// Elapsed-time limit in seconds. Zero means no deadline (the default).
-    pub wall_clock_secs: u64,
     pub max_model_calls: u32,
-    pub max_tokens: u64,
-    pub max_tool_executions: u32,
     /// Campaign iterations.
     pub max_iterations: u32,
-    /// Monetary cap where measurable. `None` means cost is unknown, which is
-    /// reported as unknown rather than recorded as zero (SPEC §6).
-    pub max_cost_usd: Option<f64>,
     /// Calls reserved for producing the final report.
     pub reserve_calls_for_output: u32,
     /// Turn cap for simulated debates. The published prompts target 3-5
@@ -143,18 +132,6 @@ pub struct Budget {
     pub max_acquisitions: u32,
 }
 
-impl Budget {
-    /// Token allowance kept available for output calls, mirroring the model-call reserve.
-    pub fn output_token_reserve(&self) -> u64 {
-        TOKENS_PER_MODEL_CALL_RESERVATION.saturating_mul(self.reserve_calls_for_output as u64)
-    }
-
-    /// Token ceiling available to ordinary campaign work.
-    pub fn working_token_ceiling(&self) -> u64 {
-        self.max_tokens.saturating_sub(self.output_token_reserve())
-    }
-}
-
 fn default_debate_turns() -> u32 {
     5
 }
@@ -166,12 +143,8 @@ fn default_max_acquisitions() -> u32 {
 impl Default for Budget {
     fn default() -> Self {
         Self {
-            wall_clock_secs: 0,
             max_model_calls: 200,
-            max_tokens: 2_000_000,
-            max_tool_executions: 50,
             max_iterations: 10,
-            max_cost_usd: None,
             reserve_calls_for_output: 4,
             max_debate_turns: 5,
             max_acquisitions: 8,
@@ -233,8 +206,6 @@ pub enum StopCondition {
     ProgressStalled,
     /// The researcher cancelled.
     Cancelled,
-    /// A safety boundary was violated.
-    SafetyBoundary,
     /// The start request that created the run never finished preparing
     /// it (the server or the request died first), so it was never
     /// executed (docs/WEB.md "One run at a time").
@@ -249,7 +220,7 @@ impl StopCondition {
             "work_exhausted" => Self::WorkExhausted,
             "progress_stalled" => Self::ProgressStalled,
             "cancelled" => Self::Cancelled,
-            "safety_boundary" => Self::SafetyBoundary,
+
             "start_incomplete" => Self::StartIncomplete,
             _ => return None,
         })
@@ -262,7 +233,7 @@ impl StopCondition {
             Self::WorkExhausted => "work_exhausted",
             Self::ProgressStalled => "progress_stalled",
             Self::Cancelled => "cancelled",
-            Self::SafetyBoundary => "safety_boundary",
+
             Self::StartIncomplete => "start_incomplete",
         }
     }
@@ -319,5 +290,36 @@ mod tests {
         assert!(!p.network);
         assert!(!p.execute);
         assert!(!p.allows_tool("shell"));
+    }
+
+    #[test]
+    fn run_budget_contains_only_active_work_limits() {
+        let budget = serde_json::to_value(Budget::default()).unwrap();
+        let fields = budget.as_object().unwrap();
+
+        for removed in [
+            "wall_clock_secs",
+            "max_tokens",
+            "max_tool_executions",
+            "max_cost_usd",
+        ] {
+            assert!(
+                !fields.contains_key(removed),
+                "removed budget field {removed}"
+            );
+        }
+        assert!(fields.contains_key("max_model_calls"));
+        assert!(fields.contains_key("max_iterations"));
+    }
+
+    #[test]
+    fn permissions_have_no_human_approval_gate() {
+        let permissions = serde_json::to_value(Permissions::default()).unwrap();
+        assert!(permissions.get("require_approval_for").is_none());
+    }
+
+    #[test]
+    fn safety_boundary_is_not_a_supported_stop_condition() {
+        assert_eq!(StopCondition::parse("safety_boundary"), None);
     }
 }

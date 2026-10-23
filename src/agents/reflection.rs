@@ -16,8 +16,6 @@ use time::OffsetDateTime;
 pub struct Reviewed {
     pub review: Review,
     pub cost: CostActual,
-    /// A safety concern that requires a §12 decision before the item proceeds.
-    pub safety_concern: Option<String>,
     /// Checks the reviewer says cannot be settled by reasoning alone.
     pub requires_execution: Vec<String>,
     /// Literature evidence this review cited for the first time. The links
@@ -125,9 +123,6 @@ pub async fn review(
     Ok(Reviewed {
         review,
         cost: completion.cost,
-        safety_concern: output
-            .has_safety_concern()
-            .then(|| output.safety_concern.clone().unwrap_or_default()),
         requires_execution: output.requires_execution,
         new_evidence,
     })
@@ -223,7 +218,7 @@ pub async fn review_observations(
     Ok(Reviewed {
         review,
         cost: completion.cost,
-        safety_concern: None,
+
         requires_execution: vec![],
         new_evidence: vec![],
     })

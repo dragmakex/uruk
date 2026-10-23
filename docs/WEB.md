@@ -91,14 +91,11 @@ a time (see "One run at a time" below). `uruk serve` therefore takes the
 project scheduler lock for its lifetime: a second `uruk serve` on the
 same project fails fast with a lock message until the first stops. As
 the project's only scheduler owner, the serve process also sweeps every
-few seconds for runs that belong on the queue but are not on it: a run
-parked `waiting-for-human` is re-enqueued once no approvals remain
-pending. Web-started runs accept the full research configuration —
+few seconds for runs that belong on the queue but are not on it. Web-started
+runs accept the full research configuration —
 rubric guidance, budgets, source URLs, file inputs, and the explicit
 network and literature-search grants — but computational execution and
-arbitrary tool names remain unavailable. The web surface has no
-exact-payload approve/deny step to bind them to; an anonymous cookie
-identifies a browser, not a person who can be held to an approval. No
+arbitrary tool names remain unavailable. No
 request field ever names a server filesystem path: files enter web runs
 only through owner-bound uploads (`POST /api/uploads`), stored under a
 server-chosen location that never crosses the wire.
@@ -109,10 +106,8 @@ Every browser shares one model provider, so web runs execute **one at a
 time**: in the order they were started within one browser, and taking
 turns between browsers (see "Taking turns" below):
 
-- `POST /api/runs` checks the goal against the safety rules first; a
-  refused goal is persisted `blocked`, with its decision, and never takes
-  a queue place. An accepted goal creates the run, its goal, its owner
-  binding, and its place on the run queue in **one SQLite transaction**
+- `POST /api/runs` creates the run, its goal, its owner binding, and its
+  place on the run queue in **one SQLite transaction**
   (table `run_queue`, migration 0006). The place is a dedicated sequence
   number assigned at creation, never a timestamp, so two starts a
   millisecond apart still have a definite order and the order survives a
@@ -134,9 +129,7 @@ turns between browsers (see "Taking turns" below):
   429, or 5xx) does not fail anything. The head stays
   `running`, its model call waits for the upstream to recover behind a
   process-wide availability gate (one half-open probe at a time,
-  exponential backoff capped at 30 s, `Retry-After` honored), and its
-  research clock stands still: the wall-clock budget runs from the run's
-  first start and excludes every provider wait. Only served calls count
+  exponential backoff capped at 30 s, `Retry-After` honored). Only served calls count
   against `max_model_calls`; unserved sends are audited as `resend` rows
   in the budget ledger. A permanent refusal (another 4xx, an unparseable
   reply) is terminal for that task at once. Completion timeouts instead
@@ -145,8 +138,8 @@ turns between browsers (see "Taking turns" below):
 - Campaign rounds are scheduling batches, not a count of tournament matches.
   A batch of acquisitions or prerequisite work may leave research counters
   unchanged. That is not a stopping condition: pending work is dispatched and
-  new useful work is selected until an explicit budget/round limit, cancellation,
-  safety boundary, or actual work exhaustion is reached.
+  new useful work is selected until a model-work/round limit, cancellation,
+  or actual work exhaustion is reached.
 - **Stop** always works and is one transaction: the run is cancelled and
   leaves the queue, its undispatched tasks are cancelled with their
   reservations released, and the decision is recorded together, so a
@@ -194,8 +187,7 @@ whose browser is not currently eligible (still preparing) is listed after
 every run that could be selected. The projection reflects readiness at
 this moment and changes when a preparation completes or a run is
 cancelled. It is `1` = next to start and `null` once the run executes.
-The object also carries `started_at` (`null` while queued; the budget runs from it),
-`paused_secs` (settled provider waits, excluded from the research clock),
+The object also carries `started_at` (`null` while queued), `paused_secs` (settled provider waits),
 `provider_wait` (`{since, note}` while an outage is being waited out,
 else `null`), and `queue_provider_waiting` — a required boolean: while
 this run holds a queue place, whether the run being executed is waiting
@@ -209,10 +201,10 @@ any run without a queue place. `queue_position` and
 with a newer head's wait, and both come from persisted facts, so a
 restart reports them unchanged. The console treats a non-null
 `queue_position` as "waiting", whatever the lifecycle state says: a
-recovered `running` or `waiting-for-human` run that was put back on
-the queue is shown queued, with no figure until it executes. `GET
-/api/runs` rows carry `queue_position` and `paused_since`. Run states are `queued`, `running`, `waiting-for-human`,
-`blocked`, `completed`, `budget-exhausted`, `cancelled`, and `failed`;
+recovered `running` run that was put back on the queue is shown queued,
+with no figure until it executes. `GET /api/runs` rows carry
+`queue_position` and `paused_since`. Run states are `queued`, `running`,
+`completed`, `budget-exhausted`, `cancelled`, and `failed`;
 queued and provider-waiting runs are never reported as failed. A run that
 was abandoned before it was ready reports `failed` with stop condition
 `start_incomplete`.
@@ -276,7 +268,7 @@ out-of-bounds or mid-character span). Nothing is approximated or
 repaired, and all byte slicing happens in Rust — the frontend renders
 resolved text, it never slices offsets itself (`src/report/citations.rs`).
 
-`POST /api/runs` accepts the full safe start configuration
+`POST /api/runs` accepts the full start configuration
 (`src/web/start.rs` is the authority):
 
 - `mode` (`task` default, `campaign`) and `ranking` (`simple` default,
@@ -287,12 +279,7 @@ resolved text, it never slices offsets itself (`src/report/citations.rs`).
   combines with `tournament`.
 - `profile`, `deliverables`, `preferences`, `attributes`, `constraints`:
   the goal record and rubric, as on the CLI.
-- Budgets: `max_model_calls`, `max_seconds`, `max_iterations`,
-  `max_acquisitions`, validated by the API. `max_seconds` defaults to `0`,
-  meaning **no time limit**; a positive value (1–604800 seconds) opts into
-  an elapsed-time deadline through the API. The browser has no time-limit
-  control and omits `max_seconds` from both start and preview requests, so
-  the API owns the default. Preview displays the API-resolved budget only.
+- Budgets: `max_model_calls`, `max_iterations`, and `max_acquisitions`, validated by the API. Runs have no token, tool-execution, elapsed-time, or monetary-cost ceiling. Preview displays the API-resolved model-work budget only.
   Model-call and iteration limits still apply independently.
   Individual provider request timeouts remain bounded and retryable.
   Existing runs retain their recorded budgets; completed or exhausted runs
@@ -306,7 +293,7 @@ resolved text, it never slices offsets itself (`src/report/citations.rs`).
   transmits goal-derived queries to those operators;
   `search_connectors` narrows the connector set. Execution is never
   grantable; unknown fields are refused outright.
-- `dry_run: true` validates, safety-checks, and plans without creating
+- `dry_run: true` validates and plans without creating
   anything, returning the plan, inputs, permissions, and budget the
   start would use.
 

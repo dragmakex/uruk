@@ -257,12 +257,11 @@ describe("LiveRun queue and provider-wait states", () => {
 });
 
 describe("LiveRun while on the queue", () => {
-  type RunState = "queued" | "running" | "waiting-for-human";
+  type RunState = "queued" | "running";
 
   /**
-   * A run holding a queue place. Durable recovery can put a `running` or
-   * `waiting-for-human` run back on the queue, so the lifecycle state
-   * varies while `queue_position` is what says "waiting".
+   * A run holding a queue place. Durable recovery can put a `running` run
+   * back on the queue, so `queue_position` is what says "waiting".
    */
   function onQueue(
     position: number,
@@ -310,19 +309,6 @@ describe("LiveRun while on the queue", () => {
     expect(screen.queryByRole("status", { name: /provider/i })).not.toBeInTheDocument();
   });
 
-  it("treats a waiting-for-human run with a queue place as queued", () => {
-    render(
-      <LiveRun
-        runId="run_0412aa"
-        initial={parseRunSnapshot(onQueue(2, true, "waiting-for-human"))}
-      />,
-    );
-    expect(screen.getByRole("status", { name: /queued/i })).toHaveTextContent(/position 2/);
-    expect(screen.getByRole("heading", { name: OUTAGE_HEADING })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
-    expectNoVisualization();
-  });
-
   it("treats a running run with a queue place as queued until its place is gone", async () => {
     render(
       <LiveRun runId="run_0412aa" initial={parseRunSnapshot(onQueue(1, false, "running"))} />,
@@ -346,7 +332,7 @@ describe("LiveRun while on the queue", () => {
       OUTAGE_HEADING +
         "Your place in the queue is preserved and this run will start " +
         "automatically when its turn comes; no action is required. " +
-        "Your time budget has not started.",
+        "Your run has not started.",
     );
     expect(screen.queryByText(/failed/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/HTTP|503|overloaded|since/i)).not.toBeInTheDocument();

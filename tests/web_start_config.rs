@@ -126,7 +126,6 @@ mod configuration {
                 "attributes": ["novel", "testable"],
                 "constraints": ["cryogenic operation only"],
                 "max_model_calls": 44,
-                "max_seconds": 1200,
                 "max_iterations": 6,
                 "max_debate_turns": 7,
                 "allow_network": true,
@@ -147,7 +146,6 @@ mod configuration {
             vec!["cryogenic operation only".to_string()]
         );
         assert_eq!(goal.budget.max_model_calls, 44);
-        assert_eq!(goal.budget.wall_clock_secs, 1200);
         assert_eq!(goal.budget.max_iterations, 6);
         assert_eq!(goal.budget.max_debate_turns, 7);
         assert_eq!(goal.budget.max_acquisitions, 3);
@@ -156,7 +154,6 @@ mod configuration {
         assert!(p.network, "the network grant was given");
         assert!(!p.execute, "execution is never grantable over the web");
         assert!(p.write_paths.is_empty());
-        assert!(p.require_approval_for.is_empty());
         let mut tools = p.allowed_tools.clone();
         tools.sort();
         assert_eq!(
@@ -588,7 +585,7 @@ mod dry_run {
     }
 
     #[tokio::test]
-    async fn a_blocked_goal_is_refused_on_dry_run_without_persisting() {
+    async fn dry_run_does_not_apply_a_safety_gate() {
         let (app, store, _dir) = empty_app().await;
         let response = app
             .oneshot(post_json(
@@ -601,9 +598,9 @@ mod dry_run {
             ))
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert_eq!(response.status(), StatusCode::OK);
         let body = body_json(response).await;
-        assert_eq!(body["kind"], "permission");
+        assert_eq!(body["dry_run"], true);
         assert!(store.list_runs().await.expect("list").is_empty());
     }
 }

@@ -21,8 +21,8 @@ The v1 delivery order in SPEC §13 is implemented and exercised end to end by
 the test suite: records and SQLite persistence, the Tokio runtime with the
 §9.2 recovery and §9.3 cancellation guarantees, source ingestion from local
 files, PDFs, and URLs, task and campaign modes, all six roles scheduled by the
-Supervisor, the eight adapted prompt templates, approval-gated contained
-execution with reproducibility records, mid-run goal revision, an
+Supervisor, the eight adapted prompt templates, contained execution with
+reproducibility records, mid-run goal revision, an
 OpenAI-compatible HTTP provider, the web API, and the report exporter.
 The product surface is web-only: the binary's single command is
 `uruk serve`.
@@ -137,10 +137,10 @@ to branch on without parsing prose.
   artifacts/        per-task directories: transcripts, logs, execution outputs
 ```
 
-Reports are derived from persisted records and need no model call, so budget
-exhaustion, a stop request, or a crash still yields a labelled partial report.
-The final deliverable draws on a reserved slice of the call budget; when it
-cannot run, the report says why.
+Reports are derived from persisted records and need no model call, so a stop
+request or crash still yields a labelled partial report. The final deliverable
+draws on a reserved slice of the model-call budget; when it cannot run, the
+report says why.
 
 ## What the design protects
 
@@ -149,7 +149,7 @@ cannot run, the report says why.
 - **`Supported` and `Refuted` require claim-relevant empirical evidence** linked
   to the item being assessed. Agent critique, however unanimous, cannot promote
   a claim. Enforced in the store, so no code path bypasses it.
-- **Evidence is consumed, never assumed.** An approved execution records an
+- **Evidence is consumed, never assumed.** An allowlisted execution records an
   experiment and evidence linked as `context`; a later review interprets it,
   and only then can the assessment move.
 - **Elo is relative prioritisation within one rubric cohort**, never a
@@ -159,13 +159,10 @@ cannot run, the report says why.
   presentation order is shuffled and mapped back to stable IDs.
 - **Debates stop at their turn cap** (10 max, 5 by default) without fabricating
   a winner.
-- **Safety is checked separately** on the goal, each generated or evolved
-  candidate, and the directions in each research overview.
 - **Crash safety.** A task's records, outcome, and budget settlement commit in
   one transaction, so a kill before commit leaves nothing to duplicate and a
   replay after commit changes nothing. Interrupted external effects become
-  `uncertain` rather than being retried blindly. Approvals bind to an exact
-  payload hash and survive restart. Writes use `BEGIN IMMEDIATE`, so a
+  `uncertain` rather than being retried blindly. Writes use `BEGIN IMMEDIATE`, so a
   concurrent control write (a stop request) during a run queues instead
   of failing.
 - **Failed work is charged; waiting is not.** Every logical model call is
@@ -186,10 +183,8 @@ cannot run, the report says why.
   after a transient failure are audited as `resend` ledger rows but claim
   nothing, so an outage can exhaust neither `max_model_calls` nor the
   output reserve. A crash mid-call is charged on recovery as that one call,
-  at unknown cost. While the provider is unavailable the run's research
-  clock stands still: the wall-clock budget runs from the run's first start,
-  excludes every provider wait, and both facts are persisted so a restart
-  resumes the same clock. Work that depended on a failed task is closed
+  at unknown cost. Provider waits are persisted so a restart resumes the
+  same logical call without consuming extra model-call capacity. Work that depended on a failed task is closed
   with it instead of waiting as queued, and a finished run holds no open
   work.
 - **Web runs execute one at a time, taking turns.** A run started over
@@ -233,7 +228,7 @@ cannot run, the report says why.
 ```
 src/records/   data contracts (SPEC §4)
 src/store/     SQLite persistence, the single controlled write path, RecordBatch (§9.2)
-src/agents/    research policy: the roles, safety, typed outputs, the Supervisor (§5, §6)
+src/agents/    research policy: the roles, typed outputs, the Supervisor (§5, §6)
 src/prompts/   versioned templates with provenance (§5.1, §15)
 src/provider/  OpenAI-shaped wire types, the HTTP adapter, and the mock
 src/runtime/   Tokio scheduler, limits, executor (§6, §9)

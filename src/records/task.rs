@@ -19,8 +19,7 @@ pub enum Role {
     /// An explicit tool execution scheduled by the Supervisor.
     Tool,
     /// Literature search: federated discovery and open-access acquisition.
-    /// A separate role keeps exec approval semantics untouched and gives
-    /// search its own budget line and report row.
+    /// A separate role gives search its own budget line and report row.
     Search,
 }
 
@@ -73,8 +72,7 @@ pub enum TaskState {
     Blocked,
     /// Dispatched and executing.
     Running,
-    /// Waiting on a human approval or external result.
-    WaitingForHuman,
+
     Completed,
     Failed,
     Cancelled,
@@ -91,7 +89,7 @@ impl TaskState {
             Self::Pending => "pending",
             Self::Blocked => "blocked",
             Self::Running => "running",
-            Self::WaitingForHuman => "waiting_for_human",
+
             Self::Completed => "completed",
             Self::Failed => "failed",
             Self::Cancelled => "cancelled",
@@ -104,7 +102,7 @@ impl TaskState {
             "pending" => Self::Pending,
             "blocked" => Self::Blocked,
             "running" => Self::Running,
-            "waiting_for_human" => Self::WaitingForHuman,
+
             "completed" => Self::Completed,
             "failed" => Self::Failed,
             "cancelled" => Self::Cancelled,
@@ -125,8 +123,6 @@ impl TaskState {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CostReservation {
     pub model_calls: u32,
-    pub tokens: u64,
-    pub tool_executions: u32,
 }
 
 /// Resources a task actually consumed.
@@ -287,14 +283,12 @@ pub enum DecisionKind {
     PlanChange,
     /// The researcher supplied feedback.
     HumanFeedback,
-    /// A human approved or denied a request.
-    Approval,
+
     /// A scheduling choice and its rationale.
     Scheduling,
     /// An item's disposition changed.
     Disposition,
-    /// Work was refused or blocked on safety grounds (SPEC §12).
-    SafetyBlock,
+
     /// Meta-review feedback was issued.
     MetaFeedback,
     /// A stopping condition fired.
@@ -306,10 +300,10 @@ impl DecisionKind {
         match self {
             Self::PlanChange => "plan_change",
             Self::HumanFeedback => "human_feedback",
-            Self::Approval => "approval",
+
             Self::Scheduling => "scheduling",
             Self::Disposition => "disposition",
-            Self::SafetyBlock => "safety_block",
+
             Self::MetaFeedback => "meta_feedback",
             Self::Stop => "stop",
         }
@@ -459,63 +453,6 @@ impl ExecutionRecord {
     }
 }
 
-/// A persisted request for human approval (SPEC §9.2, §11).
-///
-/// Approval targets the exact payload version; a changed request needs a new
-/// approval.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ApprovalRequest {
-    pub id: RequestId,
-    pub schema_version: u32,
-    pub run_id: RunId,
-    /// The task blocked on this request.
-    pub task_id: Option<TaskId>,
-    /// What is being requested, in human-readable form.
-    pub action: String,
-    /// Exact action, inputs, scope, and limits.
-    pub payload: serde_json::Value,
-    /// Hash of the payload. Approval binds to this exact value (SPEC §11).
-    pub payload_hash: ContentHash,
-    pub state: ApprovalState,
-    pub decided_by: Option<Actor>,
-    pub decided_reason: Option<String>,
-    #[serde(with = "time::serde::rfc3339")]
-    pub created_at: OffsetDateTime,
-    #[serde(with = "time::serde::rfc3339::option")]
-    pub decided_at: Option<OffsetDateTime>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ApprovalState {
-    Pending,
-    Approved,
-    Denied,
-    /// The underlying request changed, so the approval no longer applies.
-    Invalidated,
-}
-
-impl ApprovalState {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Pending => "pending",
-            Self::Approved => "approved",
-            Self::Denied => "denied",
-            Self::Invalidated => "invalidated",
-        }
-    }
-
-    pub fn parse(s: &str) -> Option<Self> {
-        Some(match s {
-            "pending" => Self::Pending,
-            "approved" => Self::Approved,
-            "denied" => Self::Denied,
-            "invalidated" => Self::Invalidated,
-            _ => return None,
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -585,11 +522,7 @@ mod legacy_failure_tests {
             priority: 1.0,
             priority_rationale: "test".into(),
             permissions: Permissions::default(),
-            reservation: CostReservation {
-                model_calls: 1,
-                tokens: 0,
-                tool_executions: 0,
-            },
+            reservation: CostReservation { model_calls: 1 },
             state: TaskState::Failed,
             attempts: 3,
             max_attempts: 3,
