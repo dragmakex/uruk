@@ -95,7 +95,6 @@ describe("previewRun", () => {
       permissions: { network: false, execute: false, allowed_tools: [] },
       budget: {
         max_model_calls: 200,
-        max_seconds: 3600,
         max_iterations: 10,
         max_debate_turns: 1,
         max_acquisitions: 8,

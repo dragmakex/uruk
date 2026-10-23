@@ -1,4 +1,4 @@
-//! Durable task queue, approvals, and the budget ledger (SPEC §6, §9.2).
+//! Durable task queue and usage ledger (SPEC §6, §9.2).
 //!
 //! The persisted task set is the queue's source of truth; the in-memory ready
 //! list is rebuilt from it on resume.
@@ -17,8 +17,6 @@ pub struct BudgetUsage {
     pub tool_executions: u32,
     /// Reserved but not yet settled.
     pub reserved_calls: u32,
-    pub reserved_tokens: u64,
-    pub reserved_tool_executions: u32,
     /// `None` when no provider reported a cost. Reported as unknown, never
     /// recorded as zero (SPEC §6).
     pub cost_usd: Option<f64>,
@@ -30,14 +28,6 @@ impl BudgetUsage {
     /// Calls committed: settled plus still-reserved.
     pub fn committed_calls(&self) -> u32 {
         self.model_calls + self.reserved_calls
-    }
-
-    pub fn committed_tokens(&self) -> u64 {
-        self.tokens + self.reserved_tokens
-    }
-
-    pub fn committed_tool_executions(&self) -> u32 {
-        self.tool_executions + self.reserved_tool_executions
     }
 }
 
@@ -266,7 +256,6 @@ impl Store {
             task.state = TaskState::Failed;
             task.finished_at = Some(now());
             store_task(conn, &task).await?;
-            invalidate_pending_approvals_in_tx(conn, &task.id, reason).await?;
             cancel_dependents_in_tx(conn, &task).await?;
             guard.commit().await?;
             return Ok(false);
@@ -384,7 +373,6 @@ impl Store {
             settle_attempt(conn, &task, &spent).await?;
             release_reservation(conn, &task).await?;
             release_leases(conn, &task).await?;
-            invalidate_pending_approvals_in_tx(conn, &task.id, "run stopped").await?;
             closed += 1;
         }
         closed += cancel_pending_tasks_in_tx(conn, run_id).await?;
@@ -396,7 +384,7 @@ impl Store {
     pub async fn runs_with_open_tasks(&self) -> Result<Vec<RunId>> {
         let ids: Vec<String> = sqlx::query_scalar(
             "SELECT DISTINCT run_id FROM tasks
-             WHERE state IN ('pending', 'blocked', 'running', 'waiting_for_human')",
+             WHERE state IN ('pending', 'blocked', 'running')",
         )
         .fetch_all(self.pool())
         .await?;
@@ -487,12 +475,12 @@ impl Store {
         guard.commit().await
     }
 
-    /// Reserve budget before dispatch (SPEC §6: "Reserve budget for in-flight
-    /// work and final output before admitting more tasks").
+    /// Reserve model-call budget before dispatch.
     ///
-    /// Ordinary work is capped below the call and token limits by the output
-    /// reserve; the final deliverable (`final_output = true`) may use it.
-    /// Returns `Err(Error::Budget)` when the reservation would exceed a limit.
+    /// Ordinary work is capped below the call limit by the output reserve;
+    /// the final deliverable (`final_output = true`) may use it. Token and tool
+    /// usage are still recorded, but do not limit a run.
+    /// Returns `Err(Error::Budget)` when the reservation would exceed the call limit.
     pub async fn reserve_budget(
         &self,
         run_id: &RunId,
@@ -512,12 +500,6 @@ impl Store {
                 .max_model_calls
                 .saturating_sub(budget.reserve_calls_for_output)
         };
-        let token_ceiling = if final_output {
-            budget.max_tokens
-        } else {
-            budget.working_token_ceiling()
-        };
-
         if usage.committed_calls() + reservation.model_calls > call_ceiling {
             return Err(Error::Budget(format!(
                 "model calls: {} committed + {} requested exceeds {} \
@@ -527,27 +509,6 @@ impl Store {
                 call_ceiling,
                 budget.reserve_calls_for_output,
                 budget.max_model_calls
-            )));
-        }
-        if usage.committed_tokens() + reservation.tokens > token_ceiling {
-            return Err(Error::Budget(format!(
-                "tokens: {} committed + {} requested exceeds {} \
-                 ({} of {} reserved for final output)",
-                usage.committed_tokens(),
-                reservation.tokens,
-                token_ceiling,
-                budget.output_token_reserve(),
-                budget.max_tokens
-            )));
-        }
-        if usage.committed_tool_executions() + reservation.tool_executions
-            > budget.max_tool_executions
-        {
-            return Err(Error::Budget(format!(
-                "tool executions: {} committed + {} requested exceeds {}",
-                usage.committed_tool_executions(),
-                reservation.tool_executions,
-                budget.max_tool_executions
             )));
         }
 
@@ -560,8 +521,8 @@ impl Store {
         .bind(task_id.as_str())
         .bind(format!("reserve:{task_id}"))
         .bind(reservation.model_calls)
-        .bind(reservation.tokens as i64)
-        .bind(reservation.tool_executions)
+        .bind(0_i64)
+        .bind(0_i64)
         .bind(to_rfc3339(now()))
         .execute(&mut *conn)
         .await?;
@@ -577,168 +538,24 @@ impl Store {
         budget: &Budget,
     ) -> Result<bool> {
         let usage = self.budget_usage(run_id).await?;
-        Ok(
-            usage.committed_calls() + reservation.model_calls <= budget.max_model_calls
-                && usage.committed_tokens() + reservation.tokens <= budget.max_tokens
-                && usage.committed_tool_executions() + reservation.tool_executions
-                    <= budget.max_tool_executions,
-        )
+        Ok(usage.committed_calls() + reservation.model_calls <= budget.max_model_calls)
     }
 
     pub async fn budget_usage(&self, run_id: &RunId) -> Result<BudgetUsage> {
         let mut conn = self.pool().acquire().await?;
         usage_from(&mut conn, run_id).await
     }
-
-    /// Persist an approval request (SPEC §9.2: a persisted record, not a
-    /// live worker thread).
-    pub async fn insert_approval(&self, req: &ApprovalRequest) -> Result<()> {
-        let mut guard = self.begin_write().await?;
-        insert_approval_in_tx(guard.conn(), req).await?;
-        guard.commit().await
-    }
-
-    /// Park a task on a human gate: persist the request and move the task to
-    /// `waiting_for_human` in one transaction.
-    pub async fn park_for_approval(&self, task_id: &TaskId, req: &ApprovalRequest) -> Result<()> {
-        let mut guard = self.begin_write().await?;
-        let conn = guard.conn();
-        insert_approval_in_tx(conn, req).await?;
-        if let Some(mut task) = load_open_task(conn, task_id).await? {
-            task.state = TaskState::WaitingForHuman;
-            store_task(conn, &task).await?;
-        }
-        guard.commit().await
-    }
-
-    pub async fn get_approval(&self, id: &RequestId) -> Result<ApprovalRequest> {
-        let body: String = sqlx::query_scalar("SELECT body FROM approvals WHERE id = ?")
-            .bind(id.as_str())
-            .fetch_optional(self.pool())
-            .await?
-            .ok_or_else(|| Error::not_found(format!("approval request {id}")))?;
-        Ok(serde_json::from_str(&body)?)
-    }
-
-    pub async fn list_approvals(
-        &self,
-        run_id: &RunId,
-        state: Option<ApprovalState>,
-    ) -> Result<Vec<ApprovalRequest>> {
-        let rows: Vec<String> =
-            match state {
-                Some(s) => sqlx::query_scalar(
-                    "SELECT body FROM approvals WHERE run_id = ? AND state = ? ORDER BY created_at",
-                )
-                .bind(run_id.as_str())
-                .bind(s.as_str())
-                .fetch_all(self.pool())
-                .await?,
-                None => {
-                    sqlx::query_scalar(
-                        "SELECT body FROM approvals WHERE run_id = ? ORDER BY created_at",
-                    )
-                    .bind(run_id.as_str())
-                    .fetch_all(self.pool())
-                    .await?
-                }
-            };
-        rows.iter().map(|b| Ok(serde_json::from_str(b)?)).collect()
-    }
-
-    /// Decide a pending approval, binding to the exact payload (SPEC §11).
-    ///
-    /// `expected_hash` must match the stored payload hash: "Changing that
-    /// payload requires a new approval."
-    pub async fn decide_approval(
-        &self,
-        id: &RequestId,
-        approved: bool,
-        expected_hash: Option<&ContentHash>,
-        reason: Option<String>,
-    ) -> Result<ApprovalRequest> {
-        let mut guard = self.begin_write().await?;
-        let conn = guard.conn();
-
-        let body: String = sqlx::query_scalar("SELECT body FROM approvals WHERE id = ?")
-            .bind(id.as_str())
-            .fetch_optional(&mut *conn)
-            .await?
-            .ok_or_else(|| Error::not_found(format!("approval request {id}")))?;
-
-        let mut req: ApprovalRequest = serde_json::from_str(&body)?;
-
-        if req.state != ApprovalState::Pending {
-            return Err(Error::validation(format!(
-                "approval {id} is already {}; a changed request needs a new approval",
-                req.state.as_str()
-            )));
-        }
-        if let Some(expected) = expected_hash
-            && expected != &req.payload_hash
-        {
-            {
-                return Err(Error::validation(format!(
-                    "approval {id} targets payload {} but the pending request is {}; \
-                     a changed request needs a new approval (SPEC §11)",
-                    expected.short(),
-                    req.payload_hash.short()
-                )));
-            }
-        }
-
-        req.state = if approved {
-            ApprovalState::Approved
-        } else {
-            ApprovalState::Denied
-        };
-        req.decided_by = Some(Actor::Researcher);
-        req.decided_reason = reason;
-        req.decided_at = Some(now());
-
-        sqlx::query("UPDATE approvals SET state = ?, body = ?, decided_at = ? WHERE id = ?")
-            .bind(req.state.as_str())
-            .bind(serde_json::to_string(&req)?)
-            .bind(to_rfc3339(now()))
-            .bind(id.as_str())
-            .execute(&mut *conn)
-            .await?;
-
-        // Unblock or cancel the waiting task.
-        if let Some(task_id) = &req.task_id
-            && let Some(mut task) = load_open_task(conn, task_id).await?
-        {
-            {
-                if approved {
-                    task.state = TaskState::Pending;
-                    store_task(conn, &task).await?;
-                } else {
-                    task.state = TaskState::Cancelled;
-                    task.error = Some("denied by researcher".into());
-                    task.finished_at = Some(now());
-                    release_reservation(conn, &task).await?;
-                    store_task(conn, &task).await?;
-                    // What depended on the denied work can never run; close
-                    // it, and its own approvals, in this transaction.
-                    cancel_dependents_in_tx(conn, &task).await?;
-                }
-            }
-        }
-
-        guard.commit().await?;
-        Ok(req)
-    }
 }
 
 /// Cancel every task of `run_id` not yet dispatched, releasing its
-/// reservation and invalidating its approvals; returns how many.
+/// reservation; returns how many.
 pub(crate) async fn cancel_pending_tasks_in_tx(
     conn: &mut SqliteConnection,
     run_id: &RunId,
 ) -> Result<u32> {
     let rows: Vec<String> = sqlx::query_scalar(
         "SELECT body FROM tasks WHERE run_id = ?
-           AND state IN ('pending', 'blocked', 'waiting_for_human')",
+           AND state IN ('pending', 'blocked')",
     )
     .bind(run_id.as_str())
     .fetch_all(&mut *conn)
@@ -751,27 +568,8 @@ pub(crate) async fn cancel_pending_tasks_in_tx(
         task.finished_at = Some(now());
         release_reservation(conn, &task).await?;
         store_task(conn, &task).await?;
-        invalidate_pending_approvals_in_tx(conn, &task.id, "task cancelled before dispatch")
-            .await?;
     }
     Ok(n)
-}
-
-async fn insert_approval_in_tx(conn: &mut SqliteConnection, req: &ApprovalRequest) -> Result<()> {
-    sqlx::query(
-        "INSERT INTO approvals (id, run_id, task_id, state, payload_hash, body, created_at, decided_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, NULL)",
-    )
-    .bind(req.id.as_str())
-    .bind(req.run_id.as_str())
-    .bind(req.task_id.as_ref().map(|t| t.0.clone()))
-    .bind(req.state.as_str())
-    .bind(req.payload_hash.as_str())
-    .bind(serde_json::to_string(req)?)
-    .bind(to_rfc3339(req.created_at))
-    .execute(conn)
-    .await?;
-    Ok(())
 }
 
 /// Load a task unless it is already terminal (duplicate delivery after a
@@ -817,14 +615,6 @@ async fn finish_task_in_tx(
     settle_attempt(conn, task, &actual).await?;
     release_reservation(conn, task).await?;
     release_leases(conn, task).await?;
-    // A terminal task has nothing left to decide: an approval it was parked
-    // on (a refused reservation cancels a parked task) dies with it.
-    let reason = format!(
-        "task {}: {}",
-        state.as_str(),
-        task.error.as_deref().unwrap_or("no error recorded")
-    );
-    invalidate_pending_approvals_in_tx(conn, &task.id, &reason).await?;
     if state != TaskState::Completed {
         cancel_dependents_in_tx(conn, task).await?;
     }
@@ -898,9 +688,8 @@ async fn release_leases(conn: &mut SqliteConnection, task: &Task) -> Result<()> 
 /// A dependent of a task that ended without completing can never become
 /// ready (`ready_tasks` requires every dependency `completed`), so leaving
 /// it open would show it as queued for as long as the run exists. It is
-/// cancelled naming the prerequisite, its reservation is released, and any
-/// approval it was parked on is invalidated in the same transaction, so no
-/// pending decision outlives the task it was for.
+/// cancelled naming the prerequisite, and its reservation is released in the
+/// same transaction.
 async fn cancel_dependents_in_tx(conn: &mut SqliteConnection, failed: &Task) -> Result<()> {
     let mut frontier = vec![failed.clone()];
     while let Some(prerequisite) = frontier.pop() {
@@ -908,7 +697,7 @@ async fn cancel_dependents_in_tx(conn: &mut SqliteConnection, failed: &Task) -> 
             "SELECT t.body FROM tasks t
              JOIN task_deps d ON d.task_id = t.id
              WHERE d.depends_on = ?
-               AND t.state IN ('pending', 'blocked', 'waiting_for_human')",
+               AND t.state IN ('pending', 'blocked')",
         )
         .bind(prerequisite.id.as_str())
         .fetch_all(&mut *conn)
@@ -925,45 +714,12 @@ async fn cancel_dependents_in_tx(conn: &mut SqliteConnection, failed: &Task) -> 
             task.finished_at = Some(now());
             release_reservation(conn, &task).await?;
             store_task(conn, &task).await?;
-            invalidate_pending_approvals_in_tx(conn, &task.id, &reason).await?;
             frontier.push(task);
         }
     }
     Ok(())
 }
 
-/// Invalidate every pending approval parked on `task_id`: the task is no
-/// longer going to run, so there is nothing left to decide (SPEC §11: an
-/// approval binds to the exact request it was raised for).
-async fn invalidate_pending_approvals_in_tx(
-    conn: &mut SqliteConnection,
-    task_id: &TaskId,
-    reason: &str,
-) -> Result<()> {
-    let rows: Vec<String> =
-        sqlx::query_scalar("SELECT body FROM approvals WHERE task_id = ? AND state = 'pending'")
-            .bind(task_id.as_str())
-            .fetch_all(&mut *conn)
-            .await?;
-    for body in rows {
-        let mut req: ApprovalRequest = serde_json::from_str(&body)?;
-        req.state = ApprovalState::Invalidated;
-        req.decided_by = Some(Actor::System);
-        req.decided_reason = Some(reason.to_string());
-        req.decided_at = Some(now());
-        sqlx::query("UPDATE approvals SET state = ?, body = ?, decided_at = ? WHERE id = ?")
-            .bind(req.state.as_str())
-            .bind(serde_json::to_string(&req)?)
-            .bind(to_rfc3339(now()))
-            .bind(req.id.as_str())
-            .execute(&mut *conn)
-            .await?;
-    }
-    Ok(())
-}
-
-/// Record what an attempt actually consumed. Keyed by attempt so a retry is
-/// charged again and a replay is not.
 async fn settle_attempt(
     conn: &mut SqliteConnection,
     task: &Task,
@@ -1000,8 +756,8 @@ async fn release_reservation(conn: &mut SqliteConnection, task: &Task) -> Result
     .bind(task.id.as_str())
     .bind(format!("release:{}", task.id))
     .bind(task.reservation.model_calls)
-    .bind(task.reservation.tokens as i64)
-    .bind(task.reservation.tool_executions)
+    .bind(0_i64)
+    .bind(0_i64)
     .bind(to_rfc3339(now()))
     .execute(conn)
     .await?;
@@ -1054,8 +810,6 @@ async fn usage_from(conn: &mut SqliteConnection, run_id: &RunId) -> Result<Budge
 
     // Outstanding reservations are what was reserved minus what was released.
     usage.reserved_calls = reserved.0.saturating_sub(released.0);
-    usage.reserved_tokens = reserved.1.saturating_sub(released.1);
-    usage.reserved_tool_executions = reserved.2.saturating_sub(released.2);
 
     if !any_cost {
         usage.cost_usd = None;

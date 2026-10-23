@@ -64,7 +64,6 @@ const PREVIEW: RunPreview = {
   permissions: { network: false, execute: false, allowed_tools: [] },
   budget: {
     max_model_calls: 200,
-    max_seconds: 0,
     max_iterations: 10,
     max_debate_turns: 1,
     max_acquisitions: 8,
@@ -72,7 +71,7 @@ const PREVIEW: RunPreview = {
 };
 
 describe("RunForm", () => {
-  it("leaves the time budget to the API without a frontend control", () => {
+  it("has no removed elapsed-time limit control", () => {
     render(<RunForm />);
     expect(screen.queryByLabelText(/Time limit/i)).not.toBeInTheDocument();
   });
@@ -479,8 +478,9 @@ describe("RunForm", () => {
       await screen.findByText("generation, reflection, ranking"),
     ).toBeInTheDocument();
     expect(screen.getByText("campaign mode runs the full loop")).toBeInTheDocument();
-    expect(screen.getByText(/No time limit/)).toHaveTextContent("10 rounds");
-    expect(screen.queryByText(/10 iterations/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Plan preview")).toHaveTextContent(
+      "200 calls · 10 rounds · 1 debate turns · 8 acquisitions",
+    );
     expect(startRunMock).not.toHaveBeenCalled();
     expect(pushMock).not.toHaveBeenCalled();
   });

@@ -23,7 +23,6 @@ use crate::store::RecordBatch;
 use crate::tools::ingest_input;
 use crate::{Error, Result};
 use serde::Deserialize;
-use std::sync::atomic::{AtomicI64, Ordering};
 use time::OffsetDateTime;
 
 /// Dispatch a Search task by strategy.
@@ -170,17 +169,6 @@ pub(crate) fn fallback_query(question: &str) -> String {
     }
 }
 
-/// Remaining tool-execution allowance, charged per connector call.
-async fn allowance(ctx: &AgentContext) -> Result<AtomicI64> {
-    let usage = ctx.store.budget_usage(&ctx.run_id).await?;
-    let remaining = ctx
-        .goal
-        .budget
-        .max_tool_executions
-        .saturating_sub(usage.committed_tool_executions());
-    Ok(AtomicI64::new(remaining as i64))
-}
-
 async fn discover(ctx: &AgentContext, task: &Task, batch: &mut RecordBatch) -> Result<()> {
     let connectors = search::discovery_connectors(&ctx.permissions);
     if connectors.is_empty() {
@@ -191,12 +179,8 @@ async fn discover(ctx: &AgentContext, task: &Task, batch: &mut RecordBatch) -> R
 
     let queries = plan_queries(ctx).await?;
     let cx = ConnectorCx::new(search::contact_email())?;
-    let remaining = allowance(ctx).await?;
     let charge = || {
         if ctx.cancel.is_cancelled() {
-            return false;
-        }
-        if remaining.fetch_sub(1, Ordering::SeqCst) <= 0 {
             return false;
         }
         ctx.charge_tool_execution();
@@ -354,12 +338,7 @@ async fn enqueue_acquisitions(
                 work.rrf_score
             ),
             permissions: ctx.permissions.clone(),
-            reservation: CostReservation {
-                model_calls: 0,
-                tokens: 0,
-                // One tool execution per acquired work (§11 revised).
-                tool_executions: 1,
-            },
+            reservation: CostReservation { model_calls: 0 },
             state: TaskState::Pending,
             attempts: 0,
             max_attempts: 1,

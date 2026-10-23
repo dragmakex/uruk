@@ -16,7 +16,6 @@ function panel(overrides: Partial<AgentPanel>): AgentPanel {
       pending: 0,
       blocked: 0,
       running: 0,
-      waiting_for_human: 0,
       completed: 0,
       failed: 0,
       cancelled: 0,
@@ -40,15 +39,10 @@ describe("activityText", () => {
     expect(activityText(panel({}))).toBe("No work yet this run.");
   });
 
-  it("reports queued work and human gates", () => {
+  it("reports queued work", () => {
     expect(
       activityText(panel({ counts: { ...panel({}).counts, pending: 3 } })),
     ).toBe("3 tasks queued.");
-    expect(
-      activityText(
-        panel({ counts: { ...panel({}).counts, waiting_for_human: 1 } }),
-      ),
-    ).toBe("1 task waiting for your approval.");
   });
 
   it("falls back to the last finished task when idle", () => {

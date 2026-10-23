@@ -82,8 +82,7 @@ id_type!(/// Identifies a scheduled task.
     TaskId, "task");
 id_type!(/// Identifies a stored artifact.
     ArtifactId, "art");
-id_type!(/// Identifies a human approval request.
-    RequestId, "req");
+
 id_type!(/// Identifies a proximity cluster.
     ClusterId, "clus");
 id_type!(/// Identifies a meta-review feedback version.

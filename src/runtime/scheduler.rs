@@ -75,9 +75,8 @@ const WATCH_INTERVAL: Duration = Duration::from_millis(250);
 /// Watches the run while it executes: a durable stop request (the web
 /// API's stop route) reaches in-flight work through the cancellation token
 /// (SPEC §9.2), and the provider's availability gate is mirrored into the
-/// run's persisted research clock, so a transient outage is recorded as a
-/// pause — visible to the UI, survivable across a restart, and excluded
-/// from the wall-clock budget.
+/// run's persisted timing facts, so a transient outage is recorded as a
+/// pause that is visible to the UI and survivable across a restart.
 struct RunWatch(tokio::task::JoinHandle<()>);
 
 impl RunWatch {
@@ -145,65 +144,6 @@ async fn sync_provider_wait(store: &Store, run_id: &RunId, gate: &UpstreamGate) 
     }
 }
 
-/// Cancels the run's work token when the wall-clock deadline passes, so an
-/// in-flight model call ends at the deadline instead of running the run
-/// past it. A zero budget disables this watcher. The optional deadline is the
-/// persisted research clock: it runs from the run's first start, not from
-/// this process start, so a restart cannot extend it; and it stands still
-/// while the provider is unavailable, so an outage cannot spend it. Only
-/// the work token is cancelled: the run's own token still means "the
-/// researcher stopped this run".
-struct DeadlineWatch(tokio::task::JoinHandle<()>);
-
-impl DeadlineWatch {
-    fn spawn(
-        store: Store,
-        run_id: RunId,
-        wall_clock_secs: u64,
-        gate: Option<Arc<UpstreamGate>>,
-        work: CancellationToken,
-    ) -> Self {
-        Self(tokio::spawn(async move {
-            if wall_clock_secs == 0 {
-                return;
-            }
-            loop {
-                let timing = match store.run_timing(&run_id).await {
-                    Ok(timing) => timing,
-                    Err(e) => {
-                        tracing::debug!(error = %e, "deadline watch could not read the clock");
-                        tokio::time::sleep(WATCH_INTERVAL).await;
-                        continue;
-                    }
-                };
-                let upstream_down = gate.as_ref().is_some_and(|g| !g.status().is_available());
-                let now = OffsetDateTime::now_utc();
-                if timing.is_paused() || upstream_down {
-                    tokio::time::sleep(WATCH_INTERVAL).await;
-                    continue;
-                }
-                let Some(deadline) = timing.deadline(wall_clock_secs) else {
-                    tokio::time::sleep(WATCH_INTERVAL).await;
-                    continue;
-                };
-                if now >= deadline {
-                    tracing::warn!("wall-clock deadline reached; cancelling in-flight work");
-                    work.cancel();
-                    return;
-                }
-                let remaining = Duration::try_from(deadline - now).unwrap_or(WATCH_INTERVAL);
-                tokio::time::sleep(remaining.min(Duration::from_secs(1))).await;
-            }
-        }))
-    }
-}
-
-impl Drop for DeadlineWatch {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
-}
-
 impl Scheduler {
     pub fn new(store: Store, provider: Arc<dyn Provider>, config: SchedulerConfig) -> Self {
         Self {
@@ -260,10 +200,6 @@ impl Scheduler {
             tracing::warn!("run was cancelled while the scheduler was starting");
         }
 
-        // The wall clock is the persisted research clock: it runs from the
-        // run's first start (stamped above, once), so a restart cannot
-        // extend the deadline, and it pauses while the provider is down.
-        let wall_clock_secs = goal.budget.wall_clock_secs;
         let gate = self.provider.upstream_gate();
         let watch = RunWatch::spawn(
             self.store.clone(),
@@ -271,16 +207,7 @@ impl Scheduler {
             self.cancel.clone(),
             gate.clone(),
         );
-        // Work runs under a child token: a stop request cancels it through
-        // the parent, the deadline cancels it alone.
         let work = self.cancel.child_token();
-        let _deadline_watch = DeadlineWatch::spawn(
-            self.store.clone(),
-            run_id.clone(),
-            wall_clock_secs,
-            gate.clone(),
-            work.clone(),
-        );
         let stop_condition: StopCondition;
 
         loop {
@@ -298,28 +225,13 @@ impl Scheduler {
             }
 
             let usage = self.store.budget_usage(run_id).await?;
-            let deadline_passed = self.deadline_passed(run_id, wall_clock_secs).await?;
 
-            if let Some(condition) = supervisor::should_stop(
-                &self.store,
-                run_id,
-                &goal,
-                &usage,
-                run.iterations,
-                deadline_passed,
-            )
-            .await?
+            if let Some(condition) =
+                supervisor::should_stop(&self.store, run_id, &goal, &usage, run.iterations).await?
             {
                 stop_condition = condition;
                 break;
             }
-
-            // A pending approval parks dependent work; the scheduler does not
-            // hold a worker open waiting for a person (SPEC §6).
-            let pending = self
-                .store
-                .list_approvals(run_id, Some(ApprovalState::Pending))
-                .await?;
 
             let admitted = self.admit(run_id, &goal, &plan, run.iterations).await?;
             let ready = self
@@ -328,14 +240,6 @@ impl Scheduler {
                 .await?;
 
             if ready.is_empty() {
-                if !pending.is_empty() {
-                    self.store
-                        .set_run_state(run_id, RunState::WaitingForHuman, None)
-                        .await?;
-                    return self
-                        .summarize(run_id, RunState::WaitingForHuman, None, uncertain, None)
-                        .await;
-                }
                 if admitted == 0 {
                     stop_condition = StopCondition::WorkExhausted;
                     break;
@@ -393,7 +297,6 @@ impl Scheduler {
         let mut state = match stop_condition {
             StopCondition::Cancelled => RunState::Cancelled,
             StopCondition::BudgetExhausted => RunState::BudgetExhausted,
-            StopCondition::SafetyBoundary => RunState::Blocked,
             // A scientifically negative result is still a completed run.
             _ => RunState::Completed,
         };
@@ -414,22 +317,6 @@ impl Scheduler {
             .await
     }
 
-    /// Whether the research clock has run out: the persisted deadline has
-    /// passed and the clock is not standing still on a provider wait (the
-    /// gate is consulted directly, so the moments before the watch records
-    /// a new outage count as paused too).
-    async fn deadline_passed(&self, run_id: &RunId, wall_clock_secs: u64) -> Result<bool> {
-        if self
-            .provider
-            .upstream_gate()
-            .is_some_and(|gate| !gate.status().is_available())
-        {
-            return Ok(false);
-        }
-        let timing = self.store.run_timing(run_id).await?;
-        Ok(timing.deadline_passed(wall_clock_secs, OffsetDateTime::now_utc()))
-    }
-
     async fn deliverable_done(&self, run_id: &RunId) -> Result<bool> {
         Ok(self.store.list_tasks(run_id).await?.iter().any(|t| {
             t.role == Role::MetaReview
@@ -442,8 +329,7 @@ impl Scheduler {
     /// Returns the reason it was skipped, if it was.
     ///
     /// The deliverable is one more model call under the same bounds as the
-    /// rest of the run: it is skipped once the wall-clock deadline has
-    /// passed, and it is not re-run when an attempt at it already failed
+    /// rest of the run. It is not re-run when an attempt at it already failed
     /// during the loop (that failure is reported instead).
     async fn final_output(
         &self,
@@ -474,13 +360,6 @@ impl Scheduler {
 
         let skip_reason = if matches!(stop, StopCondition::Cancelled) {
             Some("run was cancelled before the final meta-review".to_string())
-        } else if matches!(stop, StopCondition::SafetyBoundary) {
-            Some("run stopped at a safety boundary; no final meta-review".to_string())
-        } else if self
-            .deadline_passed(run_id, goal.budget.wall_clock_secs)
-            .await?
-        {
-            Some("wall-clock deadline passed before the final meta-review".to_string())
         } else if let Some(failed) = failed_deliverable {
             Some(format!(
                 "final meta-review already attempted and failed: {}",
@@ -494,8 +373,6 @@ impl Scheduler {
                 run_id,
                 &CostReservation {
                     model_calls: FINAL_OUTPUT_CALLS,
-                    tokens: TOKENS_PER_MODEL_CALL_RESERVATION * FINAL_OUTPUT_CALLS as u64,
-                    tool_executions: 0,
                 },
                 &goal.budget,
             )
@@ -569,12 +446,6 @@ impl Scheduler {
         }
         let reason = if task.state == TaskState::Cancelled && self.cancel.is_cancelled() {
             "run was cancelled during the final meta-review".to_string()
-        } else if task.state == TaskState::Cancelled
-            && self
-                .deadline_passed(run_id, goal.budget.wall_clock_secs)
-                .await?
-        {
-            "wall-clock deadline passed during the final meta-review".to_string()
         } else {
             format!(
                 "final meta-review {}: {}",
@@ -652,46 +523,6 @@ impl Scheduler {
                 continue;
             }
 
-            // A human gate for work the permissions say needs one. The wait
-            // is a persisted record, not a live thread (SPEC §9.2).
-            if task.role == Role::Tool
-                && goal
-                    .permissions
-                    .require_approval_for
-                    .iter()
-                    .any(|r| r == "execute")
-            {
-                let request = task.payload.clone().unwrap_or_default();
-                let payload = request["request"].clone();
-                let req = ApprovalRequest {
-                    id: RequestId::new(),
-                    schema_version: SCHEMA_VERSION,
-                    run_id: run_id.clone(),
-                    task_id: Some(task.id.clone()),
-                    action: format!(
-                        "execute `{} {}` ({})",
-                        payload["program"].as_str().unwrap_or("?"),
-                        payload["args"]
-                            .as_array()
-                            .map(|a| a
-                                .iter()
-                                .filter_map(|v| v.as_str())
-                                .collect::<Vec<_>>()
-                                .join(" "))
-                            .unwrap_or_default(),
-                        request["purpose"].as_str().unwrap_or("no purpose stated")
-                    ),
-                    payload_hash: ContentHash::of_json(&payload)?,
-                    payload,
-                    state: ApprovalState::Pending,
-                    decided_by: None,
-                    decided_reason: None,
-                    created_at: OffsetDateTime::now_utc(),
-                    decided_at: None,
-                };
-                self.store.park_for_approval(&task.id, &req).await?;
-            }
-
             // Reserve budget before dispatch; a refusal simply means this work
             // does not get admitted (SPEC §6).
             match self
@@ -737,7 +568,6 @@ impl Scheduler {
             (_, "debate") => goal.budget.max_debate_turns.clamp(1, 10),
             _ => 1,
         };
-        let tool_executions = u32::from(work.role == Role::Tool);
 
         Ok(Task {
             id: TaskId::new(),
@@ -759,11 +589,7 @@ impl Scheduler {
             priority: work.priority,
             priority_rationale: work.rationale.clone(),
             permissions: goal.permissions.clone(),
-            reservation: CostReservation {
-                model_calls: calls,
-                tokens: TOKENS_PER_MODEL_CALL_RESERVATION * calls as u64,
-                tool_executions,
-            },
+            reservation: CostReservation { model_calls: calls },
             state: TaskState::Pending,
             attempts: 0,
             max_attempts: self.config.max_attempts,

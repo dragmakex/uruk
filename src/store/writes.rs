@@ -136,10 +136,7 @@ impl Store {
     }
 
     /// Record a new goal revision and point the run at it (SPEC §4.1).
-    ///
-    /// Plan revisions must invalidate stale approvals, so pending approvals
-    /// under the previous revision are marked `Invalidated` (SPEC §6).
-    pub async fn revise_goal(&self, goal: &Goal) -> Result<usize> {
+    pub async fn revise_goal(&self, goal: &Goal) -> Result<()> {
         let mut guard = self.begin_write().await?;
         let conn = guard.conn();
         insert_goal(conn, goal).await?;
@@ -151,32 +148,7 @@ impl Store {
             .execute(&mut *conn)
             .await?;
 
-        // The row's `state` column and the serialized body must not disagree,
-        // or a reader that deserializes `body` would see a stale "pending".
-        let pending: Vec<(String, String)> =
-            sqlx::query_as("SELECT id, body FROM approvals WHERE run_id = ? AND state = 'pending'")
-                .bind(goal.run_id.as_str())
-                .fetch_all(&mut *conn)
-                .await?;
-
-        let invalidated = pending.len();
-        for (id, body) in pending {
-            let mut req: ApprovalRequest = serde_json::from_str(&body)?;
-            req.state = ApprovalState::Invalidated;
-            req.decided_reason = Some(format!(
-                "goal revised to {} ({}); a changed request needs a new approval",
-                goal.id, goal.revision
-            ));
-            sqlx::query("UPDATE approvals SET state = ?, body = ? WHERE id = ?")
-                .bind(ApprovalState::Invalidated.as_str())
-                .bind(serde_json::to_string(&req)?)
-                .bind(&id)
-                .execute(&mut *conn)
-                .await?;
-        }
-
-        guard.commit().await?;
-        Ok(invalidated)
+        guard.commit().await
     }
 
     pub async fn insert_plan(&self, plan: &Plan) -> Result<()> {
@@ -185,11 +157,8 @@ impl Store {
         guard.commit().await
     }
 
-    /// Set a run's state. A state that takes the run out of circulation
-    /// (terminal, `blocked`, or parked `waiting-for-human`) closes its
-    /// live queue entry in the same transaction, so the next run can
-    /// start; a parked run is re-enqueued by the serve-side sweep once
-    /// its approvals are decided.
+    /// Set a run's state. A terminal state closes its live queue entry in the
+    /// same transaction, so the next run can start.
     pub async fn set_run_state(
         &self,
         run_id: &RunId,
@@ -208,7 +177,7 @@ impl Store {
         .bind(run_id.as_str())
         .execute(&mut *conn)
         .await?;
-        if state.is_terminal() || matches!(state, RunState::Blocked | RunState::WaitingForHuman) {
+        if state.is_terminal() {
             super::queue::close_queue_entry_in_tx(conn, run_id).await?;
         }
         guard.commit().await
@@ -250,10 +219,8 @@ impl Store {
     /// Returns whether the transition happened; when it did not, the caller
     /// should let its run loop observe the cancelled state and wind down.
     ///
-    /// The research clock starts here if it never has: the wall-clock
-    /// budget runs from the first execution, not from creation, so time
-    /// spent queued is not research time (and a restart cannot move a
-    /// start that is already stamped).
+    /// The persisted first-start timestamp is recorded once for operational
+    /// timing and is not moved by a restart.
     pub async fn mark_run_running(&self, run_id: &RunId) -> Result<bool> {
         let mut guard = self.begin_write().await?;
         let conn = guard.conn();
@@ -274,8 +241,8 @@ impl Store {
 
     /// Stop a run as one durable fact (SPEC §9.2): the run becomes
     /// `cancelled`, leaves the queue, every task not yet dispatched is
-    /// cancelled with its reservation released and its approvals
-    /// invalidated, and the researcher's decision is recorded — all in one
+    /// cancelled with its reservation released, and the researcher's decision
+    /// is recorded — all in one
     /// transaction, so a crash leaves either the whole stop or none of it.
     /// Tasks already `running` are left to the live scheduler, which
     /// settles what they consumed; those a crash orphans are settled by

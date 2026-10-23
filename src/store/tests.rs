@@ -90,11 +90,7 @@ pub(crate) fn test_task(run_id: &RunId, goal_id: &GoalId, plan_id: &PlanId, role
         priority: 1.0,
         priority_rationale: "test".into(),
         permissions: Permissions::default(),
-        reservation: CostReservation {
-            model_calls: 1,
-            tokens: 1000,
-            tool_executions: 0,
-        },
+        reservation: CostReservation { model_calls: 1 },
         state: TaskState::Pending,
         attempts: 0,
         max_attempts: 3,
@@ -545,121 +541,6 @@ async fn review_against_stale_content_is_refused() {
 }
 
 #[tokio::test]
-async fn approval_binds_to_exact_payload() {
-    let (store, run, goal) = setup().await;
-    let plan = test_plan(&run.id, &goal.id);
-    store.insert_plan(&plan).await.unwrap();
-    let task = test_task(&run.id, &goal.id, &plan.id, Role::Tool);
-    store.enqueue_task(&task, None).await.unwrap();
-
-    let payload = serde_json::json!({"action": "run", "script": "analyze.py"});
-    let req = ApprovalRequest {
-        id: RequestId::new(),
-        schema_version: SCHEMA_VERSION,
-        run_id: run.id.clone(),
-        task_id: Some(task.id.clone()),
-        action: "execute analyze.py".into(),
-        payload: payload.clone(),
-        payload_hash: ContentHash::of_json(&payload).unwrap(),
-        state: ApprovalState::Pending,
-        decided_by: None,
-        decided_reason: None,
-        created_at: now(),
-        decided_at: None,
-    };
-    store.insert_approval(&req).await.unwrap();
-
-    // Approving a *different* payload must be refused.
-    let other =
-        ContentHash::of_json(&serde_json::json!({"action": "run", "script": "evil.py"})).unwrap();
-    let err = store
-        .decide_approval(&req.id, true, Some(&other), None)
-        .await
-        .unwrap_err();
-    assert!(err.to_string().contains("changed request"), "got: {err}");
-
-    // The exact payload is accepted, and the task is unblocked.
-    let decided = store
-        .decide_approval(&req.id, true, Some(&req.payload_hash), None)
-        .await
-        .unwrap();
-    assert_eq!(decided.state, ApprovalState::Approved);
-    assert_eq!(
-        store.get_task(&task.id).await.unwrap().state,
-        TaskState::Pending
-    );
-}
-
-#[tokio::test]
-async fn denial_cancels_the_waiting_task() {
-    let (store, run, goal) = setup().await;
-    let plan = test_plan(&run.id, &goal.id);
-    store.insert_plan(&plan).await.unwrap();
-    let mut task = test_task(&run.id, &goal.id, &plan.id, Role::Tool);
-    task.state = TaskState::WaitingForHuman;
-    store.enqueue_task(&task, None).await.unwrap();
-
-    let payload = serde_json::json!({"action": "delete everything"});
-    let req = ApprovalRequest {
-        id: RequestId::new(),
-        schema_version: SCHEMA_VERSION,
-        run_id: run.id.clone(),
-        task_id: Some(task.id.clone()),
-        action: "dangerous".into(),
-        payload: payload.clone(),
-        payload_hash: ContentHash::of_json(&payload).unwrap(),
-        state: ApprovalState::Pending,
-        decided_by: None,
-        decided_reason: None,
-        created_at: now(),
-        decided_at: None,
-    };
-    store.insert_approval(&req).await.unwrap();
-    store
-        .decide_approval(&req.id, false, None, Some("no".into()))
-        .await
-        .unwrap();
-
-    assert_eq!(
-        store.get_task(&task.id).await.unwrap().state,
-        TaskState::Cancelled
-    );
-}
-
-#[tokio::test]
-async fn goal_revision_invalidates_pending_approvals() {
-    let (store, run, goal) = setup().await;
-    let payload = serde_json::json!({"a": 1});
-    let req = ApprovalRequest {
-        id: RequestId::new(),
-        schema_version: SCHEMA_VERSION,
-        run_id: run.id.clone(),
-        task_id: None,
-        action: "something".into(),
-        payload: payload.clone(),
-        payload_hash: ContentHash::of_json(&payload).unwrap(),
-        state: ApprovalState::Pending,
-        decided_by: None,
-        decided_reason: None,
-        created_at: now(),
-        decided_at: None,
-    };
-    store.insert_approval(&req).await.unwrap();
-
-    let mut revised = goal.clone();
-    revised.id = GoalId::new();
-    revised.revision = 1;
-    revised.question = "changed question".into();
-    let n = store.revise_goal(&revised).await.unwrap();
-    assert_eq!(n, 1, "pending approval should be invalidated");
-
-    assert_eq!(
-        store.get_approval(&req.id).await.unwrap().state,
-        ApprovalState::Invalidated
-    );
-}
-
-#[tokio::test]
 async fn budget_reserves_output_allowance() {
     let (store, run, goal) = setup().await;
     let plan = test_plan(&run.id, &goal.id);
@@ -691,51 +572,6 @@ async fn budget_reserves_output_allowance() {
         err.to_string().contains("reserved for final output"),
         "got: {err}"
     );
-}
-
-#[tokio::test]
-async fn budget_reserves_output_token_allowance() {
-    let (store, run, goal) = setup().await;
-    let plan = test_plan(&run.id, &goal.id);
-    store.insert_plan(&plan).await.unwrap();
-
-    let budget = Budget {
-        max_model_calls: 10,
-        max_tokens: 100_000,
-        reserve_calls_for_output: 1,
-        ..Default::default()
-    };
-
-    let mut ordinary = test_task(&run.id, &goal.id, &plan.id, Role::Reflection);
-    ordinary.reservation.model_calls = 1;
-    ordinary.reservation.tokens = 80_000;
-    store.enqueue_task(&ordinary, None).await.unwrap();
-    store
-        .reserve_budget(&run.id, &ordinary.id, &ordinary.reservation, &budget, false)
-        .await
-        .unwrap();
-
-    let mut overflow = test_task(&run.id, &goal.id, &plan.id, Role::Reflection);
-    overflow.reservation.model_calls = 1;
-    overflow.reservation.tokens = 1;
-    store.enqueue_task(&overflow, None).await.unwrap();
-    let err = store
-        .reserve_budget(&run.id, &overflow.id, &overflow.reservation, &budget, false)
-        .await
-        .unwrap_err();
-    assert!(
-        err.to_string().contains("reserved for final output"),
-        "got: {err}"
-    );
-
-    let mut output = test_task(&run.id, &goal.id, &plan.id, Role::MetaReview);
-    output.reservation.model_calls = 1;
-    output.reservation.tokens = 20_000;
-    store.enqueue_task(&output, None).await.unwrap();
-    store
-        .reserve_budget(&run.id, &output.id, &output.reservation, &budget, true)
-        .await
-        .unwrap();
 }
 
 #[tokio::test]
@@ -1038,42 +874,6 @@ async fn assessment_citing_a_nonexistent_review_is_refused() {
     assert_eq!(
         store.current_assessment(&item.id).await.unwrap(),
         Assessment::Untested
-    );
-}
-
-#[tokio::test]
-async fn invalidated_approval_cannot_be_decided() {
-    let (store, run, goal) = setup().await;
-    let payload = serde_json::json!({"action": "x"});
-    let req = ApprovalRequest {
-        id: RequestId::new(),
-        schema_version: SCHEMA_VERSION,
-        run_id: run.id.clone(),
-        task_id: None,
-        action: "x".into(),
-        payload: payload.clone(),
-        payload_hash: ContentHash::of_json(&payload).unwrap(),
-        state: ApprovalState::Pending,
-        decided_by: None,
-        decided_reason: None,
-        created_at: now(),
-        decided_at: None,
-    };
-    store.insert_approval(&req).await.unwrap();
-
-    let mut revised = goal.clone();
-    revised.id = GoalId::new();
-    revised.revision = 1;
-    store.revise_goal(&revised).await.unwrap();
-
-    // A stale approval must not be usable after the goal changed.
-    let err = store
-        .decide_approval(&req.id, true, Some(&req.payload_hash), None)
-        .await
-        .unwrap_err();
-    assert!(
-        err.to_string().contains("already invalidated"),
-        "got: {err}"
     );
 }
 

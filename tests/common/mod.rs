@@ -439,7 +439,6 @@ async fn seed(
         budget: Budget {
             max_model_calls: 40,
             max_iterations: 4,
-            wall_clock_secs: 60,
             ..Default::default()
         },
         profile: None,

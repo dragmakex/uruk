@@ -12,7 +12,7 @@
 //! a restarted server reads the same head and resumes it.
 
 use super::AppState;
-use crate::records::{ApprovalState, RunId, RunState};
+use crate::records::{RunId, RunState};
 use crate::runtime::{Scheduler, SchedulerConfig};
 use crate::store::QueueState;
 use crate::{Result, report};
@@ -134,23 +134,18 @@ async fn next_head(state: &AppState) -> Result<Head> {
 }
 
 /// Whether a run may (still) execute.
-async fn eligible(store: &crate::store::Store, run: &crate::records::Run) -> Result<bool> {
+async fn eligible(_store: &crate::store::Store, run: &crate::records::Run) -> Result<bool> {
     Ok(match run.state {
         RunState::Queued | RunState::Running => true,
-        RunState::WaitingForHuman => store
-            .list_approvals(&run.id, Some(ApprovalState::Pending))
-            .await?
-            .is_empty(),
-        RunState::Blocked
-        | RunState::Completed
+        RunState::Completed
         | RunState::BudgetExhausted
         | RunState::Cancelled
         | RunState::Failed => false,
     })
 }
 
-/// Drive one run, then either release its place (it is over, blocked, or
-/// parked) or keep it for a retry (the scheduler failed while the run is
+/// Drive one run, then either release its place (it is over) or keep it for a
+/// retry (the scheduler failed while the run is
 /// still open — a store fault, a corrupt record — and giving the place up
 /// would let the next run overtake it). Stop requests reach the scheduler
 /// through the persisted run state (SPEC §9.2), so no handle is kept.

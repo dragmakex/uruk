@@ -7,8 +7,6 @@
 export type RunState =
   | "queued"
   | "running"
-  | "waiting-for-human"
-  | "blocked"
   | "completed"
   | "budget-exhausted"
   | "cancelled"
@@ -17,8 +15,6 @@ export type RunState =
 export const RUN_STATES: readonly RunState[] = [
   "queued",
   "running",
-  "waiting-for-human",
-  "blocked",
   "completed",
   "budget-exhausted",
   "cancelled",
@@ -49,11 +45,11 @@ export interface RunMeta {
   iterations: number;
   created_at: string;
   updated_at: string;
-  /** When the run first executed; null while queued. The budget runs from here. */
+  /** When the run first executed; null while queued. */
   started_at: string | null;
   /** Place on the run queue while `queued` (1 = next to start); null otherwise. */
   queue_position: number | null;
-  /** Seconds of settled provider waits, excluded from the research clock. */
+  /** Seconds of settled provider waits. */
   paused_secs: number;
   /** The outage being waited out; the run is still `running`, not failed. */
   provider_wait: ProviderWait | null;
@@ -70,9 +66,7 @@ export interface RunMeta {
 export interface BudgetView {
   max_model_calls: number;
   max_iterations: number;
-  wall_clock_secs: number;
   max_debate_turns: number;
-  max_tokens: number;
 }
 
 export interface GoalView {
@@ -94,7 +88,6 @@ export interface TaskCounts {
   pending: number;
   blocked: number;
   running: number;
-  waiting_for_human: number;
   completed: number;
   failed: number;
   cancelled: number;
@@ -141,7 +134,6 @@ export interface Stats {
   sources: number;
   works: number;
   searches: number;
-  pending_approvals: number;
   workers_busy: number;
   workers_total: number;
   leader: Leader | null;
@@ -152,8 +144,6 @@ export interface BudgetUsage {
   tokens: number;
   tool_executions: number;
   reserved_calls: number;
-  reserved_tokens: number;
-  reserved_tool_executions: number;
   cost_usd: number | null;
   cost_partially_unknown: boolean;
 }
@@ -352,7 +342,6 @@ export interface RunPreview {
   };
   budget: {
     max_model_calls: number;
-    max_seconds: number;
     max_iterations: number;
     max_debate_turns: number;
     max_acquisitions: number;

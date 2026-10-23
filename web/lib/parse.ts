@@ -158,9 +158,7 @@ function parseBudget(value: unknown, path: string): BudgetView {
   return {
     max_model_calls: num(r.max_model_calls, `${path}.max_model_calls`),
     max_iterations: num(r.max_iterations, `${path}.max_iterations`),
-    wall_clock_secs: num(r.wall_clock_secs, `${path}.wall_clock_secs`),
     max_debate_turns: num(r.max_debate_turns, `${path}.max_debate_turns`),
-    max_tokens: num(r.max_tokens, `${path}.max_tokens`),
   };
 }
 
@@ -192,7 +190,6 @@ function parseCounts(value: unknown, path: string): TaskCounts {
     pending: num(r.pending, `${path}.pending`),
     blocked: num(r.blocked, `${path}.blocked`),
     running: num(r.running, `${path}.running`),
-    waiting_for_human: num(r.waiting_for_human, `${path}.waiting_for_human`),
     completed: num(r.completed, `${path}.completed`),
     failed: num(r.failed, `${path}.failed`),
     cancelled: num(r.cancelled, `${path}.cancelled`),
@@ -259,7 +256,6 @@ function parseStats(value: unknown, path: string): Stats {
     sources: num(r.sources, `${path}.sources`),
     works: num(r.works, `${path}.works`),
     searches: num(r.searches, `${path}.searches`),
-    pending_approvals: num(r.pending_approvals, `${path}.pending_approvals`),
     workers_busy: num(r.workers_busy, `${path}.workers_busy`),
     workers_total: num(r.workers_total, `${path}.workers_total`),
     leader: parseLeader(r.leader, `${path}.leader`),
@@ -273,11 +269,6 @@ function parseUsage(value: unknown, path: string): BudgetUsage {
     tokens: num(r.tokens, `${path}.tokens`),
     tool_executions: num(r.tool_executions, `${path}.tool_executions`),
     reserved_calls: num(r.reserved_calls, `${path}.reserved_calls`),
-    reserved_tokens: num(r.reserved_tokens, `${path}.reserved_tokens`),
-    reserved_tool_executions: num(
-      r.reserved_tool_executions,
-      `${path}.reserved_tool_executions`,
-    ),
     cost_usd: numOrNull(r.cost_usd, `${path}.cost_usd`),
     cost_partially_unknown: bool(
       r.cost_partially_unknown,
@@ -545,7 +536,6 @@ export function parseRunPreview(value: unknown): RunPreview {
     },
     budget: {
       max_model_calls: num(budget.max_model_calls, "preview.budget.max_model_calls"),
-      max_seconds: num(budget.max_seconds, "preview.budget.max_seconds"),
       max_iterations: num(budget.max_iterations, "preview.budget.max_iterations"),
       max_debate_turns: num(
         budget.max_debate_turns,

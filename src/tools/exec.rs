@@ -43,7 +43,7 @@ impl ExecRequest {
         }
     }
 
-    /// The exact payload an approval binds to (SPEC §11).
+    /// Stable hash of the exact execution payload.
     pub fn payload(&self) -> serde_json::Value {
         serde_json::json!({
             "program": self.program,
@@ -179,10 +179,10 @@ fn contained_command(
     })
 }
 
-/// Execute an approved analysis in an isolated, contained workspace.
+/// Execute an allowlisted analysis in an isolated, contained workspace.
 ///
-/// The caller must have verified permissions and a matching approval; this
-/// enforces the execute permission, the tool allowlist, and OS containment as
+/// The caller must have verified permissions; this function enforces
+/// containment and the named-program allowlist again.
 /// a second gate. Nothing is written to the store: the returned records are
 /// committed by the caller with the task outcome (SPEC §9.2).
 pub async fn execute_analysis(

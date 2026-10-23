@@ -650,11 +650,7 @@ fn acquire_task(f: &Fixture, work_key: &str) -> Task {
         priority: 1.0,
         priority_rationale: "test acquisition".into(),
         permissions: f.goal.permissions.clone(),
-        reservation: CostReservation {
-            model_calls: 0,
-            tokens: 0,
-            tool_executions: 1,
-        },
+        reservation: CostReservation { model_calls: 0 },
         state: TaskState::Pending,
         attempts: 0,
         max_attempts: 1,

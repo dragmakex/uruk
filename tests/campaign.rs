@@ -217,7 +217,6 @@ async fn unchanged_snapshots_do_not_end_a_campaign_with_useful_work() {
     let f = fixture_with(Mode::Campaign, MockProvider::new(), |g| {
         g.budget.max_iterations = 10;
         g.budget.max_model_calls = 300;
-        g.budget.max_tokens = 2_000_000;
     })
     .await;
     let source = seed_source(&f, "study", "A measured improvement.").await;

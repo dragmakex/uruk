@@ -33,7 +33,6 @@ fn queued_run(created_at: OffsetDateTime) -> (Run, Goal) {
         rubric: Rubric::default(),
         permissions: Permissions::default(),
         budget: Budget {
-            wall_clock_secs: 60,
             ..Budget::default()
         },
         profile: None,
@@ -222,25 +221,6 @@ async fn finishing_a_run_closes_its_queue_entry_atomically() {
 }
 
 #[tokio::test]
-async fn a_blocked_run_leaves_the_queue() {
-    let (store, _dir) = open_store().await;
-    let blocked = enqueue(&store, OffsetDateTime::now_utc()).await;
-    let next = enqueue(&store, OffsetDateTime::now_utc()).await;
-
-    store
-        .set_run_state(
-            &blocked,
-            RunState::Blocked,
-            Some(StopCondition::SafetyBoundary),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(store.fair_head().await.unwrap().unwrap().run_id, next);
-    assert_eq!(store.queue_status(&blocked).await.unwrap(), None);
-}
-
-#[tokio::test]
 async fn a_restart_resumes_the_active_head_first_then_the_queue_in_order() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join(".uruk/state.sqlite");
@@ -281,7 +261,7 @@ async fn a_restart_resumes_the_active_head_first_then_the_queue_in_order() {
 }
 
 #[tokio::test]
-async fn provider_wait_timing_survives_reopen_and_extends_the_deadline() {
+async fn provider_wait_timing_survives_reopen() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join(".uruk/state.sqlite");
     let store = Store::open(&path).await.unwrap();
@@ -319,11 +299,6 @@ async fn provider_wait_timing_survives_reopen_and_extends_the_deadline() {
     assert_eq!(
         timing.paused_secs, 30,
         "the wait is settled in whole seconds"
-    );
-    assert_eq!(
-        timing.deadline(60),
-        Some(started + time::Duration::seconds(90)),
-        "waiting for the provider does not consume the wall-clock budget"
     );
     assert!(
         !store.end_provider_wait(&run_id, until).await.unwrap(),
@@ -651,40 +626,6 @@ async fn abandoning_an_interrupted_preparation_fails_the_run_and_frees_the_head(
     assert_eq!(store.get_run(&next).await.unwrap().state, RunState::Queued);
 }
 
-#[tokio::test]
-async fn a_blocked_goal_is_created_blocked_with_no_queue_place() {
-    let (store, _dir) = open_store().await;
-    let (mut run, goal) = queued_run(OffsetDateTime::now_utc());
-    run.state = RunState::Blocked;
-    run.stop_condition = Some(StopCondition::SafetyBoundary);
-    let decision = Decision {
-        id: DecisionId::new(),
-        schema_version: SCHEMA_VERSION,
-        run_id: run.id.clone(),
-        kind: DecisionKind::SafetyBlock,
-        actor: Actor::System,
-        reason: "blocked goal".into(),
-        referenced: vec![],
-        payload: serde_json::json!({}),
-        created_at: OffsetDateTime::now_utc(),
-    };
-    store
-        .create_run_blocked(&run, &goal, None, &decision)
-        .await
-        .unwrap();
-    assert_eq!(
-        store.get_run(&run.id).await.unwrap().state,
-        RunState::Blocked
-    );
-    assert_eq!(store.queue_status(&run.id).await.unwrap(), None);
-    assert!(store.list_queue().await.unwrap().is_empty());
-    assert_eq!(store.list_decisions(&run.id).await.unwrap().len(), 1);
-    assert!(
-        !store.activate_queue_entry(&run.id).await.unwrap(),
-        "a blocked run can never be activated"
-    );
-}
-
 fn pending_task(run_id: &RunId, goal: &Goal, plan: &Plan) -> Task {
     Task {
         id: TaskId::new(),
@@ -706,11 +647,7 @@ fn pending_task(run_id: &RunId, goal: &Goal, plan: &Plan) -> Task {
         priority: 1.0,
         priority_rationale: "test".into(),
         permissions: goal.permissions.clone(),
-        reservation: CostReservation {
-            model_calls: 1,
-            tokens: 1000,
-            tool_executions: 0,
-        },
+        reservation: CostReservation { model_calls: 1 },
         state: TaskState::Pending,
         attempts: 0,
         max_attempts: 3,
@@ -1323,41 +1260,6 @@ async fn first_owners_at_turn_zero_still_tie_by_start_order() {
 // --- positions come from the live entry, not the run's lifecycle state ---
 
 #[tokio::test]
-async fn a_parked_run_re_enqueued_by_the_sweep_shows_its_position() {
-    let (store, _dir) = open_store().await;
-    let ahead = enqueue_for(&store, 'a').await;
-    let parked = enqueue(&store, OffsetDateTime::now_utc()).await;
-    store
-        .set_run_state(&parked, RunState::WaitingForHuman, None)
-        .await
-        .unwrap();
-    assert_eq!(
-        store.queue_status(&parked).await.unwrap(),
-        None,
-        "parking leaves the queue"
-    );
-    assert!(
-        store.enqueue_run(&parked).await.unwrap(),
-        "released: back on the queue"
-    );
-
-    let overviews = store.list_run_overviews().await.unwrap();
-    let position = |id: &RunId| {
-        overviews
-            .iter()
-            .find(|o| &o.id == id)
-            .unwrap()
-            .queue_position
-    };
-    assert_eq!(position(&ahead), Some(1));
-    assert_eq!(
-        position(&parked),
-        Some(2),
-        "a waiting-for-human run with a live entry has a position"
-    );
-}
-
-#[tokio::test]
 async fn the_queue_context_reads_position_and_the_heads_wait_as_one_snapshot() {
     let (store, _dir) = open_store().await;
     let now = OffsetDateTime::now_utc();
@@ -1365,25 +1267,7 @@ async fn the_queue_context_reads_position_and_the_heads_wait_as_one_snapshot() {
     let follower = enqueue(&store, now).await;
     let stranger = {
         let (run, goal) = queued_run(now);
-        store
-            .create_run_blocked(
-                &run,
-                &goal,
-                None,
-                &Decision {
-                    id: DecisionId::new(),
-                    schema_version: SCHEMA_VERSION,
-                    run_id: run.id.clone(),
-                    kind: DecisionKind::Stop,
-                    actor: Actor::System,
-                    reason: "refused".into(),
-                    referenced: vec![],
-                    payload: serde_json::json!({}),
-                    created_at: now,
-                },
-            )
-            .await
-            .unwrap();
+        store.create_run(&run, &goal).await.unwrap();
         run.id
     };
 

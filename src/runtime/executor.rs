@@ -9,8 +9,7 @@
 
 use crate::agents::outputs::ProximityRelation;
 use crate::agents::{
-    AgentContext, evolution, generation, meta_review, proximity, ranking, reflection, safety,
-    search,
+    AgentContext, evolution, generation, meta_review, proximity, ranking, reflection, search,
 };
 use crate::records::*;
 use crate::store::{RecordBatch, write_atomic};
@@ -163,33 +162,15 @@ async fn run_generation(ctx: &AgentContext, task: &Task, batch: &mut RecordBatch
             .artifacts
             .push(store_transcript(ctx, task, &text).await?);
     }
-    admit_candidate(ctx, item, "candidate", batch);
+    admit_candidate(ctx, item, batch);
     Ok(())
 }
 
-/// Record a new candidate with its own safety check (SPEC §12): a permitted
-/// goal is not blanket approval, and a blocked candidate never enters the
-/// tournament.
-fn admit_candidate(ctx: &AgentContext, item: ResearchItem, what: &str, batch: &mut RecordBatch) {
-    let verdict = safety::check_item(&item);
-    if let Some(decision) = safety::safety_decision(
-        &ctx.run_id,
-        &verdict,
-        &format!("{what} {}", item.id),
-        vec![item.id.0.clone()],
-    ) {
-        batch.decisions.push(decision);
-        if verdict.is_blocked() {
-            batch.dispositions.push((
-                item.id.clone(),
-                Disposition::Blocked,
-                verdict.concern().map(str::to_string),
-            ));
-        }
-    }
+/// Record a new candidate in the run's tournament.
+fn admit_candidate(ctx: &AgentContext, item: ResearchItem, batch: &mut RecordBatch) {
     // A candidate starts at the initial rating in this cohort: it inherits
     // neither a parent's rating nor its support (SPEC §5).
-    if item.kind.is_rankable() && !verdict.is_blocked() {
+    if item.kind.is_rankable() {
         batch.ratings.push((item.id.clone(), ctx.plan.id.clone()));
     }
     batch.items.push(item);
@@ -260,25 +241,6 @@ async fn run_reflection(ctx: &AgentContext, task: &Task, batch: &mut RecordBatch
         rationale: review.assessment_text.clone(),
         assessed_at: OffsetDateTime::now_utc(),
     });
-
-    if let Some(concern) = reviewed.safety_concern {
-        let verdict = safety::check(&format!("{} {}", item.content, concern));
-        if let Some(decision) = safety::safety_decision(
-            &ctx.run_id,
-            &verdict,
-            &format!("candidate {} flagged during review", item.id),
-            vec![item.id.0.clone(), review.id.0.clone()],
-        ) {
-            batch.decisions.push(decision);
-            if verdict.is_blocked() {
-                batch.dispositions.push((
-                    item.id.clone(),
-                    Disposition::Blocked,
-                    verdict.concern().map(str::to_string),
-                ));
-            }
-        }
-    }
 
     batch.reviews.push(review);
     Ok(())
@@ -385,8 +347,7 @@ async fn run_evolution(ctx: &AgentContext, task: &Task, batch: &mut RecordBatch)
         evolution::improve_feasibility(ctx, &parents[0], Some(task.id.clone())).await?
     };
 
-    // The child is checked independently of its parent (SPEC §12).
-    admit_candidate(ctx, evolved.child, "evolved candidate", batch);
+    admit_candidate(ctx, evolved.child, batch);
     Ok(())
 }
 
@@ -451,28 +412,6 @@ async fn run_meta_review(ctx: &AgentContext, task: &Task, batch: &mut RecordBatc
                 Some("research overview"),
             )
             .await?;
-
-            // Emerging directions are checked separately (SPEC §12): a safe
-            // goal is not blanket approval for where the research is heading.
-            for direction in &overview.output.directions {
-                let text = format!(
-                    "{} {}",
-                    direction["label"].as_str().unwrap_or(""),
-                    direction["importance"].as_str().unwrap_or("")
-                );
-                let verdict = safety::check(&text);
-                if let Some(decision) = safety::safety_decision(
-                    &ctx.run_id,
-                    &verdict,
-                    &format!(
-                        "research direction {:?}",
-                        direction["label"].as_str().unwrap_or("")
-                    ),
-                    vec![artifact.id.0.clone()],
-                ) {
-                    batch.decisions.push(decision);
-                }
-            }
 
             batch.decisions.push(Decision {
                 id: DecisionId::new(),

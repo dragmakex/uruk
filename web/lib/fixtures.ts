@@ -22,9 +22,7 @@ export function snapshotFixture(): unknown {
       budget: {
         max_model_calls: 200,
         max_iterations: 4,
-        wall_clock_secs: 3600,
         max_debate_turns: 5,
-        max_tokens: 2000000,
       },
     },
     plan: {
@@ -41,7 +39,6 @@ export function snapshotFixture(): unknown {
           pending: 1,
           blocked: 0,
           running: 0,
-          waiting_for_human: 0,
           completed: 2,
           failed: 0,
           cancelled: 0,
@@ -60,7 +57,6 @@ export function snapshotFixture(): unknown {
           pending: 2,
           blocked: 0,
           running: 1,
-          waiting_for_human: 0,
           completed: 4,
           failed: 0,
           cancelled: 0,
@@ -86,7 +82,6 @@ export function snapshotFixture(): unknown {
       sources: 41,
       works: 0,
       searches: 0,
-      pending_approvals: 0,
       workers_busy: 3,
       workers_total: 4,
       leader: {
@@ -101,8 +96,6 @@ export function snapshotFixture(): unknown {
       tokens: 48000,
       tool_executions: 0,
       reserved_calls: 2,
-      reserved_tokens: 0,
-      reserved_tool_executions: 0,
       cost_usd: null,
       cost_partially_unknown: false,
     },

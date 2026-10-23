@@ -10,7 +10,7 @@
 //! reach a run only through the owner-bound upload store.
 
 use super::AppState;
-use crate::agents::{safety, supervisor};
+use crate::agents::supervisor;
 use crate::records::*;
 use crate::store::{OwnerDigest, Store, Upload};
 use crate::tools::{ingest_input, ingest_upload};
@@ -44,8 +44,6 @@ pub struct StartRunRequest {
     pub constraints: Vec<String>,
     #[serde(default)]
     pub max_model_calls: Option<u32>,
-    #[serde(default)]
-    pub max_seconds: Option<u64>,
     #[serde(default)]
     pub max_iterations: Option<u32>,
     /// Turn cap for multi-turn debates. Only meaningful with
@@ -96,7 +94,6 @@ pub struct ValidatedStart {
     pub attributes: Vec<String>,
     pub constraints: Vec<String>,
     pub max_model_calls: u32,
-    pub max_seconds: u64,
     pub max_iterations: u32,
     pub max_acquisitions: u32,
     pub input_urls: Vec<String>,
@@ -341,7 +338,6 @@ pub fn validate(req: StartRunRequest) -> Result<ValidatedStart> {
             1,
             100_000,
         )?,
-        max_seconds: bounded("max_seconds", req.max_seconds.unwrap_or(0), 0, 604_800)?,
         max_iterations: bounded("max_iterations", req.max_iterations.unwrap_or(10), 1, 1_000)?,
         max_acquisitions: bounded(
             "max_acquisitions",
@@ -358,9 +354,8 @@ pub fn validate(req: StartRunRequest) -> Result<ValidatedStart> {
 }
 
 /// The permissions a web-started run gets: exactly what the request
-/// granted, plus provider disclosure, and never execution — the web
-/// surface has no exact-payload approval step for an anonymous cookie to
-/// answer, so grants with local side effects remain unavailable (SPEC §12).
+/// granted, plus provider disclosure. Local execution remains unavailable
+/// to anonymous web runs.
 fn permissions_for(v: &ValidatedStart, read_paths: Vec<String>) -> Permissions {
     Permissions {
         read_paths,
@@ -369,7 +364,6 @@ fn permissions_for(v: &ValidatedStart, read_paths: Vec<String>) -> Permissions {
         execute: false,
         allowed_tools: v.connector_tools.clone(),
         disclose_to_provider: true,
-        require_approval_for: vec![],
     }
 }
 
@@ -455,7 +449,6 @@ fn build_goal(
         },
         permissions: permissions_for(v, inputs.read_paths.clone()),
         budget: Budget {
-            wall_clock_secs: v.max_seconds,
             max_model_calls: v.max_model_calls,
             max_iterations: v.max_iterations,
             max_debate_turns: v.debate_turns,
@@ -468,8 +461,7 @@ fn build_goal(
     }
 }
 
-/// Preview a start without persisting anything: resolve the inputs,
-/// apply the same safety gate a real start applies, and return the plan
+/// Preview a start without persisting anything: resolve the inputs and return the plan
 /// the Supervisor would run. `uruk run --dry-run` persists its planned
 /// run for a later `uruk resume`; the web cannot, because the serve
 /// process enqueues and executes every persisted nonterminal run, so the
@@ -481,16 +473,6 @@ pub async fn preview(
 ) -> Result<serde_json::Value> {
     let inputs = resolve_inputs(state.store(), &v, owner).await?;
     let goal = build_goal(&v, &RunId::new(), &GoalId::new(), &inputs);
-
-    let verdict = safety::check(&goal.question);
-    if verdict.is_blocked() {
-        return Err(Error::permission(
-            verdict
-                .concern()
-                .unwrap_or("the goal is blocked")
-                .to_string(),
-        ));
-    }
 
     let plan = supervisor::build_plan(&goal, 0);
     Ok(serde_json::json!({
@@ -509,7 +491,6 @@ pub async fn preview(
         },
         "budget": {
             "max_model_calls": goal.budget.max_model_calls,
-            "max_seconds": goal.budget.wall_clock_secs,
             "max_iterations": goal.budget.max_iterations,
             "max_debate_turns": goal.budget.max_debate_turns,
             "max_acquisitions": goal.budget.max_acquisitions,
@@ -517,17 +498,15 @@ pub async fn preview(
     }))
 }
 
-/// Gate the goal on safety, persist the run on the durable queue, ingest
-/// its inputs, and plan it (SPEC §11, §12); the dispatcher executes it
+/// Persist the run on the durable queue, ingest its inputs, and plan it;
+/// the dispatcher executes it
 /// when it reaches the head. The run, its goal, its owner binding, and
 /// its queue place are created in one transaction, so a crash cannot
 /// leave an unowned or unqueued web run behind, and its place in the
 /// order is the moment of creation, not the end of ingestion. The place
 /// is `preparing` until the plan commits — in the same transaction — so a
 /// run becomes executable only once it is fully prepared; a run whose
-/// request dies first is abandoned by the dispatcher, never executed. A
-/// goal the safety check refuses is persisted `blocked`, with the
-/// decision, and holds no queue place at all.
+/// request dies first is abandoned by the dispatcher, never executed.
 pub async fn start_run(state: &AppState, v: ValidatedStart, owner: &OwnerDigest) -> Result<RunId> {
     if v.dry_run {
         return Err(Error::validation(
@@ -544,7 +523,7 @@ pub async fn start_run(state: &AppState, v: ValidatedStart, owner: &OwnerDigest)
     let (project_id, project_name) = store.project_identity();
 
     let goal = build_goal(&v, &run_id, &goal_id, &inputs);
-    let mut run = Run {
+    let run = Run {
         id: run_id.clone(),
         schema_version: SCHEMA_VERSION,
         project_id: project_id.clone(),
@@ -558,35 +537,12 @@ pub async fn start_run(state: &AppState, v: ValidatedStart, owner: &OwnerDigest)
     };
     store.ensure_project(&project_id, &project_name).await?;
 
-    // Check the goal itself before anything is persisted (SPEC §12): a
-    // refused goal is recorded `blocked`, with its decision, and never
-    // takes a queue place.
-    let verdict = safety::check(&goal.question);
-    let safety_decision = safety::safety_decision(&run_id, &verdict, "research goal", vec![]);
-    if verdict.is_blocked() {
-        run.state = RunState::Blocked;
-        run.stop_condition = Some(StopCondition::SafetyBoundary);
-        let decision = safety_decision.unwrap_or_else(|| blocked_decision(&run_id, &verdict));
-        store
-            .create_run_blocked(&run, &goal, Some(owner), &decision)
-            .await?;
-        return Err(Error::permission(
-            verdict
-                .concern()
-                .unwrap_or("the goal is blocked")
-                .to_string(),
-        ));
-    }
-
     // Held back from execution until this request has prepared the run;
     // the guard releases it on every exit path below, and a request that
     // dies before the plan commits leaves a `preparing` entry the
     // dispatcher abandons rather than executes.
     let _preparing = state.prepare(&run_id);
     store.create_run_queued(&run, &goal, Some(owner)).await?;
-    if let Some(decision) = safety_decision {
-        store.insert_decision(&decision).await?;
-    }
 
     // Ingest supplied sources before dispatch, exactly as the CLI does: a
     // URL without the network grant is recorded as unavailable rather
@@ -621,42 +577,17 @@ pub async fn start_run(state: &AppState, v: ValidatedStart, owner: &OwnerDigest)
     Ok(run_id)
 }
 
-/// The decision for a blocked goal when the safety module records none
-/// (it always does for a blocked verdict; this keeps the refusal
-/// recorded regardless).
-fn blocked_decision(run_id: &RunId, verdict: &safety::SafetyVerdict) -> Decision {
-    Decision {
-        id: DecisionId::new(),
-        schema_version: SCHEMA_VERSION,
-        run_id: run_id.clone(),
-        kind: DecisionKind::SafetyBlock,
-        actor: Actor::System,
-        reason: verdict
-            .concern()
-            .unwrap_or("the goal is blocked")
-            .to_string(),
-        referenced: vec![],
-        payload: serde_json::json!({ "subject": "research goal" }),
-        created_at: OffsetDateTime::now_utc(),
-    }
-}
-
 /// Put on the queue every run this server should be driving but which
 /// holds no live queue place, and wake the dispatcher.
 ///
-/// Two cases, both consequences of `uruk serve` being the project's only
-/// scheduler owner:
-///
-/// - a run left `running` without a queue place (created by an engine
+/// A run left `running` without a queue place (created by an engine
 ///   caller outside the web API, or by a build before the queue existed
 ///   and not covered by the migration) would otherwise sit that way
-///   forever;
-/// - a run parked `waiting-for-human` with no approvals left pending needs
-///   another turn to pick the released work back up.
+///   forever.
 ///
 /// Runs already on the queue — including the interrupted head a restart
 /// finds `running` — are left where they are, so a restart never reorders
-/// anything. `blocked` and terminal runs are skipped. Returns the runs
+/// anything. Terminal runs are skipped. Returns the runs
 /// enqueued by this sweep.
 ///
 /// The sweep also settles tasks a crash orphaned: a run that is already
@@ -678,14 +609,7 @@ pub async fn resume_orphaned_runs(state: &AppState) -> Result<Vec<RunId>> {
     }
     let mut enqueued = Vec::new();
     for run in store.list_run_overviews().await? {
-        let eligible = match run.state {
-            RunState::Queued | RunState::Running => true,
-            RunState::WaitingForHuman => store
-                .list_approvals(&run.id, Some(ApprovalState::Pending))
-                .await?
-                .is_empty(),
-            _ => false,
-        };
+        let eligible = matches!(run.state, RunState::Queued | RunState::Running);
         if !eligible || store.queue_status(&run.id).await?.is_some() {
             continue;
         }
@@ -715,7 +639,6 @@ mod tests {
             attributes: vec![],
             constraints: vec![],
             max_model_calls: None,
-            max_seconds: None,
             max_iterations: None,
             max_debate_turns: None,
             max_acquisitions: None,
@@ -769,30 +692,10 @@ mod tests {
     }
 
     #[test]
-    fn zero_seconds_is_unlimited_and_finite_limits_are_opt_in() {
-        for seconds in [0, 1, 3600, 604_800] {
-            let v = validate(StartRunRequest {
-                max_seconds: Some(seconds),
-                ..request("q")
-            })
-            .expect("valid time budget");
-            assert_eq!(v.max_seconds, seconds);
-        }
-        assert!(
-            validate(StartRunRequest {
-                max_seconds: Some(604_801),
-                ..request("q")
-            })
-            .is_err()
-        );
-    }
-
-    #[test]
     fn omitted_fields_get_the_documented_defaults() {
         let v = validate(request("why do the measurements disagree")).expect("valid");
         assert_eq!(v.mode, Mode::Task);
         assert_eq!(v.max_model_calls, 200);
-        assert_eq!(v.max_seconds, 0);
         assert_eq!(v.max_iterations, 10);
         assert_eq!(v.max_acquisitions, 8);
         assert_eq!(v.profile, None);
@@ -899,13 +802,6 @@ mod tests {
         assert!(
             validate(StartRunRequest {
                 max_model_calls: Some(0),
-                ..request("q")
-            })
-            .is_err()
-        );
-        assert!(
-            validate(StartRunRequest {
-                max_seconds: Some(10_000_000),
                 ..request("q")
             })
             .is_err()
@@ -1067,7 +963,7 @@ mod tests {
     }
 
     #[test]
-    fn web_permissions_never_grant_execution_or_approval_lanes() {
+    fn web_permissions_never_grant_execution() {
         let v = validate(StartRunRequest {
             allow_network: true,
             search: true,
@@ -1077,7 +973,6 @@ mod tests {
         let p = permissions_for(&v, vec![".uruk/uploads/d/upl_1".into()]);
         assert!(!p.execute);
         assert!(p.write_paths.is_empty());
-        assert!(p.require_approval_for.is_empty());
         assert!(p.disclose_to_provider);
         assert_eq!(p.allowed_tools, v.connector_tools);
         assert_eq!(p.read_paths, vec![".uruk/uploads/d/upl_1".to_string()]);

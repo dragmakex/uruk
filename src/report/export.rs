@@ -903,28 +903,6 @@ async fn build_report(
         s.push('\n');
     }
 
-    // Safety decisions and blocked work are always reported.
-    let decisions = store.list_decisions(run_id).await?;
-    let safety: Vec<_> = decisions
-        .iter()
-        .filter(|d| d.kind == DecisionKind::SafetyBlock)
-        .collect();
-    if !safety.is_empty() {
-        s.push_str("**Safety and oversight:**\n");
-        for d in &safety {
-            s.push_str(&format!(
-                "- {} {}\n",
-                if d.payload["blocked"] == true {
-                    "**BLOCKED:**"
-                } else {
-                    "Flagged:"
-                },
-                d.reason
-            ));
-        }
-        s.push('\n');
-    }
-
     s.push_str("**Standing limitations:**\n");
     s.push_str(
         "- Agent critiques and simulated expert debate are reasoning, not independent \

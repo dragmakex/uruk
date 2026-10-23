@@ -11,9 +11,9 @@ Item under review:
 Execution available to this task: {execution}
 
 If a step can only be settled by actually running something, and execution is
-available, request it. Name only an approved program; inputs must be supplied
-sources. The request is gated by the allowlist and by human approval, and its
-result comes back as evidence for a later review to interpret.
+available, request it. Name only an allowed program; inputs must be supplied
+sources. The contained result comes back as evidence for a later review to
+interpret.
 
 Trace the mechanism from its starting conditions to its predicted outcome. At
 each step state what must hold, what could go wrong, and what would be observed

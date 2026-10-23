@@ -163,8 +163,8 @@ export function LiveRun({
   const { run, goal, stats, agents, items, usage } = snapshot;
   const terminal = isTerminal(run.state);
   // A queue place, not the lifecycle state, says the run is waiting:
-  // durable recovery can put a `running` or `waiting-for-human` run
-  // back on the queue, and it waits like any other.
+  // durable recovery can put a `running` run back on the queue, and it waits
+  // like any other.
   const onQueue = run.queue_position !== null;
   const note = connectionNote(stream.status);
   const method = rankingMethod(goal.budget.max_debate_turns);
@@ -252,9 +252,8 @@ export function LiveRun({
             <p>
               Runs execute one at a time: yours in the order you started
               them, taking turns with other researchers&apos; runs:{" "}
-              {queueNote(run.queue_position)}. Research begins, and the time
-              budget starts, when this run reaches its turn. Stop remains
-              available.
+              {queueNote(run.queue_position)}. Research begins when this run
+              reaches its turn. Stop remains available.
             </p>
           </div>
         )}
@@ -270,7 +269,7 @@ export function LiveRun({
             <p>
               Your place in the queue is preserved and this run will start
               automatically when its turn comes; no action is required. Your
-              time budget has not started.
+              run has not started.
             </p>
           </div>
         )}
@@ -302,22 +301,7 @@ export function LiveRun({
             <p>
               This run is still live: it is {providerWaitNote(run.provider_wait)}.
               Work resumes automatically when the provider answers again, and
-              this wait does not count against the run&apos;s time budget.
-              Stop remains available.
-            </p>
-          </div>
-        )}
-
-        {stats.pending_approvals > 0 && (
-          <div className="error-box" role="status" style={{ marginBottom: 24 }}>
-            <h2>Waiting for you</h2>
-            <p>
-              {stats.pending_approvals} approval request
-              {stats.pending_approvals === 1 ? "" : "s"} pending. Approvals
-              cannot be decided in the web console yet: an approval binds to
-              the exact payload being granted, and this console has no UI
-              that shows that payload. The run stays paused; computational
-              execution is unavailable until that approval UI exists.
+              no action is required. Stop remains available.
             </p>
           </div>
         )}

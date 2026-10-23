@@ -194,7 +194,6 @@ pub fn build_plan(goal: &Goal, revision: u32) -> Plan {
         StopCondition::BudgetExhausted,
         StopCondition::WorkExhausted,
         StopCondition::Cancelled,
-        StopCondition::SafetyBoundary,
     ];
 
     let outputs = if goal.deliverables.is_empty() {
@@ -881,12 +880,7 @@ pub async fn should_stop(
     goal: &Goal,
     usage: &BudgetUsage,
     iterations: u32,
-    deadline_passed: bool,
 ) -> Result<Option<StopCondition>> {
-    if deadline_passed {
-        return Ok(Some(StopCondition::BudgetExhausted));
-    }
-
     // The output reserve is not available to ordinary work, so exhaustion is
     // measured against the working ceiling; the final deliverable then draws
     // on the reserve.
@@ -895,12 +889,7 @@ pub async fn should_stop(
         .max_model_calls
         .saturating_sub(goal.budget.reserve_calls_for_output);
 
-    if usage.committed_calls() >= working_ceiling
-        || usage
-            .committed_tokens()
-            .saturating_add(TOKENS_PER_MODEL_CALL_RESERVATION)
-            > goal.budget.working_token_ceiling()
-    {
+    if usage.committed_calls() >= working_ceiling {
         return Ok(Some(StopCondition::BudgetExhausted));
     }
 
@@ -929,7 +918,6 @@ pub struct GoalChanges {
     pub assumptions: Vec<String>,
     pub max_model_calls: Option<u32>,
     pub max_iterations: Option<u32>,
-    pub wall_clock_secs: Option<u64>,
     pub reason: Option<String>,
 }
 
@@ -944,7 +932,6 @@ impl GoalChanges {
             && self.assumptions.is_empty()
             && self.max_model_calls.is_none()
             && self.max_iterations.is_none()
-            && self.wall_clock_secs.is_none()
     }
 }
 
@@ -955,8 +942,6 @@ pub struct Revised {
     pub plan: Plan,
     /// Whether the rubric changed, which starts a new tournament cohort.
     pub rubric_changed: bool,
-    /// Pending approvals invalidated by the revision.
-    pub invalidated_approvals: usize,
     pub decision: Decision,
 }
 
@@ -965,8 +950,8 @@ pub struct Revised {
 /// retain their original context").
 ///
 /// A changed rubric produces a new plan revision, which is a fresh Elo cohort
-/// (SPEC §7); pending approvals are invalidated (SPEC §6); a finished run is
-/// reopened so it can be resumed under the new revision.
+/// (SPEC §7); a finished run is reopened so it can be resumed under the new
+/// revision.
 pub async fn revise(store: &Store, run_id: &RunId, changes: GoalChanges) -> Result<Revised> {
     if changes.is_empty() {
         return Err(crate::Error::validation(
@@ -986,16 +971,6 @@ pub async fn revise(store: &Store, run_id: &RunId, changes: GoalChanges) -> Resu
     goal.created_at = OffsetDateTime::now_utc();
 
     if let Some(q) = &changes.question {
-        // The revised goal is checked before anything is persisted (SPEC §12).
-        let verdict = super::safety::check(q);
-        if verdict.is_blocked() {
-            return Err(crate::Error::permission(
-                verdict
-                    .concern()
-                    .unwrap_or("the revised goal is blocked")
-                    .to_string(),
-            ));
-        }
         goal.question = q.clone();
     }
     let replace = |target: &mut Vec<String>, with: &Vec<String>| {
@@ -1015,13 +990,10 @@ pub async fn revise(store: &Store, run_id: &RunId, changes: GoalChanges) -> Resu
     if let Some(n) = changes.max_iterations {
         goal.budget.max_iterations = n;
     }
-    if let Some(n) = changes.wall_clock_secs {
-        goal.budget.wall_clock_secs = n;
-    }
 
     let rubric_changed =
         serde_json::to_value(&current.rubric)? != serde_json::to_value(&goal.rubric)?;
-    let invalidated_approvals = store.revise_goal(&goal).await?;
+    store.revise_goal(&goal).await?;
 
     // A new plan serves the new revision. Its ID keys the rating cohort, so a
     // plan is only replaced when the rubric or the selected roles change.
@@ -1050,7 +1022,6 @@ pub async fn revise(store: &Store, run_id: &RunId, changes: GoalChanges) -> Resu
             "goal_revision": goal.revision,
             "plan_revision": plan.revision,
             "rubric_changed": rubric_changed,
-            "invalidated_approvals": invalidated_approvals,
             "changes": changes,
         }),
         created_at: OffsetDateTime::now_utc(),
@@ -1065,7 +1036,6 @@ pub async fn revise(store: &Store, run_id: &RunId, changes: GoalChanges) -> Resu
         goal,
         plan,
         rubric_changed,
-        invalidated_approvals,
         decision,
     })
 }
@@ -1236,19 +1206,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn output_token_reserve_stops_campaign_as_budget_exhausted() {
+    async fn output_call_reserve_stops_campaign_as_budget_exhausted() {
         let store = Store::open_in_memory().await.unwrap();
         let mut g = goal(Mode::Campaign, "find explanations for X", &[]);
-        g.budget.max_tokens = 100_000;
+        g.budget.max_model_calls = 2;
         g.budget.reserve_calls_for_output = 1;
         let usage = BudgetUsage {
-            tokens: 61_000,
+            model_calls: 1,
             ..Default::default()
         };
 
-        let stop = should_stop(&store, &g.run_id, &g, &usage, 1, false)
-            .await
-            .unwrap();
+        let stop = should_stop(&store, &g.run_id, &g, &usage, 1).await.unwrap();
 
         assert_eq!(stop, Some(StopCondition::BudgetExhausted));
     }

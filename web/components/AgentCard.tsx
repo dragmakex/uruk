@@ -12,10 +12,6 @@ export function activityText(panel: AgentPanel): string {
       panel.current.attempts > 1 ? `, attempt ${panel.current.attempts}` : "";
     return `Running ${panel.current.strategy}${attempts}.`;
   }
-  if (panel.counts.waiting_for_human > 0) {
-    const n = panel.counts.waiting_for_human;
-    return `${n} task${n === 1 ? "" : "s"} waiting for your approval.`;
-  }
   const queued = panel.counts.pending + panel.counts.blocked;
   if (queued > 0) {
     return `${queued} task${queued === 1 ? "" : "s"} queued.`;

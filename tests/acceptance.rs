@@ -8,7 +8,7 @@ use common::*;
 use time::OffsetDateTime;
 use tokio_util::sync::CancellationToken;
 use uruk::agents::outputs::{self, ObservationReviewOutput};
-use uruk::agents::{evolution, generation, ranking, reflection, safety, supervisor};
+use uruk::agents::{evolution, ranking, reflection, supervisor};
 use uruk::provider::MockProvider;
 use uruk::records::*;
 use uruk::report;
@@ -312,76 +312,6 @@ async fn observation_review_labels_are_bounded() {
     assert!(
         f.store.record_assessment(&attempt).await.is_err(),
         "an agent critique cannot refute a claim (SPEC §4.3)"
-    );
-}
-
-/// Intermediate safety: a permitted goal cannot admit a blocked candidate.
-#[tokio::test]
-async fn intermediate_safety_blocks_generated_candidates() {
-    let unsafe_hypothesis = serde_json::json!({
-        "title": "Passage study",
-        "claim": "serial passage will enhance transmissibility of a human pathogen",
-        "mechanism": "repeated passage selects for receptor affinity",
-        "assumptions": [],
-        "scope": "laboratory",
-        "predictions": [],
-        "falsifiers": [],
-        "validation_plan": "passage in ferrets",
-        "grounding": [],
-        "limitations": "",
-        "provisional": false
-    })
-    .to_string();
-
-    // The goal itself is benign.
-    assert_eq!(
-        safety::check("understand respiratory virus host range"),
-        safety::SafetyVerdict::Clear
-    );
-
-    let f = fixture(
-        Mode::Campaign,
-        MockProvider::new().default_reply(unsafe_hypothesis),
-    )
-    .await;
-    let ctx = context(&f, CancellationToken::new());
-
-    let generated = generation::from_literature(&ctx, None, None).await.unwrap();
-    let verdict = safety::check_item(&generated.item);
-    assert!(
-        verdict.is_blocked(),
-        "the generated candidate must be checked on its own content"
-    );
-
-    // A blocked candidate does not enter the tournament.
-    f.store.insert_item(&generated.item).await.unwrap();
-    f.store
-        .set_disposition(&generated.item.id, &Disposition::Blocked, verdict.concern())
-        .await
-        .unwrap();
-
-    let other = seed_item(&f, "benign alternative").await;
-    let work = supervisor::select_work(
-        &f.store,
-        &f.run_id,
-        &f.goal,
-        &f.plan,
-        &supervisor::Weights::default(),
-        10,
-        0,
-    )
-    .await
-    .unwrap();
-
-    assert!(
-        !work
-            .iter()
-            .any(|w| w.input_refs.contains(&generated.item.id.0)),
-        "a blocked candidate must not be scheduled: {work:?}"
-    );
-    assert!(
-        work.iter().any(|w| w.input_refs.contains(&other.id.0)),
-        "permitted work must still proceed"
     );
 }
 
@@ -1161,13 +1091,12 @@ async fn tool_allowlist_is_enforced() {
     }
 }
 
-/// The full evidence loop: a review requests a computational check, the run
-/// parks on a persisted approval, the researcher approves, the contained
-/// execution produces evidence, a recurrent review consumes it, and the claim
-/// reaches `Supported` through the store's gate (SPEC §5, §8, §9.2, §13).
+/// The full evidence loop executes an allowed computational check without a
+/// human approval gate, feeds the result into a recurrent review, and reaches
+/// `Supported` through the store's evidence gate (SPEC §5, §8, §13).
 #[tokio::test]
 #[cfg(unix)]
-async fn approved_execution_feeds_a_review_that_supports_the_claim() {
+async fn allowed_execution_runs_without_approval_and_supports_the_claim() {
     if !containment_available() {
         return;
     }
@@ -1221,43 +1150,13 @@ async fn approved_execution_feeds_a_review_that_supports_the_claim() {
         g.question = "assess this candidate claim about the mean".into();
         g.permissions.execute = true;
         g.permissions.allowed_tools = vec!["sh".into()];
-        g.permissions.require_approval_for = vec!["execute".into()];
         g.permissions.read_paths.push(read_dir);
     })
     .await;
     let item = seed_item(&f, "mean is above zero").await;
 
-    // Pass 1: the review requests a check; the run parks on approval.
-    let summary = Scheduler::new(
-        f.store.clone(),
-        f.provider.clone(),
-        SchedulerConfig::default(),
-    )
-    .run(&f.run_id)
-    .await
-    .unwrap();
-    assert_eq!(summary.state, RunState::WaitingForHuman, "{summary:?}");
-    let pending = f
-        .store
-        .list_approvals(&f.run_id, Some(ApprovalState::Pending))
-        .await
-        .unwrap();
-    assert_eq!(pending.len(), 1, "one approval request must be pending");
-    assert!(pending[0].action.contains("sh -c"), "{}", pending[0].action);
-    assert!(
-        f.store.list_evidence(&f.run_id).await.unwrap().is_empty(),
-        "nothing may execute before approval"
-    );
-
-    // The researcher approves the exact payload (the future approval UI's
-    // write path).
-    f.store
-        .decide_approval(&pending[0].id, true, Some(&pending[0].payload_hash), None)
-        .await
-        .unwrap();
-
-    // Pass 2 (resume): the contained execution runs, its result is reviewed,
-    // and the claim is supported by empirical evidence.
+    // The allowed execution runs in the same scheduler pass, its result is
+    // reviewed, and the claim is supported by empirical evidence.
     let summary = Scheduler::new(
         f.store.clone(),
         f.provider.clone(),
@@ -1310,83 +1209,4 @@ async fn approved_execution_feeds_a_review_that_supports_the_claim() {
         .unwrap();
     assert!(text.contains("**Reproduction:**"), "{text}");
     assert!(text.contains("supported"), "{text}");
-}
-
-/// A denied request never executes, and the run still completes honestly.
-#[tokio::test]
-#[cfg(unix)]
-async fn denied_execution_never_runs() {
-    if !containment_available() {
-        return;
-    }
-    let dir = tempfile::tempdir().unwrap();
-    let data_path = dir.path().join("data.csv");
-    tokio::fs::write(&data_path, "value\n1\n").await.unwrap();
-    let data = data_path.to_string_lossy().into_owned();
-
-    let provider = MockProvider::new()
-        .rule(
-            anchor::REFLECTION_INITIAL,
-            exec_request_review_json("sh", &["-c", "cat data.csv"], &data),
-        )
-        .rule(anchor::TASK_SYNTHESIS, synthesis_json())
-        .default_reply(review_json("plausible", "x", false));
-    let read_dir = dir.path().to_string_lossy().into_owned();
-    let f = fixture_with(Mode::Task, provider, |g| {
-        g.question = "assess this candidate claim".into();
-        g.permissions.execute = true;
-        g.permissions.allowed_tools = vec!["sh".into()];
-        g.permissions.require_approval_for = vec!["execute".into()];
-        g.permissions.read_paths.push(read_dir);
-    })
-    .await;
-    seed_item(&f, "a claim").await;
-
-    let summary = Scheduler::new(
-        f.store.clone(),
-        f.provider.clone(),
-        SchedulerConfig::default(),
-    )
-    .run(&f.run_id)
-    .await
-    .unwrap();
-    assert_eq!(summary.state, RunState::WaitingForHuman);
-    let pending = f
-        .store
-        .list_approvals(&f.run_id, Some(ApprovalState::Pending))
-        .await
-        .unwrap();
-    f.store
-        .decide_approval(&pending[0].id, false, None, Some("not this".into()))
-        .await
-        .unwrap();
-
-    let summary = Scheduler::new(
-        f.store.clone(),
-        f.provider.clone(),
-        SchedulerConfig::default(),
-    )
-    .run(&f.run_id)
-    .await
-    .unwrap();
-    assert_eq!(summary.state, RunState::Completed, "{summary:?}");
-    let tasks = f.store.list_tasks(&f.run_id).await.unwrap();
-    let tool = tasks.iter().find(|t| t.role == Role::Tool).unwrap();
-    assert_eq!(tool.state, TaskState::Cancelled);
-    assert!(f.store.list_evidence(&f.run_id).await.unwrap().is_empty());
-    assert!(
-        f.store
-            .list_experiments(&f.run_id)
-            .await
-            .unwrap()
-            .is_empty()
-    );
-    assert_eq!(
-        f.store
-            .budget_usage(&f.run_id)
-            .await
-            .unwrap()
-            .tool_executions,
-        0
-    );
 }

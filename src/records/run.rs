@@ -15,8 +15,6 @@ pub enum RunState {
     /// work has been scheduled yet (docs/WEB.md "One run at a time").
     Queued,
     Running,
-    WaitingForHuman,
-    Blocked,
     Completed,
     BudgetExhausted,
     Cancelled,
@@ -28,8 +26,7 @@ impl RunState {
         match self {
             Self::Queued => "queued",
             Self::Running => "running",
-            Self::WaitingForHuman => "waiting-for-human",
-            Self::Blocked => "blocked",
+
             Self::Completed => "completed",
             Self::BudgetExhausted => "budget-exhausted",
             Self::Cancelled => "cancelled",
@@ -41,8 +38,7 @@ impl RunState {
         Some(match s {
             "queued" => Self::Queued,
             "running" => Self::Running,
-            "waiting-for-human" => Self::WaitingForHuman,
-            "blocked" => Self::Blocked,
+
             "completed" => Self::Completed,
             "budget-exhausted" => Self::BudgetExhausted,
             "cancelled" => Self::Cancelled,

@@ -64,8 +64,6 @@ export function isTerminal(state: RunState): boolean {
 /** Human text for a run state; always rendered as text, never color-only. */
 export function stateLabel(state: RunState): string {
   switch (state) {
-    case "waiting-for-human":
-      return "waiting for you";
     case "budget-exhausted":
       return "budget exhausted";
     default:
