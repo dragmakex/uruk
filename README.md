@@ -55,7 +55,8 @@ picks them up at startup:
 # .env
 URUK_PROVIDER_URL=http://localhost:11434/v1   # Ollama; or https://api.openai.com/v1
 URUK_MODEL=qwen3.5:9b
-URUK_API_KEY=...                              # optional for local servers
+URUK_API_KEY_DIR=/home/me/.config/uruk/keys  # optional reloadable pool: one *.key per account
+URUK_API_KEY=...                              # optional fallback / single-key configuration
 URUK_REASONING_EFFORT=none                    # optional; stops reasoning models thinking at length
 URUK_PROVIDER_RPM=14                          # optional; paces request starts (0 disables)
 URUK_PROVIDER_TIMEOUT_SECS=1800               # optional; overall completion timeout (>20 s)
@@ -63,15 +64,25 @@ URUK_PROVIDER_TIMEOUT_SECS=1800               # optional; overall completion tim
 
 A variable exported in the shell overrides the file.
 
+Set `URUK_API_KEY_DIR` to a private directory containing one `<account>.key`
+file per account. Uruk sorts the filenames, starts each logical
+completion at the next account in round-robin order, and tries each remaining
+key once when an account is rejected, rate-limited, or temporarily unavailable.
+Only after every key fails does the normal provider wait/queue path begin;
+request-specific 4xx errors remain terminal. The directory is re-read at the
+start of every logical completion, so keys can be added without a restart.
+`URUK_API_KEY` remains a compatible fallback and is appended to the file pool
+when both settings are present. Key identities, never key values, may appear in
+operational logs.
+
 `URUK_PROVIDER_RPM` spaces out request *starts* (one per `60/RPM` seconds,
-shared across all workers in the process) without limiting how many requests
+shared across all workers using the same account) without limiting how many requests
 may be in flight at once; retries are paced the same way, and a 429
-`Retry-After` is honored on top. SwissAI endpoints (any `swissai` host, e.g.
-`https://api.swissai.cscs.ch/v1`) default to the platform's published limit
-of 14 requests/minute; every other endpoint is unpaced unless the variable
-is set. `URUK_PROVIDER_RPM=0` switches pacing off, including that default.
-One endpoint gets exactly one schedule per process: if differently-configured
-handles ever target the same endpoint, the strictest rate binds them all.
+`Retry-After` is honored per account. Providers are unpaced unless the variable
+is set; `URUK_PROVIDER_RPM=0` switches pacing off.
+One endpoint/account pair gets exactly one schedule per process: if
+differently-configured handles ever target the same account, the strictest rate
+binds them all.
 
 `URUK_PROVIDER_TIMEOUT_SECS` is the overall deadline for one non-streaming
 completion request and defaults to 1,800 seconds (30 minutes). The separate

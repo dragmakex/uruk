@@ -116,6 +116,17 @@ impl StartPacer {
         self.lock_schedule().interval
     }
 
+    /// Raise the schedule floor without reserving a slot or waiting. This is
+    /// used when one credential reports `Retry-After` and another credential
+    /// can be tried immediately; future calls on the limited credential still
+    /// honor its own backpressure.
+    pub(crate) fn defer_until(&self, floor: Instant) {
+        let mut schedule = self.lock_schedule();
+        if schedule.floor.is_none_or(|current| current < floor) {
+            schedule.floor = Some(floor);
+        }
+    }
+
     /// Wait until this caller's request may start.
     ///
     /// The reserved slot is the latest of: now, one interval past the last

@@ -1,5 +1,4 @@
-//! Request-start pacing for rate-limited upstreams (SwissAI defaults to
-//! 14 requests/minute). The pacer spaces request *starts*; it never
+//! Request-start pacing for rate-limited upstreams. The pacer spaces request *starts*; it never
 //! serializes whole requests. Timer-only tests run under paused Tokio time.
 
 use std::num::NonZeroU32;
@@ -17,28 +16,11 @@ fn fast_probes() -> ProbeBackoff {
 const INTERVAL: Duration = Duration::from_secs(4);
 
 #[test]
-fn swissai_endpoints_default_to_14_rpm() {
-    for url in [
-        "https://api.swissai.cscs.ch/v1",
-        "https://SwissAI.cscs.ch/v1",
-        "https://api.swiss-ai.example/v1",
-    ] {
-        let provider = HttpProvider::new(url, None, "m").unwrap();
-        assert_eq!(
-            provider.requests_per_minute(),
-            Some(14),
-            "{url} must default to the SwissAI pacing of 14 requests/minute"
-        );
-    }
-}
-
-#[test]
-fn other_openai_compatible_endpoints_are_unpaced_by_default() {
+fn providers_are_unpaced_by_default() {
     for url in [
         "https://api.openai.com/v1",
         "http://localhost:11434/v1",
-        "https://notswissai.example.com/v1",
-        "https://swissair.example.com/v1",
+        "https://provider.example/v1",
     ] {
         let provider = HttpProvider::new(url, None, "m").unwrap();
         assert_eq!(
@@ -51,14 +33,14 @@ fn other_openai_compatible_endpoints_are_unpaced_by_default() {
 
 #[test]
 fn rpm_can_be_overridden_or_disabled() {
-    let swissai = HttpProvider::new("https://api.swissai.cscs.ch/v1", None, "m").unwrap();
-    let faster = swissai.with_requests_per_minute(NonZeroU32::new(30));
+    let provider = HttpProvider::new("https://provider.example/v1", None, "m").unwrap();
+    let faster = provider.with_requests_per_minute(NonZeroU32::new(30));
     assert_eq!(faster.requests_per_minute(), Some(30));
     let unpaced = faster.with_requests_per_minute(None);
     assert_eq!(
         unpaced.requests_per_minute(),
         None,
-        "the SwissAI default must be explicitly disableable"
+        "pacing must be explicitly disableable"
     );
 
     let openai = HttpProvider::new("https://api.openai.com/v1", None, "m")

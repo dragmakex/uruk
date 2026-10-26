@@ -10,6 +10,7 @@
 
 mod availability;
 mod http;
+mod keys;
 mod mock;
 mod pacing;
 
@@ -18,7 +19,7 @@ pub use availability::{
 };
 pub use http::{
     DEFAULT_REQUEST_TIMEOUT_SECS, ENV_KEY, ENV_MODEL, ENV_REASONING, ENV_RPM, ENV_TIMEOUT_SECS,
-    ENV_URL, HttpProvider, SWISSAI_DEFAULT_RPM,
+    ENV_URL, HttpProvider,
 };
 pub use mock::{MockProvider, MockRule, Reply};
 pub use pacing::StartPacer;
