@@ -12,8 +12,6 @@ use std::collections::BTreeMap;
 pub enum RenderError {
     #[error("template {template}: no value bound for {{{var}}}")]
     MissingBinding { template: String, var: String },
-    #[error("template {template}: rendered output still contains {{{var}}}")]
-    UnresolvedVariable { template: String, var: String },
     #[error("template {template}: bound {{{var}}}, which the template does not use")]
     UnknownBinding { template: String, var: String },
 }
@@ -150,17 +148,6 @@ pub fn render(template: &PromptTemplate, bindings: &Bindings) -> Result<Rendered
         i += ch_len;
     }
 
-    // A substituted value could itself contain an unresolved placeholder.
-    for var in &template.required_vars {
-        let needle = format!("{{{var}}}");
-        if text.contains(&needle) {
-            return Err(RenderError::UnresolvedVariable {
-                template: template.id.to_string(),
-                var: var.clone(),
-            });
-        }
-    }
-
     Ok(Rendered {
         template_id: template.id.to_string(),
         template_hash: template.hash.clone(),
@@ -242,6 +229,18 @@ mod tests {
         let b = render(&tpl, &Bindings::new().set("goal", "y")).unwrap();
         assert_ne!(a.input_hash, b.input_hash);
         assert_eq!(a.template_hash, b.template_hash, "same template revision");
+    }
+
+    #[test]
+    fn placeholder_syntax_in_a_bound_value_is_preserved() {
+        let tpl = t("Goal: {goal}");
+        let rendered = render(
+            &tpl,
+            &Bindings::new().set("goal", "Explain the literal token {goal}"),
+        )
+        .unwrap();
+
+        assert_eq!(rendered.text, "Goal: Explain the literal token {goal}");
     }
 
     #[test]
