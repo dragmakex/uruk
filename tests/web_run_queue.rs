@@ -3,7 +3,7 @@
 //! (docs/WEB.md "One run at a time").
 //!
 //! Everything runs offline: the mock provider's availability switch stands
-//! in for a SwissAI outage, and the router is driven through
+//! in for a provider outage, and the router is driven through
 //! `tower::ServiceExt::oneshot`.
 
 mod common;

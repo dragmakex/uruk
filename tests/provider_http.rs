@@ -259,7 +259,7 @@ fn from_env_requires_a_model_when_a_url_is_set() {
     );
 
     // FIXME: Audit that the environment access only happens in single-threaded code.
-    unsafe { std::env::set_var(uruk::provider::ENV_URL, "https://api.swissai.cscs.ch/v1") };
+    unsafe { std::env::set_var(uruk::provider::ENV_URL, "https://provider.example/v1") };
     // FIXME: Audit that the environment access only happens in single-threaded code.
     unsafe { std::env::set_var(uruk::provider::ENV_RPM, "0") };
     assert_eq!(
@@ -268,7 +268,7 @@ fn from_env_requires_a_model_when_a_url_is_set() {
             .unwrap()
             .requests_per_minute(),
         None,
-        "0 disables pacing, including the SwissAI default"
+        "0 disables pacing"
     );
     // FIXME: Audit that the environment access only happens in single-threaded code.
     unsafe { std::env::remove_var(uruk::provider::ENV_RPM) };
@@ -277,8 +277,8 @@ fn from_env_requires_a_model_when_a_url_is_set() {
             .unwrap()
             .unwrap()
             .requests_per_minute(),
-        Some(14),
-        "a SwissAI URL defaults to 14 requests/minute without any RPM setting"
+        None,
+        "providers are unpaced without an RPM setting"
     );
     // FIXME: Audit that the environment access only happens in single-threaded code.
     unsafe { std::env::set_var(uruk::provider::ENV_RPM, "not-a-number") };
