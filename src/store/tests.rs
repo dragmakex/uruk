@@ -167,6 +167,57 @@ async fn setup() -> (Store, Run, Goal) {
 }
 
 #[tokio::test]
+async fn task_reasoning_projects_only_explicit_provider_reasoning() {
+    let (store, run, goal) = setup().await;
+    let plan = test_plan(&run.id, &goal.id);
+    store.insert_plan(&plan).await.unwrap();
+    let task = test_task(&run.id, &goal.id, &plan.id, Role::Generation);
+    store.enqueue_task(&task, None).await.unwrap();
+
+    let response = serde_json::json!({
+        "content": {
+            "headers": {"authorization": "[REDACTED]"},
+            "body": {
+                "model": "deepseek-test",
+                "choices": [{"message": {
+                    "reasoning_content": "First inspect the evidence.\nThen compare the candidates.",
+                    "content": "The final answer"
+                }}]
+            }
+        }
+    });
+    sqlx::query(
+        "INSERT INTO request_logs
+         (id, request_id, direction, run_id, task_id, started_at, finished_at,
+          outcome, request, response)
+         VALUES (?, ?, 'provider', ?, ?, ?, ?, 'success', ?, ?)",
+    )
+    .bind("log_reasoning")
+    .bind("req_reasoning")
+    .bind(run.id.as_str())
+    .bind(task.id.as_str())
+    .bind("2026-11-06T10:00:00Z")
+    .bind("2026-11-06T10:00:02Z")
+    .bind(r#"{"prompt":"must stay private"}"#)
+    .bind(response.to_string())
+    .execute(store.pool())
+    .await
+    .unwrap();
+
+    let traces = store.task_reasoning(&run.id, &task.id).await.unwrap();
+    assert_eq!(traces.len(), 1);
+    assert_eq!(traces[0].model.as_deref(), Some("deepseek-test"));
+    assert_eq!(
+        traces[0].content,
+        "First inspect the evidence.\nThen compare the candidates."
+    );
+    let serialized = serde_json::to_string(&traces).unwrap();
+    assert!(!serialized.contains("must stay private"));
+    assert!(!serialized.contains("The final answer"));
+    assert!(!serialized.contains("authorization"));
+}
+
+#[tokio::test]
 async fn items_are_immutable() {
     let (store, run, goal) = setup().await;
     let item = test_item(&run.id, &goal.id, "first");

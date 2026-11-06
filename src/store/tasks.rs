@@ -24,6 +24,20 @@ pub struct BudgetUsage {
     pub cost_partially_unknown: bool,
 }
 
+/// Provider-supplied reasoning from one completed model call.
+///
+/// This is deliberately narrower than a diagnostic request log: only the
+/// model name and the explicit `reasoning_content` field are exposed. Prompts,
+/// credentials, headers, final answers, and provider-specific metadata stay
+/// operator-only.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ReasoningTrace {
+    pub started_at: String,
+    pub finished_at: Option<String>,
+    pub model: Option<String>,
+    pub content: String,
+}
+
 impl BudgetUsage {
     /// Calls committed: settled plus still-reserved.
     pub fn committed_calls(&self) -> u32 {
@@ -104,6 +118,59 @@ impl Store {
                 .fetch_all(self.pool())
                 .await?;
         rows.iter().map(|b| Ok(serde_json::from_str(b)?)).collect()
+    }
+
+    /// Full provider-supplied reasoning traces for one task, oldest first.
+    ///
+    /// Request logs remain private diagnostics. This projection reads only
+    /// successful, complete provider replies belonging to the named run and
+    /// task, then copies the explicit OpenAI-compatible `reasoning_content`
+    /// field. Providers that omit the field naturally yield no traces.
+    pub async fn task_reasoning(
+        &self,
+        run_id: &RunId,
+        task_id: &TaskId,
+    ) -> Result<Vec<ReasoningTrace>> {
+        let rows = sqlx::query(
+            "SELECT started_at, finished_at, response
+             FROM request_logs
+             WHERE direction = 'provider' AND outcome = 'success'
+               AND run_id = ? AND task_id = ?
+             ORDER BY started_at, id",
+        )
+        .bind(run_id.as_str())
+        .bind(task_id.as_str())
+        .fetch_all(self.pool())
+        .await?;
+
+        let mut traces = Vec::new();
+        for row in rows {
+            let response: Option<String> = row.try_get("response")?;
+            let Some(response) = response else { continue };
+            let Ok(response) = serde_json::from_str::<serde_json::Value>(&response) else {
+                continue;
+            };
+            let Some(message) = response.pointer("/content/body/choices/0/message") else {
+                continue;
+            };
+            let Some(content) = message
+                .get("reasoning_content")
+                .and_then(serde_json::Value::as_str)
+                .filter(|content| !content.is_empty())
+            else {
+                continue;
+            };
+            traces.push(ReasoningTrace {
+                started_at: row.try_get("started_at")?,
+                finished_at: row.try_get("finished_at")?,
+                model: response
+                    .pointer("/content/body/model")
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToOwned::to_owned),
+                content: content.to_owned(),
+            });
+        }
+        Ok(traces)
     }
 
     pub async fn count_tasks_in_state(&self, run_id: &RunId, state: TaskState) -> Result<u32> {
