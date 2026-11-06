@@ -24,7 +24,7 @@
 use super::AppState;
 use super::error::ApiError;
 use crate::Error;
-use crate::records::{RunId, Source, SourceId};
+use crate::records::{RunId, Source, SourceId, Task, TaskId};
 use crate::store::OwnerDigest;
 use axum::RequestPartsExt;
 use axum::extract::{FromRequestParts, Path, Request, State};
@@ -208,6 +208,36 @@ impl FromRequestParts<AppState> for OwnedRun {
         let run_id = RunId::from_raw(raw);
         state.store().get_run_owned(&run_id, &owner).await?;
         Ok(Self(run_id))
+    }
+}
+
+/// A `{run_id}/{task_id}` path pair, already authorized against the
+/// requesting browser. The task must belong to the owned run; unknown and
+/// cross-run task ids answer with the same non-disclosing `not_found`.
+pub struct OwnedTask(pub Task);
+
+impl FromRequestParts<AppState> for OwnedTask {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> std::result::Result<Self, Self::Rejection> {
+        let Owner(owner) = parts.extract_with_state::<Owner, _>(state).await?;
+        let Path((raw_run, raw_task)) = parts
+            .extract::<Path<(String, String)>>()
+            .await
+            .map_err(|rejection| ApiError(Error::validation(rejection.body_text())))?;
+        if !is_safe_run_id(&raw_run) || !is_safe_run_id(&raw_task) {
+            return Err(ApiError(Error::not_found("no such task")));
+        }
+        let run_id = RunId::from_raw(raw_run);
+        state.store().get_run_owned(&run_id, &owner).await?;
+        let task = state.store().get_task(&TaskId::from_raw(raw_task)).await?;
+        if task.run_id != run_id {
+            return Err(ApiError(Error::not_found("no such task")));
+        }
+        Ok(Self(task))
     }
 }
 

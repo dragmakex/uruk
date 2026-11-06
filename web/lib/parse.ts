@@ -38,6 +38,7 @@ import type {
   Stats,
   TaskCounts,
   TaskFacts,
+  TaskReasoning,
   UploadView,
 } from "./types";
 import { RUN_STATES } from "./types";
@@ -47,6 +48,29 @@ export class ParseError extends Error {
     super(`${path}: expected ${expected}, got ${describe(got)}`);
     this.name = "ParseError";
   }
+}
+
+export function parseTaskReasoning(value: unknown): TaskReasoning {
+  const envelope = record(value, "response");
+  const task = record(envelope.task, "response.task");
+  const traces = array(envelope.reasoning, "response.reasoning");
+  return {
+    task: {
+      id: str(task.id, "response.task.id"),
+      role: str(task.role, "response.task.role"),
+      strategy: str(task.strategy, "response.task.strategy"),
+      state: str(task.state, "response.task.state"),
+    },
+    reasoning: traces.map((value, index) => {
+      const trace = record(value, `response.reasoning[${index}]`);
+      return {
+        started_at: str(trace.started_at, `response.reasoning[${index}].started_at`),
+        finished_at: strOrNull(trace.finished_at, `response.reasoning[${index}].finished_at`),
+        model: strOrNull(trace.model, `response.reasoning[${index}].model`),
+        content: str(trace.content, `response.reasoning[${index}].content`),
+      };
+    }),
+  };
 }
 
 function describe(value: unknown): string {
@@ -201,6 +225,7 @@ function parseTaskFacts(value: unknown, path: string): TaskFacts | null {
   if (value === null || value === undefined) return null;
   const r = record(value, path);
   return {
+    id: str(r.id, `${path}.id`),
     strategy: str(r.strategy, `${path}.strategy`),
     state: str(r.state, `${path}.state`),
     attempts: num(r.attempts, `${path}.attempts`),

@@ -50,6 +50,7 @@ describe("activityText", () => {
       activityText(
         panel({
           last_finished: {
+            id: "task-initial",
             strategy: "initial",
             state: "completed",
             attempts: 1,
@@ -86,21 +87,25 @@ describe("footerStat", () => {
 describe("AgentCard", () => {
   it("renders the role, a text state label, and the footer stat", () => {
     const generation = snapshot.agents[1]!;
-    render(<AgentCard panel={generation} stats={stats} />);
+    render(<AgentCard runId="run-test" panel={generation} stats={stats} />);
     expect(screen.getByRole("heading", { name: "Generation" })).toBeInTheDocument();
     expect(screen.getByText("thinking")).toBeInTheDocument();
     expect(screen.getByText("13 items")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Reasoning trace" })).toHaveAttribute(
+      "href",
+      "/runs/run-test/tasks/task-generation-literature/reasoning",
+    );
   });
 
   it("renders the supervisor assignment table", () => {
     const supervisor = snapshot.agents[0]!;
-    render(<AgentCard panel={supervisor} stats={stats} />);
+    render(<AgentCard runId="run-test" panel={supervisor} stats={stats} />);
     expect(screen.getByText("Assignments")).toBeInTheDocument();
     expect(screen.getByText("3 open, 1 running")).toBeInTheDocument();
   });
 
   it("marks idle panels with the dashed-box class", () => {
-    const { container } = render(<AgentCard panel={panel({})} stats={stats} />);
+    const { container } = render(<AgentCard runId="run-test" panel={panel({})} stats={stats} />);
     expect(container.querySelector(".agent")).toHaveClass("is-idle");
   });
 
@@ -108,6 +113,7 @@ describe("AgentCard", () => {
     const failing = panel({
       counts: { ...panel({}).counts, failed: 2 },
       last_finished: {
+        id: "task-deep-verification",
         strategy: "deep_verification",
         state: "failed",
         attempts: 1,
@@ -116,7 +122,7 @@ describe("AgentCard", () => {
         error: "provider timeout: request failed (after 4 attempts)",
       },
     });
-    render(<AgentCard panel={failing} stats={stats} />);
+    render(<AgentCard runId="run-test" panel={failing} stats={stats} />);
     expect(
       screen.getByText(/2 failed: provider timeout/),
     ).toBeInTheDocument();

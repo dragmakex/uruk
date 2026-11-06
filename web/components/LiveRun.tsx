@@ -323,7 +323,7 @@ export function LiveRun({
               </span>
             </div>
 
-            <Topology agents={agents} stats={stats} />
+            <Topology runId={run.id} agents={agents} stats={stats} />
 
             <details className="legend-fold" open>
               <summary>Key</summary>

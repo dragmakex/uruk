@@ -14,9 +14,43 @@ import {
   parseSourcePassageHits,
   parseSources,
   parseStartedRun,
+  parseTaskReasoning,
   parseUpload,
   parseUploads,
 } from "./parse";
+
+describe("parseTaskReasoning", () => {
+  it("keeps verbatim provider traces and their model metadata", () => {
+    const detail = parseTaskReasoning({
+      ok: true,
+      task: {
+        id: "task-1",
+        role: "generation",
+        strategy: "literature",
+        state: "running",
+      },
+      reasoning: [
+        {
+          started_at: "2026-11-06T10:00:00Z",
+          finished_at: "2026-11-06T10:00:02Z",
+          model: "deepseek-test",
+          content: "Inspect the sources first.",
+        },
+      ],
+    });
+    expect(detail.reasoning[0]?.content).toBe("Inspect the sources first.");
+    expect(detail.reasoning[0]?.model).toBe("deepseek-test");
+  });
+
+  it("rejects a trace without explicit reasoning text", () => {
+    expect(() =>
+      parseTaskReasoning({
+        task: { id: "task-1", role: "generation", strategy: "test", state: "running" },
+        reasoning: [{ started_at: "now", finished_at: null, model: null }],
+      }),
+    ).toThrow(/content/);
+  });
+});
 
 describe("parseRunSnapshot", () => {
   it("accepts a complete snapshot and keeps every fact", () => {

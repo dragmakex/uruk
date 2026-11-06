@@ -19,9 +19,11 @@ interface Wire {
  * DOM stays one semantic list of agent sections at every breakpoint.
  */
 export function Topology({
+  runId,
   agents,
   stats,
 }: {
+  runId: string;
   agents: AgentPanel[];
   stats: Stats;
 }) {
@@ -115,10 +117,10 @@ export function Topology({
           />
         ))}
       </svg>
-      {supervisor ? <AgentCard panel={supervisor} stats={stats} /> : <div />}
+      {supervisor ? <AgentCard runId={runId} panel={supervisor} stats={stats} /> : <div />}
       <div className="workers">
         {workers.map((panel) => (
-          <AgentCard key={panel.role} panel={panel} stats={stats} />
+          <AgentCard key={panel.role} runId={runId} panel={panel} stats={stats} />
         ))}
       </div>
     </div>

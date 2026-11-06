@@ -63,6 +63,7 @@ export function snapshotFixture(): unknown {
           uncertain: 0,
         },
         current: {
+          id: "task-generation-literature",
           strategy: "literature",
           state: "running",
           attempts: 1,

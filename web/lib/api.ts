@@ -26,6 +26,7 @@ import {
   parseSourcePassageHits,
   parseSources,
   parseStartedRun,
+  parseTaskReasoning,
   parseUpload,
   parseUploads,
 } from "./parse";
@@ -42,6 +43,7 @@ import type {
   SourcePassageHit,
   SourceView,
   StartRunInput,
+  TaskReasoning,
   UploadView,
 } from "./types";
 
@@ -115,6 +117,20 @@ export async function fetchSnapshot(
   );
   const envelope = body as { snapshot?: unknown };
   return parseRunSnapshot(envelope.snapshot);
+}
+
+export async function fetchTaskReasoning(
+  runId: string,
+  taskId: string,
+  cookie?: string,
+): Promise<TaskReasoning> {
+  return parseTaskReasoning(
+    await request(
+      `/api/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}/reasoning`,
+      undefined,
+      cookie,
+    ),
+  );
 }
 
 export async function fetchReport(

@@ -127,6 +127,7 @@ impl TaskCounts {
 /// The strategy facts of the task a panel is currently showing.
 #[derive(Debug, Serialize)]
 pub struct TaskFacts {
+    pub id: String,
     pub strategy: String,
     pub state: String,
     pub attempts: u32,
@@ -224,6 +225,7 @@ fn rfc3339(t: time::OffsetDateTime) -> String {
 
 fn task_facts(task: &Task) -> TaskFacts {
     TaskFacts {
+        id: task.id.as_str().to_string(),
         strategy: task.strategy.clone(),
         state: task.state.as_str().to_string(),
         attempts: task.attempts,
