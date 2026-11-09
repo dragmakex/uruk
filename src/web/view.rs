@@ -8,7 +8,7 @@ use crate::Result;
 use crate::records::*;
 use crate::store::{BudgetUsage, ItemSummary, QueueState, Store};
 use serde::Serialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// A complete, compact view of one run: the payload of `GET /api/runs/{id}`
 /// and of every SSE `snapshot` event.
@@ -128,6 +128,7 @@ impl TaskCounts {
 #[derive(Debug, Serialize)]
 pub struct TaskFacts {
     pub id: String,
+    pub reasoning_preview: Option<String>,
     pub strategy: String,
     pub state: String,
     pub attempts: u32,
@@ -223,9 +224,10 @@ fn rfc3339(t: time::OffsetDateTime) -> String {
         .unwrap_or_else(|_| t.unix_timestamp().to_string())
 }
 
-fn task_facts(task: &Task) -> TaskFacts {
+fn task_facts(task: &Task, reasoning_previews: &HashMap<String, String>) -> TaskFacts {
     TaskFacts {
         id: task.id.as_str().to_string(),
+        reasoning_preview: reasoning_previews.get(task.id.as_str()).cloned(),
         strategy: task.strategy.clone(),
         state: task.state.as_str().to_string(),
         attempts: task.attempts,
@@ -244,7 +246,11 @@ fn tasks_by_role(tasks: &[Task]) -> BTreeMap<&'static str, Vec<&Task>> {
     by_role
 }
 
-fn panel_for_role(role: &str, tasks: &[&Task]) -> AgentPanel {
+fn panel_for_role(
+    role: &str,
+    tasks: &[&Task],
+    reasoning_previews: &HashMap<String, String>,
+) -> AgentPanel {
     let mut counts = TaskCounts::default();
     for task in tasks {
         counts.add(task.state);
@@ -253,12 +259,12 @@ fn panel_for_role(role: &str, tasks: &[&Task]) -> AgentPanel {
         .iter()
         .filter(|t| t.state == TaskState::Running)
         .min_by_key(|t| t.started_at)
-        .map(|t| task_facts(t));
+        .map(|t| task_facts(t, reasoning_previews));
     let last_finished = tasks
         .iter()
         .filter(|t| t.finished_at.is_some())
         .max_by_key(|t| t.finished_at)
-        .map(|t| task_facts(t));
+        .map(|t| task_facts(t, reasoning_previews));
     AgentPanel {
         role: role.to_string(),
         state: worker_state(&counts).to_string(),
@@ -298,6 +304,27 @@ pub async fn run_snapshot(store: &Store, run_id: &RunId) -> Result<RunSnapshot> 
         }
     }
 
+    let mut preview_task_ids = Vec::with_capacity(by_role.len() * 2);
+    for role_tasks in by_role.values() {
+        if let Some(task) = role_tasks
+            .iter()
+            .filter(|task| task.state == TaskState::Running)
+            .min_by_key(|task| task.started_at)
+        {
+            preview_task_ids.push(task.id.clone());
+        }
+        if let Some(task) = role_tasks
+            .iter()
+            .filter(|task| task.finished_at.is_some())
+            .max_by_key(|task| task.finished_at)
+        {
+            preview_task_ids.push(task.id.clone());
+        }
+    }
+    let reasoning_previews = store
+        .task_reasoning_previews(run_id, &preview_task_ids)
+        .await?;
+
     let empty: Vec<&Task> = Vec::new();
     let mut agents = Vec::with_capacity(roles.len() + 1);
     let mut workers_busy = 0u32;
@@ -307,7 +334,7 @@ pub async fn run_snapshot(store: &Store, run_id: &RunId) -> Result<RunSnapshot> 
     let mut worker_panels = Vec::with_capacity(roles.len());
     for role in &roles {
         let role_tasks = by_role.get(role.as_str()).unwrap_or(&empty);
-        let panel = panel_for_role(role, role_tasks);
+        let panel = panel_for_role(role, role_tasks, &reasoning_previews);
         open_tasks += panel.counts.open();
         if panel.counts.running > 0 {
             workers_busy += 1;
@@ -326,7 +353,7 @@ pub async fn run_snapshot(store: &Store, run_id: &RunId) -> Result<RunSnapshot> 
     }
 
     let supervisor_tasks = by_role.get("supervisor").unwrap_or(&empty);
-    let mut supervisor = panel_for_role("supervisor", supervisor_tasks);
+    let mut supervisor = panel_for_role("supervisor", supervisor_tasks, &reasoning_previews);
     open_tasks += supervisor.counts.open();
     supervisor.state = supervisor_state(run.state, open_tasks).to_string();
     supervisor.assignments = Some(assignments);

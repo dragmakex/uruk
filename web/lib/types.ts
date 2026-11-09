@@ -96,6 +96,7 @@ export interface TaskCounts {
 
 export interface TaskFacts {
   id: string;
+  reasoning_preview: string | null;
   strategy: string;
   state: string;
   attempts: number;

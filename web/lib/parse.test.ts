@@ -61,6 +61,9 @@ describe("parseRunSnapshot", () => {
     expect(snap.agents).toHaveLength(2);
     expect(snap.agents[0]?.assignments?.[0]?.role).toBe("generation");
     expect(snap.agents[1]?.current?.strategy).toBe("literature");
+    expect(snap.agents[1]?.current?.reasoning_preview).toBe(
+      "Inspect the strongest sources before comparing the hypotheses.",
+    );
     expect(snap.stats.leader?.rating).toBeCloseTo(1412.2);
     expect(snap.usage.cost_usd).toBeNull();
     expect(snap.items[0]?.review_count).toBe(3);

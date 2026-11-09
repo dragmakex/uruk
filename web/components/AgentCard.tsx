@@ -48,9 +48,8 @@ export function footerStat(panel: AgentPanel, stats: Stats): string {
 }
 
 /**
- * One agent box of the topology: filled header while thinking, dashed
- * border while idle, with real task facts in the body. State is always a
- * text label, never color alone.
+ * One agent box of the topology. A box with task history is one large link to
+ * that task's full provider-supplied reasoning trace.
  */
 export function AgentCard({
   runId,
@@ -63,20 +62,31 @@ export function AgentCard({
 }) {
   const meta = ROLES[panel.role];
   const failed = panel.last_finished?.state === "failed" ? panel.last_finished : null;
-  const displayedTask = panel.current ?? panel.last_finished;
+  const displayedTask = panel.current?.reasoning_preview
+    ? panel.current
+    : panel.last_finished?.reasoning_preview
+      ? panel.last_finished
+      : (panel.current ?? panel.last_finished);
+  const detailHref = displayedTask
+    ? `/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(displayedTask.id)}/reasoning`
+    : null;
 
-  return (
-    <section
-      className={`agent is-${panel.state}`}
-      data-role={panel.role}
-      aria-label={`${roleLabel(panel.role)}: ${panel.state}`}
-    >
+  const content = (
+    <>
       <header className="agent-head">
         <h3 className="agent-role">{roleLabel(panel.role)}</h3>
         <span className="agent-state">{panel.state}</span>
       </header>
       <div className="agent-body">
         <p>{activityText(panel)}</p>
+        {displayedTask !== null && (
+          <p className="agent-reasoning-preview">
+            <span className="agent-reasoning-label">Reasoning</span>
+            <span className="agent-reasoning-copy">
+              {displayedTask.reasoning_preview ?? "Waiting for a provider trace…"}
+            </span>
+          </p>
+        )}
         {failed !== null && failed.error !== null && (
           <p className="agent-error">
             {panel.counts.failed} failed: {failed.error}
@@ -86,13 +96,13 @@ export function AgentCard({
           <table className="assignments">
             <caption>Assignments</caption>
             <tbody>
-              {panel.assignments.map((a) => (
-                <tr key={a.role}>
-                  <td>{roleLabel(a.role)}</td>
+              {panel.assignments.map((assignment) => (
+                <tr key={assignment.role}>
+                  <td>{roleLabel(assignment.role)}</td>
                   <td>
-                    {a.open > 0
-                      ? `${a.open} open${a.running > 0 ? `, ${a.running} running` : ""}`
-                      : a.latest_strategy ?? "none"}
+                    {assignment.open > 0
+                      ? `${assignment.open} open${assignment.running > 0 ? `, ${assignment.running} running` : ""}`
+                      : assignment.latest_strategy ?? "none"}
                   </td>
                 </tr>
               ))}
@@ -106,14 +116,32 @@ export function AgentCard({
       <footer className="agent-foot">
         <span className="micro">{footerStat(panel, stats)}</span>
         {displayedTask !== null && (
-          <Link
-            className="agent-reasoning-link"
-            href={`/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(displayedTask.id)}/reasoning`}
-          >
-            Reasoning trace
-          </Link>
+          <span className="agent-reasoning-link">View full reasoning →</span>
         )}
       </footer>
+    </>
+  );
+
+  if (detailHref !== null) {
+    return (
+      <Link
+        href={detailHref}
+        aria-label={`${roleLabel(panel.role)} — view full reasoning`}
+        className={`agent agent-link is-${panel.state}`}
+        data-role={panel.role}
+      >
+        {content}
+      </Link>
+    );
+  }
+
+  return (
+    <section
+      className={`agent is-${panel.state}`}
+      data-role={panel.role}
+      aria-label={`${roleLabel(panel.role)}: ${panel.state}`}
+    >
+      {content}
     </section>
   );
 }

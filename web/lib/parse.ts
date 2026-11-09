@@ -226,6 +226,7 @@ function parseTaskFacts(value: unknown, path: string): TaskFacts | null {
   const r = record(value, path);
   return {
     id: str(r.id, `${path}.id`),
+    reasoning_preview: strOrNull(r.reasoning_preview, `${path}.reasoning_preview`),
     strategy: str(r.strategy, `${path}.strategy`),
     state: str(r.state, `${path}.state`),
     attempts: num(r.attempts, `${path}.attempts`),

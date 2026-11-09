@@ -51,6 +51,7 @@ describe("activityText", () => {
         panel({
           last_finished: {
             id: "task-initial",
+            reasoning_preview: null,
             strategy: "initial",
             state: "completed",
             attempts: 1,
@@ -91,9 +92,40 @@ describe("AgentCard", () => {
     expect(screen.getByRole("heading", { name: "Generation" })).toBeInTheDocument();
     expect(screen.getByText("thinking")).toBeInTheDocument();
     expect(screen.getByText("13 items")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Reasoning trace" })).toHaveAttribute(
+    expect(
+      screen.getByText("Inspect the strongest sources before comparing the hypotheses."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Generation — view full reasoning" })).toHaveAttribute(
       "href",
       "/runs/run-test/tasks/task-generation-literature/reasoning",
+    );
+  });
+
+  it("keeps showing the latest available trace while a new task is starting", () => {
+    const generation = snapshot.agents[1]!;
+    const starting = panel({
+      role: "generation",
+      state: "thinking",
+      current: generation.current
+        ? { ...generation.current, id: "task-new", reasoning_preview: null }
+        : null,
+      last_finished: {
+        id: "task-previous",
+        reasoning_preview: "Compare the evidence already gathered.",
+        strategy: "comparison",
+        state: "completed",
+        attempts: 1,
+        started_at: "2026-11-09T10:00:00Z",
+        finished_at: "2026-11-09T10:01:00Z",
+        error: null,
+      },
+    });
+
+    render(<AgentCard runId="run-test" panel={starting} stats={stats} />);
+    expect(screen.getByText("Compare the evidence already gathered.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Generation — view full reasoning" })).toHaveAttribute(
+      "href",
+      "/runs/run-test/tasks/task-previous/reasoning",
     );
   });
 
@@ -114,6 +146,7 @@ describe("AgentCard", () => {
       counts: { ...panel({}).counts, failed: 2 },
       last_finished: {
         id: "task-deep-verification",
+        reasoning_preview: "Check whether the timeout invalidates the result.",
         strategy: "deep_verification",
         state: "failed",
         attempts: 1,
