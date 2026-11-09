@@ -7,7 +7,10 @@ use super::writes::RecordBatch;
 use super::{Store, now, to_rfc3339};
 use crate::records::*;
 use crate::{Error, Result};
-use sqlx::{Row, SqliteConnection};
+use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection};
+use std::collections::HashMap;
+
+const REASONING_PREVIEW_CHARS: usize = 240;
 
 /// Aggregate resource use for a run, derived from the ledger.
 #[derive(Debug, Clone, Default, serde::Serialize)]
@@ -171,6 +174,61 @@ impl Store {
             });
         }
         Ok(traces)
+    }
+
+    /// Latest explicit provider reasoning for the displayed tasks, compacted
+    /// for the live topology payload. Full traces remain on the task endpoint.
+    pub async fn task_reasoning_previews(
+        &self,
+        run_id: &RunId,
+        task_ids: &[TaskId],
+    ) -> Result<HashMap<String, String>> {
+        if task_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let mut query = QueryBuilder::<Sqlite>::new(
+            "SELECT task_id, response FROM request_logs
+             WHERE direction = 'provider' AND outcome = 'success' AND run_id = ",
+        );
+        query.push_bind(run_id.as_str());
+        query.push(" AND task_id IN (");
+        let mut task_binds = query.separated(", ");
+        for task_id in task_ids {
+            task_binds.push_bind(task_id.as_str());
+        }
+        task_binds.push_unseparated(") ORDER BY task_id, started_at DESC, id DESC");
+        let rows = query.build().fetch_all(self.pool()).await?;
+
+        let mut previews = HashMap::with_capacity(task_ids.len());
+        for row in rows {
+            let task_id: String = row.try_get("task_id")?;
+            if previews.contains_key(&task_id) {
+                continue;
+            }
+            let response: Option<String> = row.try_get("response")?;
+            let Some(response) = response else { continue };
+            let Ok(response) = serde_json::from_str::<serde_json::Value>(&response) else {
+                continue;
+            };
+            let Some(reasoning) = response
+                .pointer("/content/body/choices/0/message/reasoning_content")
+                .and_then(serde_json::Value::as_str)
+                .filter(|reasoning| !reasoning.is_empty())
+            else {
+                continue;
+            };
+            let collapsed = reasoning.split_whitespace().collect::<Vec<_>>().join(" ");
+            let mut chars = collapsed.chars();
+            let preview: String = chars.by_ref().take(REASONING_PREVIEW_CHARS).collect();
+            let preview = if chars.next().is_some() {
+                format!("{preview}…")
+            } else {
+                preview
+            };
+            previews.insert(task_id, preview);
+        }
+        Ok(previews)
     }
 
     pub async fn count_tasks_in_state(&self, run_id: &RunId, state: TaskState) -> Result<u32> {

@@ -730,6 +730,21 @@ a {
   background: var(--surface);
 }
 
+.agent-link {
+  text-decoration: none;
+  transition: border-color 120ms ease, transform 120ms ease;
+}
+
+.agent-link:hover {
+  border-color: var(--ink);
+  transform: translateY(-1px);
+}
+
+.agent-link:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
+
 .agent.is-idle {
   border-style: dashed;
 }
@@ -786,6 +801,30 @@ a {
 .agent-error {
   color: var(--danger-ink);
   font-size: 13px;
+}
+
+.agent-reasoning-preview {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.agent-reasoning-label {
+  flex: none;
+  color: var(--ink);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.agent-reasoning-copy {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .agent-foot {

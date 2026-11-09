@@ -218,6 +218,71 @@ async fn task_reasoning_projects_only_explicit_provider_reasoning() {
 }
 
 #[tokio::test]
+async fn task_reasoning_previews_use_the_latest_trace_and_collapse_whitespace() {
+    let (store, run, goal) = setup().await;
+    let plan = test_plan(&run.id, &goal.id);
+    store.insert_plan(&plan).await.unwrap();
+    let task = test_task(&run.id, &goal.id, &plan.id, Role::Generation);
+    store.enqueue_task(&task, None).await.unwrap();
+
+    for (id, started_at, reasoning) in [
+        (
+            "log_preview_old",
+            "2026-11-09T10:00:00Z",
+            serde_json::json!("Old trace"),
+        ),
+        (
+            "log_preview_new",
+            "2026-11-09T10:01:00Z",
+            serde_json::json!("Inspect the\n  latest evidence before\tranking candidates."),
+        ),
+        (
+            "log_preview_malformed",
+            "2026-11-09T10:02:00Z",
+            serde_json::json!({"not": "text"}),
+        ),
+    ] {
+        let response = serde_json::json!({
+            "content": {"body": {"choices": [{"message": {
+                "reasoning_content": reasoning,
+                "content": "private final answer"
+            }}]}}
+        });
+        sqlx::query(
+            "INSERT INTO request_logs
+             (id, request_id, direction, run_id, task_id, started_at, finished_at,
+              outcome, request, response)
+             VALUES (?, ?, 'provider', ?, ?, ?, ?, 'success', ?, ?)",
+        )
+        .bind(id)
+        .bind(format!("request_{id}"))
+        .bind(run.id.as_str())
+        .bind(task.id.as_str())
+        .bind(started_at)
+        .bind(started_at)
+        .bind("{}")
+        .bind(response.to_string())
+        .execute(store.pool())
+        .await
+        .unwrap();
+    }
+
+    let previews = store
+        .task_reasoning_previews(&run.id, std::slice::from_ref(&task.id))
+        .await
+        .unwrap();
+    assert_eq!(
+        previews.get(task.id.as_str()).map(String::as_str),
+        Some("Inspect the latest evidence before ranking candidates.")
+    );
+    assert!(
+        !previews
+            .values()
+            .any(|preview| preview.contains("private final answer"))
+    );
+}
+
+#[tokio::test]
 async fn items_are_immutable() {
     let (store, run, goal) = setup().await;
     let item = test_item(&run.id, &goal.id, "first");
