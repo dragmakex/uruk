@@ -9,9 +9,13 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use http_body_util::BodyExt;
 use std::sync::Arc;
+use time::OffsetDateTime;
 use tower::ServiceExt;
 use uruk::provider::MockProvider;
-use uruk::records::{Mode, RunState};
+use uruk::records::{
+    ContentHash, CostActual, CostReservation, Mode, Role, RunState, SCHEMA_VERSION, Task, TaskId,
+    TaskState,
+};
 use uruk::web::{AppState, WebConfig, router};
 
 /// A router over a fresh on-disk store (so exports and resumes work), plus
@@ -162,6 +166,92 @@ async fn run_snapshot_reports_goal_plan_agents_and_budget_facts() {
     assert_eq!(snap["usage"]["cost_usd"], serde_json::Value::Null);
     assert_eq!(snap["stats"]["items"], 0);
     assert_eq!(snap["stats"]["leader"], serde_json::Value::Null);
+}
+
+#[tokio::test]
+async fn task_reasoning_returns_the_owned_tasks_provider_trace() {
+    let (app, fixture) = seeded_app(Mode::Campaign).await;
+    let task = Task {
+        id: TaskId::new(),
+        schema_version: SCHEMA_VERSION,
+        run_id: fixture.run_id.clone(),
+        role: Role::Generation,
+        strategy: "literature".into(),
+        goal_id: fixture.goal.id.clone(),
+        plan_id: fixture.plan.id.clone(),
+        input_refs: vec![],
+        input_hash: ContentHash::of_str("reasoning-test"),
+        prompt_id: None,
+        prompt_hash: None,
+        model: Some("deepseek-test".into()),
+        provider: Some("swissai".into()),
+        payload: None,
+        feedback_id: None,
+        depends_on: vec![],
+        priority: 1.0,
+        priority_rationale: "test".into(),
+        permissions: fixture.goal.permissions.clone(),
+        reservation: CostReservation { model_calls: 1 },
+        state: TaskState::Pending,
+        attempts: 0,
+        max_attempts: 1,
+        seed: 1,
+        output_refs: vec![],
+        actual_cost: CostActual::default(),
+        error: None,
+        failure: None,
+        created_at: OffsetDateTime::now_utc(),
+        started_at: None,
+        finished_at: None,
+    };
+    fixture.store.enqueue_task(&task, None).await.unwrap();
+    let response = serde_json::json!({
+        "content": {
+            "body": {
+                "choices": [{
+                    "message": {
+                        "content": "answer",
+                        "reasoning_content": "Inspect the evidence before ranking it."
+                    }
+                }],
+                "model": "deepseek-test"
+            }
+        }
+    });
+    sqlx::query(
+        "INSERT INTO request_logs
+         (id,request_id,logical_id,direction,run_id,task_id,attempt,started_at,
+          finished_at,status,outcome,request,response)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    )
+    .bind("log_reasoning_route")
+    .bind("request_reasoning_route")
+    .bind("logical_reasoning_route")
+    .bind("provider")
+    .bind(fixture.run_id.as_str())
+    .bind(task.id.as_str())
+    .bind(1_i64)
+    .bind("2026-11-06T10:00:00Z")
+    .bind("2026-11-06T10:00:02Z")
+    .bind(200_i64)
+    .bind("success")
+    .bind("{}")
+    .bind(response.to_string())
+    .execute(fixture.store.pool())
+    .await
+    .unwrap();
+
+    let uri = format!("/api/runs/{}/tasks/{}/reasoning", fixture.run_id, task.id);
+    let response = app.oneshot(get(&uri)).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    assert_eq!(body["task"]["id"], task.id.as_str());
+    assert_eq!(body["task"]["role"], "generation");
+    assert_eq!(body["reasoning"][0]["model"], "deepseek-test");
+    assert_eq!(
+        body["reasoning"][0]["content"],
+        "Inspect the evidence before ranking it."
+    );
 }
 
 #[tokio::test]

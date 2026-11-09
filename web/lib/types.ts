@@ -95,12 +95,30 @@ export interface TaskCounts {
 }
 
 export interface TaskFacts {
+  id: string;
   strategy: string;
   state: string;
   attempts: number;
   started_at: string | null;
   finished_at: string | null;
   error: string | null;
+}
+
+export interface ReasoningTrace {
+  started_at: string;
+  finished_at: string | null;
+  model: string | null;
+  content: string;
+}
+
+export interface TaskReasoning {
+  task: {
+    id: string;
+    role: string;
+    strategy: string;
+    state: string;
+  };
+  reasoning: ReasoningTrace[];
 }
 
 export interface Assignment {

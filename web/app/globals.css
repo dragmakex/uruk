@@ -791,6 +791,64 @@ a {
 .agent-foot {
   padding: 10px 16px;
   border-top: var(--hairline) solid var(--line-soft);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.agent-reasoning-link {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink);
+  text-underline-offset: 3px;
+}
+
+.reasoning-note {
+  margin: 18px 0 24px;
+  padding: 14px 16px;
+  border: var(--hairline) solid var(--line);
+  background: var(--surface-raised);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.reasoning-note code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.reasoning-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 18px;
+}
+
+.reasoning-entry {
+  border: var(--hairline) solid var(--line);
+}
+
+.reasoning-entry header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 14px;
+  border-bottom: var(--hairline) solid var(--line-soft);
+  font-weight: 700;
+}
+
+.reasoning-entry pre {
+  margin: 0;
+  padding: 16px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .agent.is-idle .agent-foot {

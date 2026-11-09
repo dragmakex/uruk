@@ -264,6 +264,10 @@ pub fn router(state: AppState) -> Router {
     let commands = Router::new()
         .route("/api/runs", get(routes::list_runs))
         .route("/api/runs/{run_id}", get(routes::run_snapshot))
+        .route(
+            "/api/runs/{run_id}/tasks/{task_id}/reasoning",
+            get(routes::task_reasoning),
+        )
         .route("/api/runs/{run_id}/stop", post(routes::stop_run))
         .route("/api/runs/{run_id}/report", get(routes::report))
         .route("/api/runs/{run_id}/report.pdf", get(routes::report_pdf))

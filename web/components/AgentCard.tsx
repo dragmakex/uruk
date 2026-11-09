@@ -1,5 +1,6 @@
 import type { AgentPanel, Stats } from "@/lib/types";
 import { ROLES, roleLabel } from "@/lib/roles";
+import Link from "next/link";
 
 /**
  * One honest sentence about what a panel's tasks are doing right now.
@@ -52,14 +53,17 @@ export function footerStat(panel: AgentPanel, stats: Stats): string {
  * text label, never color alone.
  */
 export function AgentCard({
+  runId,
   panel,
   stats,
 }: {
+  runId: string;
   panel: AgentPanel;
   stats: Stats;
 }) {
   const meta = ROLES[panel.role];
   const failed = panel.last_finished?.state === "failed" ? panel.last_finished : null;
+  const displayedTask = panel.current ?? panel.last_finished;
 
   return (
     <section
@@ -101,6 +105,14 @@ export function AgentCard({
       </div>
       <footer className="agent-foot">
         <span className="micro">{footerStat(panel, stats)}</span>
+        {displayedTask !== null && (
+          <Link
+            className="agent-reasoning-link"
+            href={`/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(displayedTask.id)}/reasoning`}
+          >
+            Reasoning trace
+          </Link>
+        )}
       </footer>
     </section>
   );

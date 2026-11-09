@@ -2,7 +2,7 @@
 //! serialize. No business logic lives here.
 
 use super::error::{ApiError, ApiResult, rejection_to_error};
-use super::owner::{OwnedRun, OwnedSource, Owner};
+use super::owner::{OwnedRun, OwnedSource, OwnedTask, Owner};
 use super::{AppState, start, view};
 use crate::records::{AccessLevel, Origin, RunId};
 use crate::runtime;
@@ -36,6 +36,24 @@ pub async fn run_snapshot(
 ) -> ApiResult<Json<serde_json::Value>> {
     let snapshot = view::run_snapshot(state.store(), &run_id).await?;
     Ok(Json(serde_json::json!({"ok": true, "snapshot": snapshot})))
+}
+
+/// Provider-supplied reasoning for one owner-checked task.
+pub async fn task_reasoning(
+    State(state): State<AppState>,
+    OwnedTask(task): OwnedTask,
+) -> ApiResult<Json<serde_json::Value>> {
+    let reasoning = state.store().task_reasoning(&task.run_id, &task.id).await?;
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "task": {
+            "id": task.id.as_str(),
+            "role": task.role.as_str(),
+            "strategy": task.strategy,
+            "state": task.state.as_str(),
+        },
+        "reasoning": reasoning,
+    })))
 }
 
 pub async fn start_run(
