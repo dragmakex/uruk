@@ -32,6 +32,7 @@ beforeEach(() => {
         finished_at: "2026-11-06T10:00:02Z",
         model: "deepseek-test",
         content: "Inspect the evidence first.\nThen compare candidates.",
+        streaming: false,
       },
     ],
   });
@@ -46,10 +47,28 @@ describe("TaskReasoningPage", () => {
     );
 
     expect(screen.getByText(/verbatim reasoning traces/)).toBeInTheDocument();
-    expect(screen.getByText("deepseek-test · 2026-11-06T10:00:00Z")).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "Agent thinking messages" })).toBeInTheDocument();
+    expect(screen.getByText("Thinking 1")).toBeInTheDocument();
+    expect(screen.getByText("deepseek-test")).toBeInTheDocument();
+    expect(screen.getByText("2026-11-06T10:00:00Z")).toBeInTheDocument();
     expect(screen.getByText(/Inspect the evidence first/)).toHaveTextContent(
       "Inspect the evidence first. Then compare candidates.",
     );
+  });
+
+  it("animates receipt on an in-progress thinking message", async () => {
+    const live = await fetchTaskReasoningMock();
+    fetchTaskReasoningMock.mockResolvedValueOnce({
+      ...live,
+      task: { ...live.task, state: "running" },
+      reasoning: [{ ...live.reasoning[0], finished_at: null, streaming: true }],
+    });
+    render(
+      await TaskReasoningPage({
+        params: Promise.resolve({ id: "run_abc", taskId: "task_generation" }),
+      }),
+    );
+    expect(screen.getByLabelText("Receiving more thinking")).toBeInTheDocument();
   });
 
   it("explains when the provider returned no explicit reasoning", async () => {

@@ -68,6 +68,7 @@ export function parseTaskReasoning(value: unknown): TaskReasoning {
         finished_at: strOrNull(trace.finished_at, `response.reasoning[${index}].finished_at`),
         model: strOrNull(trace.model, `response.reasoning[${index}].model`),
         content: str(trace.content, `response.reasoning[${index}].content`),
+        streaming: bool(trace.streaming, `response.reasoning[${index}].streaming`),
       };
     }),
   };
@@ -227,6 +228,7 @@ function parseTaskFacts(value: unknown, path: string): TaskFacts | null {
   return {
     id: str(r.id, `${path}.id`),
     reasoning_preview: strOrNull(r.reasoning_preview, `${path}.reasoning_preview`),
+    reasoning_streaming: bool(r.reasoning_streaming, `${path}.reasoning_streaming`),
     strategy: str(r.strategy, `${path}.strategy`),
     state: str(r.state, `${path}.state`),
     attempts: num(r.attempts, `${path}.attempts`),

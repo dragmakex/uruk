@@ -120,6 +120,8 @@ async fn posts_chat_completions_with_auth_and_parses_usage() {
     assert_eq!(body["messages"][0]["role"], "user");
     assert_eq!(body["messages"][0]["content"], "hi");
     assert_eq!(body["seed"], 7);
+    assert_eq!(body["stream"], true);
+    assert_eq!(body["stream_options"]["include_usage"], true);
     assert!(
         body.get("reasoning_effort").is_none(),
         "not sent unless configured"

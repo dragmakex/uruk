@@ -97,6 +97,7 @@ export interface TaskCounts {
 export interface TaskFacts {
   id: string;
   reasoning_preview: string | null;
+  reasoning_streaming: boolean;
   strategy: string;
   state: string;
   attempts: number;
@@ -110,6 +111,7 @@ export interface ReasoningTrace {
   finished_at: string | null;
   model: string | null;
   content: string;
+  streaming: boolean;
 }
 
 export interface TaskReasoning {

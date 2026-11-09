@@ -35,6 +35,7 @@ describe("parseTaskReasoning", () => {
           finished_at: "2026-11-06T10:00:02Z",
           model: "deepseek-test",
           content: "Inspect the sources first.",
+          streaming: true,
         },
       ],
     });
