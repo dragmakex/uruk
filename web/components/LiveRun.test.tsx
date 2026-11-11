@@ -97,9 +97,8 @@ describe("LiveRun", () => {
       source!.emit("end", "{}");
     });
 
-    expect(
-      screen.getByText(/Run completed \(deliverable satisfied\)/),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Completed" })).toBeInTheDocument();
+    expect(screen.queryByText(/deliverable satisfied/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: "Read the report" }),

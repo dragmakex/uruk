@@ -211,8 +211,13 @@ export function LiveRun({
         {terminal && (
           <div className="empty-state" style={{ marginBottom: 32, maxWidth: "none" }}>
             <h2>
-              Run {stateLabel(run.state)}
-              {run.stop_condition ? ` (${run.stop_condition.replace(/_/g, " ")})` : ""}
+              {run.state === "completed"
+                ? "Completed"
+                : `Run ${stateLabel(run.state)}${
+                    run.stop_condition
+                      ? ` (${run.stop_condition.replace(/_/g, " ")})`
+                      : ""
+                  }`}
             </h2>
             <p>
               {usage.model_calls} model calls, {usage.tokens.toLocaleString("en-US")}{" "}
