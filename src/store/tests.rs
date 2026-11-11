@@ -1488,3 +1488,46 @@ async fn project_identity_is_stable_and_derived_from_the_project_dir() {
     assert_eq!(name, store.project_dir().to_string_lossy());
     assert!(id.as_str().starts_with("prj_"), "id: {}", id.as_str());
 }
+
+#[tokio::test]
+async fn rounds_completed_migration_repairs_only_runs_that_finished_all_rounds() {
+    let store = Store::open_in_memory().await.unwrap();
+    let (mut finished, mut finished_goal) = test_run();
+    finished_goal.mode = Mode::Campaign;
+    finished_goal.budget.max_iterations = 10;
+    finished.state = RunState::BudgetExhausted;
+    finished.stop_condition = Some(StopCondition::BudgetExhausted);
+    finished.iterations = finished_goal.budget.max_iterations;
+
+    let (mut exhausted, mut exhausted_goal) = test_run();
+    exhausted_goal.mode = Mode::Campaign;
+    exhausted_goal.budget.max_iterations = 10;
+    exhausted.state = RunState::BudgetExhausted;
+    exhausted.stop_condition = Some(StopCondition::BudgetExhausted);
+    exhausted.iterations = exhausted_goal.budget.max_iterations - 1;
+
+    store
+        .ensure_project(&finished.project_id, "test")
+        .await
+        .unwrap();
+    store.create_run(&finished, &finished_goal).await.unwrap();
+    store.create_run(&exhausted, &exhausted_goal).await.unwrap();
+    sqlx::raw_sql(include_str!("../../migrations/0011_rounds_completed.sql"))
+        .execute(store.pool())
+        .await
+        .unwrap();
+
+    let repaired = store.get_run(&finished.id).await.unwrap();
+    assert_eq!(repaired.state, RunState::Completed);
+    assert_eq!(
+        repaired.stop_condition,
+        Some(StopCondition::RoundsCompleted)
+    );
+
+    let untouched = store.get_run(&exhausted.id).await.unwrap();
+    assert_eq!(untouched.state, RunState::BudgetExhausted);
+    assert_eq!(
+        untouched.stop_condition,
+        Some(StopCondition::BudgetExhausted)
+    );
+}

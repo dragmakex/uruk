@@ -97,14 +97,28 @@ describe("LiveRun", () => {
       source!.emit("end", "{}");
     });
 
-    expect(
-      screen.getByText(/Run completed \(deliverable satisfied\)/),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Completed" })).toBeInTheDocument();
+    expect(screen.queryByText(/deliverable satisfied/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: "Read the report" }),
     ).toBeInTheDocument();
     expect(source!.closed).toBe(true);
+  });
+
+  it.each([
+    ["budget-exhausted", "Exhausted"],
+    ["cancelled", "Cancelled"],
+    ["failed", "Failed"],
+  ])("uses a one-word heading for the %s status", (state, heading) => {
+    const finished = snapshotFixture() as { run: Record<string, unknown> };
+    finished.run.state = state;
+    finished.run.stop_condition = "model_call_budget_reached";
+
+    render(<LiveRun runId="run_0412aa" initial={parseRunSnapshot(finished)} />);
+
+    expect(screen.getByRole("heading", { name: heading })).toBeInTheDocument();
+    expect(screen.queryByText(/model call budget reached/)).not.toBeInTheDocument();
   });
 
   it("sizes the finished-run actions identically, differing only in variant", async () => {
@@ -164,7 +178,7 @@ describe("LiveRun", () => {
     });
 
     expect(
-      screen.getByRole("heading", { level: 1, name: /snapshot could not be read/i }),
+      screen.getByRole("heading", { level: 1, name: "Invalid" }),
     ).toBeInTheDocument();
   });
 
@@ -198,6 +212,7 @@ describe("LiveRun queue and provider-wait states", () => {
   it("shows a queued run's position, keeps Stop, and never says failed", () => {
     render(<LiveRun runId="run_0412aa" initial={queued(3)} />);
     const banner = screen.getByRole("status", { name: /queued/i });
+    expect(screen.getByRole("heading", { name: "Queued" })).toBeInTheDocument();
     expect(banner).toHaveTextContent(/position 3/);
     expect(banner).toHaveTextContent(/2 runs ahead/);
     expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
@@ -217,6 +232,7 @@ describe("LiveRun queue and provider-wait states", () => {
       source.emit("snapshot", JSON.stringify(waiting));
     });
     const banner = screen.getByRole("status", { name: /provider/i });
+    expect(screen.getByRole("heading", { name: "Waiting" })).toBeInTheDocument();
     expect(banner).toHaveTextContent("HTTP 503: overloaded");
     expect(banner).toHaveTextContent(/resumes automatically/i);
     expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
@@ -277,8 +293,8 @@ describe("LiveRun while on the queue", () => {
     return fixture;
   }
 
-  const OUTAGE_HEADING = "The active run is waiting for the model provider";
-  const RECOVERY_HEADING = "Model provider available again";
+  const OUTAGE_HEADING = "Waiting";
+  const RECOVERY_HEADING = "Available";
 
   function expectNoVisualization() {
     expect(screen.queryByRole("heading", { name: "Supervisor" })).not.toBeInTheDocument();
@@ -302,6 +318,7 @@ describe("LiveRun while on the queue", () => {
   it("hides the empty visualization and keeps the position and Stop", () => {
     render(<LiveRun runId="run_0412aa" initial={parseRunSnapshot(onQueue(3, false))} />);
     const banner = screen.getByRole("status", { name: /queued/i });
+    expect(screen.getByRole("heading", { name: "Queued" })).toBeInTheDocument();
     expect(banner).toHaveTextContent(/position 3/);
     expect(banner).toHaveTextContent(/2 runs ahead/);
     expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
