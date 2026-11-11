@@ -353,7 +353,7 @@ fn parse_locator(value: &serde_json::Value) -> Result<Locator> {
         .ok_or_else(|| Error::validation("observation locator has no value"))?;
 
     Ok(match kind {
-        "page" => Locator::Page(at.trim().parse().map_err(|_| {
+        "page" => Locator::Page(parse_page_number(&at).ok_or_else(|| {
             Error::validation(format!("observation page locator {at:?} is not a number"))
         })?),
         "figure" => Locator::Figure(at),
@@ -361,6 +361,32 @@ fn parse_locator(value: &serde_json::Value) -> Result<Locator> {
         "data" | "data_slice" => Locator::DataSlice(at),
         _ => Locator::Section(at),
     })
+}
+
+/// Accept a bare page number and the harmless decorations models commonly add
+/// despite the output contract (`p. 1`, `page 1`, or `1, Introduction`).
+fn parse_page_number(at: &str) -> Option<u32> {
+    let trimmed = at.trim();
+    if let Ok(page) = trimmed.parse() {
+        return Some(page);
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+    let value = if lower.starts_with("page") {
+        &trimmed[4..]
+    } else if lower.starts_with('p') {
+        &trimmed[1..]
+    } else {
+        trimmed
+    };
+    let value =
+        value.trim_start_matches(|c: char| c.is_whitespace() || matches!(c, '.' | ':' | '#'));
+    let digits: String = value.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        None
+    } else {
+        digits.parse().ok()
+    }
 }
 
 /// Render an item for review.
@@ -405,4 +431,31 @@ async fn render_source(ctx: &AgentContext, source: &Source) -> Result<String> {
     }
     out.push_str(&format!("--- END SOURCE {} ---\n", source.id));
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_locator;
+    use crate::records::Locator;
+
+    #[test]
+    fn accepts_page_locators_with_common_model_formatting() {
+        for at in [
+            serde_json::json!(1),
+            serde_json::json!("1"),
+            serde_json::json!("p. 1"),
+            serde_json::json!("page 1"),
+            serde_json::json!("p. 1, Introduction"),
+        ] {
+            let raw = serde_json::json!({"kind": "page", "at": at});
+            assert_eq!(parse_locator(&raw).unwrap(), Locator::Page(1));
+        }
+    }
+
+    #[test]
+    fn still_rejects_page_locators_without_a_page_number() {
+        let raw = serde_json::json!({"kind": "page", "at": "Introduction"});
+        let error = parse_locator(&raw).unwrap_err();
+        assert!(error.to_string().contains("is not a number"));
+    }
 }
