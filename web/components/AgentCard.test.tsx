@@ -52,6 +52,7 @@ describe("activityText", () => {
           last_finished: {
             id: "task-initial",
             reasoning_preview: null,
+            reasoning_streaming: false,
             strategy: "initial",
             state: "completed",
             attempts: 1,
@@ -92,6 +93,8 @@ describe("AgentCard", () => {
     expect(screen.getByRole("heading", { name: "Generation" })).toBeInTheDocument();
     expect(screen.getByText("thinking")).toBeInTheDocument();
     expect(screen.getByText("13 items")).toBeInTheDocument();
+    expect(screen.getByText(/Thinking/, { selector: ".agent-reasoning-label" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Receiving more thinking")).toBeInTheDocument();
     expect(
       screen.getByText("Inspect the strongest sources before comparing the hypotheses."),
     ).toBeInTheDocument();
@@ -107,11 +110,12 @@ describe("AgentCard", () => {
       role: "generation",
       state: "thinking",
       current: generation.current
-        ? { ...generation.current, id: "task-new", reasoning_preview: null }
+        ? { ...generation.current, id: "task-new", reasoning_preview: null, reasoning_streaming: false }
         : null,
       last_finished: {
         id: "task-previous",
         reasoning_preview: "Compare the evidence already gathered.",
+        reasoning_streaming: false,
         strategy: "comparison",
         state: "completed",
         attempts: 1,
@@ -127,6 +131,12 @@ describe("AgentCard", () => {
       "href",
       "/runs/run-test/tasks/task-previous/reasoning",
     );
+  });
+
+  it("is not inspectable and omits thinking when the agent has no reasoning", () => {
+    render(<AgentCard runId="run-test" panel={panel({})} stats={stats} />);
+    expect(screen.queryByLabelText("Latest thinking preview")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /view full reasoning/i })).not.toBeInTheDocument();
   });
 
   it("renders the supervisor assignment table", () => {
@@ -147,6 +157,7 @@ describe("AgentCard", () => {
       last_finished: {
         id: "task-deep-verification",
         reasoning_preview: "Check whether the timeout invalidates the result.",
+        reasoning_streaming: false,
         strategy: "deep_verification",
         state: "failed",
         attempts: 1,

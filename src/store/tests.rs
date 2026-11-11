@@ -211,6 +211,7 @@ async fn task_reasoning_projects_only_explicit_provider_reasoning() {
         traces[0].content,
         "First inspect the evidence.\nThen compare the candidates."
     );
+    assert!(!traces[0].streaming);
     let serialized = serde_json::to_string(&traces).unwrap();
     assert!(!serialized.contains("must stay private"));
     assert!(!serialized.contains("The final answer"));
@@ -218,7 +219,7 @@ async fn task_reasoning_projects_only_explicit_provider_reasoning() {
 }
 
 #[tokio::test]
-async fn task_reasoning_previews_use_the_latest_trace_and_collapse_whitespace() {
+async fn task_reasoning_previews_use_the_first_line_of_the_latest_live_trace() {
     let (store, run, goal) = setup().await;
     let plan = test_plan(&run.id, &goal.id);
     store.insert_plan(&plan).await.unwrap();
@@ -234,7 +235,7 @@ async fn task_reasoning_previews_use_the_latest_trace_and_collapse_whitespace() 
         (
             "log_preview_new",
             "2026-11-09T10:01:00Z",
-            serde_json::json!("Inspect the\n  latest evidence before\tranking candidates."),
+            serde_json::json!("Inspect the latest evidence.\nDo not show this newer line."),
         ),
         (
             "log_preview_malformed",
@@ -272,13 +273,60 @@ async fn task_reasoning_previews_use_the_latest_trace_and_collapse_whitespace() 
         .await
         .unwrap();
     assert_eq!(
-        previews.get(task.id.as_str()).map(String::as_str),
-        Some("Inspect the latest evidence before ranking candidates.")
+        previews
+            .get(task.id.as_str())
+            .map(|preview| preview.content.as_str()),
+        Some("Inspect the latest evidence.")
     );
     assert!(
         !previews
             .values()
-            .any(|preview| preview.contains("private final answer"))
+            .any(|preview| preview.content.contains("private final answer"))
+    );
+}
+
+#[tokio::test]
+async fn task_reasoning_exposes_a_checkpointed_in_progress_stream() {
+    let (store, run, goal) = setup().await;
+    let plan = test_plan(&run.id, &goal.id);
+    store.insert_plan(&plan).await.unwrap();
+    let task = test_task(&run.id, &goal.id, &plan.id, Role::Generation);
+    store.enqueue_task(&task, None).await.unwrap();
+    let response = serde_json::json!({
+        "content": {"body": {
+            "model": "deepseek-live",
+            "choices": [{"message": {
+                "reasoning_content": "Read the first source.\nNow compare it.",
+                "content": "private partial answer"
+            }}]
+        }}
+    });
+    sqlx::query(
+        "INSERT INTO request_logs
+         (id, request_id, direction, run_id, task_id, started_at, outcome, request, response)
+         VALUES ('log_live', 'req_live', 'provider', ?, ?, ?, 'in_progress', '{}', ?)",
+    )
+    .bind(run.id.as_str())
+    .bind(task.id.as_str())
+    .bind("2026-11-09T11:00:00Z")
+    .bind(response.to_string())
+    .execute(store.pool())
+    .await
+    .unwrap();
+
+    let traces = store.task_reasoning(&run.id, &task.id).await.unwrap();
+    assert_eq!(traces.len(), 1);
+    assert!(traces[0].streaming);
+    assert_eq!(traces[0].content, "Read the first source.\nNow compare it.");
+    let previews = store
+        .task_reasoning_previews(&run.id, std::slice::from_ref(&task.id))
+        .await
+        .unwrap();
+    assert_eq!(
+        previews
+            .get(task.id.as_str())
+            .map(|preview| preview.content.as_str()),
+        Some("Read the first source.")
     );
 }
 

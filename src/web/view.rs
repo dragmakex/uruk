@@ -129,6 +129,7 @@ impl TaskCounts {
 pub struct TaskFacts {
     pub id: String,
     pub reasoning_preview: Option<String>,
+    pub reasoning_streaming: bool,
     pub strategy: String,
     pub state: String,
     pub attempts: u32,
@@ -224,10 +225,15 @@ fn rfc3339(t: time::OffsetDateTime) -> String {
         .unwrap_or_else(|_| t.unix_timestamp().to_string())
 }
 
-fn task_facts(task: &Task, reasoning_previews: &HashMap<String, String>) -> TaskFacts {
+fn task_facts(
+    task: &Task,
+    reasoning_previews: &HashMap<String, crate::store::ReasoningPreview>,
+) -> TaskFacts {
+    let reasoning = reasoning_previews.get(task.id.as_str());
     TaskFacts {
         id: task.id.as_str().to_string(),
-        reasoning_preview: reasoning_previews.get(task.id.as_str()).cloned(),
+        reasoning_preview: reasoning.map(|preview| preview.content.clone()),
+        reasoning_streaming: reasoning.is_some_and(|preview| preview.streaming),
         strategy: task.strategy.clone(),
         state: task.state.as_str().to_string(),
         attempts: task.attempts,
@@ -249,7 +255,7 @@ fn tasks_by_role(tasks: &[Task]) -> BTreeMap<&'static str, Vec<&Task>> {
 fn panel_for_role(
     role: &str,
     tasks: &[&Task],
-    reasoning_previews: &HashMap<String, String>,
+    reasoning_previews: &HashMap<String, crate::store::ReasoningPreview>,
 ) -> AgentPanel {
     let mut counts = TaskCounts::default();
     for task in tasks {

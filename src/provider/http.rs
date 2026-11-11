@@ -395,17 +395,25 @@ impl HttpProvider {
             .get(reqwest::header::RETRY_AFTER)
             .and_then(|v| v.to_str().ok())
             .and_then(|v| parse_retry_after(v, time::OffsetDateTime::now_utc()));
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("text/plain")
+            .to_owned();
         if let Some(log) = &mut log {
             log.status = Some(status.as_u16());
             log.response =
                 serde_json::json!({"headers": crate::diagnostics::headers(resp.headers())});
-            let content_type = resp
-                .headers()
-                .get(reqwest::header::CONTENT_TYPE)
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("text/plain")
-                .to_owned();
-            log.response_capture = Some((Default::default(), content_type));
+            log.response_capture = Some((Default::default(), content_type.clone()));
+        }
+        if status.is_success() && content_type.contains("text/event-stream") {
+            if let Some(log) = &mut log {
+                // The public live projection reads this deliberately narrow,
+                // reconstructed response rather than the raw SSE diagnostic body.
+                log.response_capture = None;
+            }
+            return read_streaming_response(resp, log).await;
         }
         // A status is classified even if its diagnostic body stalls. Limit
         // diagnostic reads independently so errors cannot hide behind a body.
@@ -521,6 +529,259 @@ impl HttpProvider {
     }
 }
 
+#[derive(Default)]
+struct SseDecoder {
+    pending: Vec<u8>,
+    data: Vec<String>,
+}
+
+impl SseDecoder {
+    fn next_line(&mut self, flush: bool) -> Result<Option<String>> {
+        let mut delimiter = None;
+        for (index, byte) in self.pending.iter().copied().enumerate() {
+            match byte {
+                b'\n' => {
+                    delimiter = Some((index, 1));
+                    break;
+                }
+                b'\r' if index + 1 < self.pending.len() => {
+                    let width = usize::from(self.pending[index + 1] == b'\n') + 1;
+                    delimiter = Some((index, width));
+                    break;
+                }
+                b'\r' if flush => {
+                    delimiter = Some((index, 1));
+                    break;
+                }
+                b'\r' => break,
+                _ => {}
+            }
+        }
+        let Some((line_end, delimiter_width)) = delimiter else {
+            if !flush || self.pending.is_empty() {
+                return Ok(None);
+            }
+            let line = std::mem::take(&mut self.pending);
+            return std::str::from_utf8(&line)
+                .map(|line| Some(line.to_owned()))
+                .map_err(|error| Error::Provider(format!("provider SSE was not UTF-8: {error}")));
+        };
+        let consumed = self
+            .pending
+            .drain(..line_end + delimiter_width)
+            .collect::<Vec<_>>();
+        let line = &consumed[..line_end];
+        std::str::from_utf8(line)
+            .map(|line| Some(line.to_owned()))
+            .map_err(|error| Error::Provider(format!("provider SSE was not UTF-8: {error}")))
+    }
+
+    fn accept_line(&mut self, line: &str, events: &mut Vec<String>) {
+        if line.is_empty() {
+            if !self.data.is_empty() {
+                events.push(self.data.join("\n"));
+                self.data.clear();
+            }
+        } else if let Some(data) = line.strip_prefix("data:") {
+            self.data
+                .push(data.strip_prefix(' ').unwrap_or(data).to_owned());
+        }
+    }
+
+    fn push(&mut self, bytes: &[u8]) -> Result<Vec<String>> {
+        self.pending.extend_from_slice(bytes);
+        let mut events = Vec::new();
+        while let Some(line) = self.next_line(false)? {
+            self.accept_line(&line, &mut events);
+        }
+        Ok(events)
+    }
+
+    fn finish(mut self) -> Result<Vec<String>> {
+        let mut events = Vec::new();
+        while let Some(line) = self.next_line(true)? {
+            self.accept_line(&line, &mut events);
+        }
+        if !self.data.is_empty() {
+            events.push(self.data.join("\n"));
+        }
+        Ok(events)
+    }
+}
+
+#[derive(Default)]
+struct StreamedCompletion {
+    id: String,
+    model: String,
+    content: String,
+    reasoning: String,
+    finish_reason: Option<super::FinishReason>,
+    usage: super::Usage,
+    cost_usd: Option<f64>,
+    saw_choice: bool,
+    saw_usage: bool,
+    done: bool,
+}
+
+impl StreamedCompletion {
+    fn apply(&mut self, data: &str) -> Result<bool> {
+        if data == "[DONE]" {
+            self.done = true;
+            return Ok(false);
+        }
+        let chunk: serde_json::Value = serde_json::from_str(data).map_err(|error| {
+            Error::Provider(format!(
+                "unparseable chat completion stream event ({error})"
+            ))
+        })?;
+        if let Some(id) = chunk.get("id").and_then(serde_json::Value::as_str) {
+            self.id = id.to_owned();
+        }
+        if let Some(model) = chunk.get("model").and_then(serde_json::Value::as_str) {
+            self.model = model.to_owned();
+        }
+        if chunk.get("error").is_some() {
+            return Err(Error::Provider(
+                "provider returned an error event in the completion stream".into(),
+            ));
+        }
+        if let Some(usage) = chunk.get("usage").filter(|value| !value.is_null()) {
+            self.usage = serde_json::from_value(usage.clone()).map_err(|error| {
+                Error::Provider(format!("invalid usage in chat completion stream ({error})"))
+            })?;
+            self.saw_usage = true;
+        }
+        if let Some(cost) = chunk.get("cost_usd").and_then(serde_json::Value::as_f64) {
+            self.cost_usd = Some(cost);
+        }
+        let Some(choice) = chunk
+            .get("choices")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|v| v.first())
+        else {
+            return Ok(false);
+        };
+        self.saw_choice = true;
+        if let Some(reason) = choice.get("finish_reason").filter(|value| !value.is_null()) {
+            self.finish_reason = Some(serde_json::from_value(reason.clone()).map_err(|error| {
+                Error::Provider(format!(
+                    "invalid finish reason in chat completion stream ({error})"
+                ))
+            })?);
+        }
+        let Some(delta) = choice.get("delta") else {
+            return Ok(false);
+        };
+        if let Some(content) = delta.get("content").and_then(serde_json::Value::as_str) {
+            self.content.push_str(content);
+        }
+        if let Some(reasoning) = delta
+            .get("reasoning_content")
+            .and_then(serde_json::Value::as_str)
+        {
+            self.reasoning.push_str(reasoning);
+            return Ok(!reasoning.is_empty());
+        }
+        Ok(false)
+    }
+
+    fn validate_terminal(&self) -> Result<()> {
+        if !self.done || !self.saw_choice || self.finish_reason.is_none() {
+            return Err(Error::Provider(
+                "provider completion stream ended before its terminal event".into(),
+            ));
+        }
+        if !self.saw_usage {
+            return Err(Error::Provider(
+                "provider completion stream omitted the requested usage accounting".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn checkpoint(&self, log: &mut crate::diagnostics::RequestLog) -> Result<()> {
+        log.response["content"] = serde_json::json!({
+            "body": {
+                "id": self.id,
+                "model": self.model,
+                "choices": [{"message": {
+                    "role": "assistant",
+                    "content": self.content,
+                    "reasoning_content": self.reasoning,
+                }}],
+                "usage": self.usage,
+                "cost_usd": self.cost_usd,
+            }
+        });
+        log.checkpoint().await
+    }
+
+    fn into_response(self) -> ChatResponse {
+        ChatResponse {
+            id: self.id,
+            model: self.model,
+            choices: vec![super::Choice {
+                index: 0,
+                message: super::Message {
+                    role: super::MessageRole::Assistant,
+                    content: self.content,
+                },
+                finish_reason: self.finish_reason.unwrap_or(super::FinishReason::Other),
+            }],
+            usage: self.usage,
+            cost_usd: self.cost_usd,
+        }
+    }
+}
+
+async fn read_streaming_response(
+    mut response: reqwest::Response,
+    mut log: Option<&mut crate::diagnostics::RequestLog>,
+) -> std::result::Result<ChatResponse, SendError> {
+    let mut decoder = SseDecoder::default();
+    let mut completion = StreamedCompletion::default();
+    let mut last_checkpoint = None::<std::time::Instant>;
+    while let Some(chunk) = response.chunk().await.map_err(|error| {
+        SendError::Transient(TransientFault::transport(
+            TransportPhase::Response,
+            crate::diagnostics::error_chain(&error.without_url()),
+        ))
+    })? {
+        for event in decoder.push(&chunk).map_err(SendError::Permanent)? {
+            if completion.apply(&event).map_err(SendError::Permanent)? {
+                let due =
+                    last_checkpoint.is_none_or(|at| at.elapsed() >= Duration::from_millis(150));
+                if due && let Some(log) = &mut log {
+                    completion
+                        .checkpoint(log)
+                        .await
+                        .map_err(SendError::Permanent)?;
+                    last_checkpoint = Some(std::time::Instant::now());
+                }
+            }
+        }
+    }
+    for event in decoder.finish().map_err(SendError::Permanent)? {
+        completion.apply(&event).map_err(SendError::Permanent)?;
+    }
+    if let Err(error) = completion.validate_terminal() {
+        if !completion.done || completion.finish_reason.is_none() {
+            return Err(SendError::Transient(TransientFault::transport(
+                TransportPhase::Response,
+                error.to_string(),
+            )));
+        }
+        return Err(SendError::Permanent(error));
+    }
+    if let Some(log) = &mut log {
+        completion
+            .checkpoint(log)
+            .await
+            .map_err(SendError::Permanent)?;
+    }
+    Ok(completion.into_response())
+}
+
 /// Classify a request failure without parsing its display text.
 ///
 /// Connection failures and completion timeouts enter the shared recovery
@@ -585,6 +846,11 @@ impl Provider for HttpProvider {
         if let Some(effort) = &self.reasoning_effort {
             body["reasoning_effort"] = serde_json::Value::String(effort.clone());
         }
+        // Streaming lets the web snapshot expose explicit provider thinking
+        // while the completion is still in flight. Providers that ignore this
+        // and return a normal JSON response remain supported below.
+        body["stream"] = serde_json::Value::Bool(true);
+        body["stream_options"] = serde_json::json!({"include_usage": true});
         let gate = self.gate();
         complete_through_gate(&gate, None, &self.probe_backoff, attempts, || {
             self.send_key_cycle(&url, &body, attempts)
@@ -626,6 +892,46 @@ mod tests {
     use std::path::PathBuf;
     use time::format_description::well_known::Rfc2822;
     use time::macros::datetime;
+
+    #[test]
+    fn sse_decoder_handles_split_crlf_events_and_reconstructs_reasoning() {
+        let mut decoder = SseDecoder::default();
+        assert!(decoder.push(b": keepalive\r\ndata: {\"id\":\"x\",\"model\":\"m\",\"choices\":[{\"delta\":{\"reasoning_content\":\"Inspect\"}}]}\r").unwrap().is_empty());
+        let events = decoder.push(b"\n\r\ndata: {\"choices\":[{\"delta\":{\"reasoning_content\":\" evidence.\\nThen compare.\",\"content\":\"answer\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n").unwrap();
+        assert_eq!(events.len(), 3);
+        let mut completion = StreamedCompletion::default();
+        for event in events {
+            completion.apply(&event).unwrap();
+        }
+        assert_eq!(completion.reasoning, "Inspect evidence.\nThen compare.");
+        assert_eq!(completion.content, "answer");
+        assert_eq!(
+            completion.finish_reason,
+            Some(super::super::FinishReason::Stop)
+        );
+    }
+
+    #[test]
+    fn sse_decoder_accepts_bare_cr_and_rejects_incomplete_completions() {
+        let mut decoder = SseDecoder::default();
+        let mut events = decoder
+            .push(b"data: {\"choices\":[{\"delta\":{\"content\":\"answer\"},\"finish_reason\":\"stop\"}]}\r\rdata: {\"choices\":[],\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":1,\"total_tokens\":3}}\r\rdata: [DONE]\r\r")
+            .unwrap();
+        events.extend(decoder.finish().unwrap());
+        assert_eq!(events.len(), 3);
+        let mut complete = StreamedCompletion::default();
+        for event in events {
+            complete.apply(&event).unwrap();
+        }
+        complete.validate_terminal().unwrap();
+        assert_eq!(complete.usage.total_tokens, 3);
+
+        let mut incomplete = StreamedCompletion::default();
+        incomplete
+            .apply("{\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}")
+            .unwrap();
+        assert!(incomplete.validate_terminal().is_err());
+    }
 
     #[test]
     fn provider_error_text_cannot_echo_the_active_key() {

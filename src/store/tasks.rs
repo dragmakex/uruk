@@ -39,6 +39,14 @@ pub struct ReasoningTrace {
     pub finished_at: Option<String>,
     pub model: Option<String>,
     pub content: String,
+    /// True while the provider is still adding deltas to this trace.
+    pub streaming: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReasoningPreview {
+    pub content: String,
+    pub streaming: bool,
 }
 
 impl BudgetUsage {
@@ -135,9 +143,9 @@ impl Store {
         task_id: &TaskId,
     ) -> Result<Vec<ReasoningTrace>> {
         let rows = sqlx::query(
-            "SELECT started_at, finished_at, response
+            "SELECT started_at, finished_at, outcome, response
              FROM request_logs
-             WHERE direction = 'provider' AND outcome = 'success'
+             WHERE direction = 'provider'
                AND run_id = ? AND task_id = ?
              ORDER BY started_at, id",
         )
@@ -171,6 +179,7 @@ impl Store {
                     .and_then(serde_json::Value::as_str)
                     .map(ToOwned::to_owned),
                 content: content.to_owned(),
+                streaming: row.try_get::<String, _>("outcome")? == "in_progress",
             });
         }
         Ok(traces)
@@ -182,14 +191,14 @@ impl Store {
         &self,
         run_id: &RunId,
         task_ids: &[TaskId],
-    ) -> Result<HashMap<String, String>> {
+    ) -> Result<HashMap<String, ReasoningPreview>> {
         if task_ids.is_empty() {
             return Ok(HashMap::new());
         }
 
         let mut query = QueryBuilder::<Sqlite>::new(
-            "SELECT task_id, response FROM request_logs
-             WHERE direction = 'provider' AND outcome = 'success' AND run_id = ",
+            "SELECT task_id, outcome, response FROM request_logs
+             WHERE direction = 'provider' AND run_id = ",
         );
         query.push_bind(run_id.as_str());
         query.push(" AND task_id IN (");
@@ -218,15 +227,24 @@ impl Store {
             else {
                 continue;
             };
-            let collapsed = reasoning.split_whitespace().collect::<Vec<_>>().join(" ");
-            let mut chars = collapsed.chars();
+            let first_line = reasoning.lines().next().unwrap_or("").trim();
+            if first_line.is_empty() {
+                continue;
+            }
+            let mut chars = first_line.chars();
             let preview: String = chars.by_ref().take(REASONING_PREVIEW_CHARS).collect();
             let preview = if chars.next().is_some() {
                 format!("{preview}…")
             } else {
                 preview
             };
-            previews.insert(task_id, preview);
+            previews.insert(
+                task_id,
+                ReasoningPreview {
+                    content: preview,
+                    streaming: row.try_get::<String, _>("outcome")? == "in_progress",
+                },
+            );
         }
         Ok(previews)
     }

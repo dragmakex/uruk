@@ -385,6 +385,11 @@ a {
   .btn:active:not(:disabled) {
     transform: none;
   }
+
+  .thinking-dots i {
+    animation: none;
+    opacity: 0.7;
+  }
 }
 
 /* ---------- forms ---------- */
@@ -815,10 +820,36 @@ a {
 
 .agent-reasoning-label {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   color: var(--ink);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+
+.thinking-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 1em;
+}
+
+.thinking-dots i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: thinking-pulse 1.15s infinite ease-in-out;
+}
+
+.thinking-dots i:nth-child(2) { animation-delay: 140ms; }
+.thinking-dots i:nth-child(3) { animation-delay: 280ms; }
+
+@keyframes thinking-pulse {
+  0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-2px); }
 }
 
 .agent-reasoning-copy {
@@ -857,37 +888,95 @@ a {
   font-size: 12px;
 }
 
-.reasoning-list {
+.thinking-chat {
   margin: 0;
-  padding: 0;
+  padding: 24px;
   list-style: none;
   display: grid;
   gap: 18px;
-}
-
-.reasoning-entry {
   border: var(--hairline) solid var(--line);
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.72)),
+    repeating-linear-gradient(135deg, transparent 0 18px, var(--line-soft) 19px 20px);
 }
 
-.reasoning-entry header {
+.thinking-message {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 10px 14px;
-  border-bottom: var(--hairline) solid var(--line-soft);
+  align-items: flex-end;
+  gap: 10px;
+  max-width: 88%;
+}
+
+.thinking-message:nth-child(even) {
+  justify-self: end;
+  flex-direction: row-reverse;
+}
+
+.thinking-message__avatar {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: var(--hairline) solid var(--line);
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--surface);
+  font-family: var(--font-mono);
+  font-size: 11px;
   font-weight: 700;
 }
 
-.reasoning-entry pre {
+.thinking-message__bubble {
+  position: relative;
+  min-width: min(520px, 70vw);
+  border: var(--hairline) solid var(--line);
+  border-radius: 3px 12px 12px 12px;
+  background: var(--surface);
+  box-shadow: 3px 3px 0 var(--line-soft);
+}
+
+.thinking-message:nth-child(even) .thinking-message__bubble {
+  border-radius: 12px 3px 12px 12px;
+  background: var(--surface-raised);
+}
+
+.thinking-message__bubble header,
+.thinking-message__bubble footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 12px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.thinking-message__bubble header {
+  border-bottom: var(--hairline) solid var(--line-soft);
+}
+
+.thinking-message__bubble header strong {
+  color: var(--ink);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.thinking-message__bubble pre {
   margin: 0;
-  padding: 16px;
+  padding: 14px 16px 8px;
   overflow-x: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-family: var(--font-mono);
   font-size: 12px;
-  line-height: 1.6;
+  line-height: 1.65;
+}
+
+.thinking-message__bubble footer {
+  justify-content: flex-end;
+  padding-top: 2px;
 }
 
 .agent.is-idle .agent-foot {

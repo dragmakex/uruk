@@ -63,8 +63,8 @@ export default async function TaskReasoningPage({
 
       <aside className="reasoning-note">
         <strong>What this shows.</strong> These are the verbatim reasoning traces
-        explicitly returned by the configured model provider after each completed
-        model request. Uruk does not infer or claim access to hidden model state,
+        explicitly returned by the configured model provider as each model request
+        streams or completes. Uruk does not infer or claim access to hidden model state,
         and a provider that omits <code>reasoning_content</code> leaves no trace.
       </aside>
 
@@ -77,16 +77,29 @@ export default async function TaskReasoningPage({
           </p>
         </div>
       ) : (
-        <ol className="reasoning-list">
+        <ol className="thinking-chat" aria-label="Agent thinking messages">
           {detail.reasoning.map((trace, index) => (
-            <li key={`${trace.started_at}-${index}`} className="reasoning-entry">
-              <header>
-                <span>Model call {index + 1}</span>
-                <span className="micro">
-                  {trace.model ?? "model not reported"} · {trace.started_at}
-                </span>
-              </header>
-              <pre>{trace.content}</pre>
+            <li key={`${trace.started_at}-${index}`} className="thinking-message">
+              <div className="thinking-message__avatar" aria-hidden="true">
+                {detail.task.role.slice(0, 1).toUpperCase()}
+              </div>
+              <article className="thinking-message__bubble">
+                <header>
+                  <strong>Thinking {index + 1}</strong>
+                  <span>{trace.model ?? "model not reported"}</span>
+                </header>
+                <pre>{trace.content}</pre>
+                <footer>
+                  <time dateTime={trace.started_at}>{trace.started_at}</time>
+                  {trace.streaming ? (
+                    <span className="thinking-dots" aria-label="Receiving more thinking">
+                      <i />
+                      <i />
+                      <i />
+                    </span>
+                  ) : null}
+                </footer>
+              </article>
             </li>
           ))}
         </ol>

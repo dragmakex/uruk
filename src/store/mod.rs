@@ -22,7 +22,7 @@ pub use passages::{OwnedPassageHit, PassageHit, StoredPassage, sanitize_match_qu
 pub use queries::{ItemSummary, RunOverview};
 pub use queue::{ENGINE_OWNER, QueueContext, QueueEntry, QueueState, QueueStatus, RunTiming};
 pub use search::StoredWork;
-pub use tasks::{BudgetUsage, ReasoningTrace};
+pub use tasks::{BudgetUsage, ReasoningPreview, ReasoningTrace};
 pub use uploads::Upload;
 pub use writes::{RecordBatch, RunCancelled};
 

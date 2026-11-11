@@ -66,7 +66,7 @@ export function AgentCard({
     ? panel.current
     : panel.last_finished?.reasoning_preview
       ? panel.last_finished
-      : (panel.current ?? panel.last_finished);
+      : null;
   const detailHref = displayedTask
     ? `/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(displayedTask.id)}/reasoning`
     : null;
@@ -80,10 +80,19 @@ export function AgentCard({
       <div className="agent-body">
         <p>{activityText(panel)}</p>
         {displayedTask !== null && (
-          <p className="agent-reasoning-preview">
-            <span className="agent-reasoning-label">Reasoning</span>
+          <p className="agent-reasoning-preview" aria-label="Latest thinking preview">
+            <span className="agent-reasoning-label">
+              Thinking
+              {displayedTask.reasoning_streaming ? (
+                <span className="thinking-dots" aria-label="Receiving more thinking">
+                  <i />
+                  <i />
+                  <i />
+                </span>
+              ) : null}
+            </span>
             <span className="agent-reasoning-copy">
-              {displayedTask.reasoning_preview ?? "Waiting for a provider trace…"}
+              {displayedTask.reasoning_preview?.split(/\r?\n/, 1)[0]}
             </span>
           </p>
         )}
@@ -116,7 +125,7 @@ export function AgentCard({
       <footer className="agent-foot">
         <span className="micro">{footerStat(panel, stats)}</span>
         {displayedTask !== null && (
-          <span className="agent-reasoning-link">View full reasoning →</span>
+          <span className="agent-reasoning-link">Inspect thinking →</span>
         )}
       </footer>
     </>

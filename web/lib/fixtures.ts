@@ -65,6 +65,7 @@ export function snapshotFixture(): unknown {
         current: {
           id: "task-generation-literature",
           reasoning_preview: "Inspect the strongest sources before comparing the hypotheses.",
+          reasoning_streaming: true,
           strategy: "literature",
           state: "running",
           attempts: 1,
