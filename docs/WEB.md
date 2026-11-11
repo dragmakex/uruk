@@ -138,7 +138,7 @@ turns between browsers (see "Taking turns" below):
 - Campaign rounds are scheduling batches, not a count of tournament matches.
   A batch of acquisitions or prerequisite work may leave research counters
   unchanged. That is not a stopping condition: pending work is dispatched and
-  new useful work is selected until a model-work/round limit, cancellation,
+  new useful work is selected until a model-work limit, completion of every configured round, cancellation,
   or actual work exhaustion is reached.
 - **Stop** always works and is one transaction: the run is cancelled and
   leaves the queue, its undispatched tasks are cancelled with their
@@ -279,8 +279,8 @@ resolved text, it never slices offsets itself (`src/report/citations.rs`).
   combines with `tournament`.
 - `profile`, `deliverables`, `preferences`, `attributes`, `constraints`:
   the goal record and rubric, as on the CLI.
-- Budgets: `max_model_calls`, `max_iterations`, and `max_acquisitions`, validated by the API. Runs have no token, tool-execution, elapsed-time, or monetary-cost ceiling. Preview displays the API-resolved model-work budget only.
-  Model-call and iteration limits still apply independently.
+- Budgets and bounds: `max_model_calls`, `max_iterations`, and `max_acquisitions`, validated by the API. Runs have no token, tool-execution, elapsed-time, or monetary-cost ceiling. Preview displays the API-resolved model-work budget only.
+  Model-call and round limits still apply independently. Reaching the model-call ceiling is budget exhaustion; completing all `max_iterations` campaign rounds is shown as a finished run with the `rounds_completed` stop condition.
   Individual provider request timeouts remain bounded and retryable.
   Existing runs retain their recorded budgets; completed or exhausted runs
   are not automatically restarted by this default change.

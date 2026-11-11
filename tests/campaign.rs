@@ -251,6 +251,8 @@ async fn unchanged_snapshots_do_not_end_a_campaign_with_useful_work() {
         summary.iterations, 10,
         "useful work must continue: {summary:?}"
     );
+    assert_eq!(summary.state, RunState::Completed, "{summary:?}");
+    assert_eq!(summary.stop_condition.as_deref(), Some("rounds_completed"));
     assert!(
         summary.reviews > 0,
         "the unreviewed candidate was abandoned: {summary:?}"
@@ -259,7 +261,7 @@ async fn unchanged_snapshots_do_not_end_a_campaign_with_useful_work() {
     assert!(summary.final_output_skipped.is_none(), "{summary:?}");
 }
 
-/// A campaign stops when its iteration budget runs out, preserving evidence
+/// A campaign stops when its model-call budget runs out, preserving evidence
 /// and still producing the final deliverable from the output reserve.
 #[tokio::test]
 async fn campaign_stops_at_its_budget_and_delivers_from_the_reserve() {

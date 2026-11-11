@@ -189,12 +189,15 @@ pub fn build_plan(goal: &Goal, revision: u32) -> Plan {
         }
     }
 
-    let stopping = vec![
+    let mut stopping = vec![
         StopCondition::DeliverableSatisfied,
         StopCondition::BudgetExhausted,
         StopCondition::WorkExhausted,
         StopCondition::Cancelled,
     ];
+    if goal.mode == Mode::Campaign {
+        stopping.insert(1, StopCondition::RoundsCompleted);
+    }
 
     let outputs = if goal.deliverables.is_empty() {
         vec!["REPORT.md".to_string()]
@@ -881,6 +884,10 @@ pub async fn should_stop(
     usage: &BudgetUsage,
     iterations: u32,
 ) -> Result<Option<StopCondition>> {
+    if goal.mode == Mode::Campaign && iterations >= goal.budget.max_iterations {
+        return Ok(Some(StopCondition::RoundsCompleted));
+    }
+
     // The output reserve is not available to ordinary work, so exhaustion is
     // measured against the working ceiling; the final deliverable then draws
     // on the reserve.
@@ -890,10 +897,6 @@ pub async fn should_stop(
         .saturating_sub(goal.budget.reserve_calls_for_output);
 
     if usage.committed_calls() >= working_ceiling {
-        return Ok(Some(StopCondition::BudgetExhausted));
-    }
-
-    if goal.mode == Mode::Campaign && iterations >= goal.budget.max_iterations {
         return Ok(Some(StopCondition::BudgetExhausted));
     }
 
@@ -1126,6 +1129,13 @@ mod tests {
             "a literature task must not generate a tournament: {:?}",
             plan.roles
         );
+        assert!(
+            !plan
+                .stopping_conditions
+                .contains(&StopCondition::RoundsCompleted),
+            "task mode has no campaign rounds: {:?}",
+            plan.stopping_conditions
+        );
     }
 
     #[test]
@@ -1156,6 +1166,10 @@ mod tests {
             !plan
                 .stopping_conditions
                 .contains(&StopCondition::ProgressStalled)
+        );
+        assert!(
+            plan.stopping_conditions
+                .contains(&StopCondition::RoundsCompleted)
         );
     }
 
@@ -1219,5 +1233,27 @@ mod tests {
         let stop = should_stop(&store, &g.run_id, &g, &usage, 1).await.unwrap();
 
         assert_eq!(stop, Some(StopCondition::BudgetExhausted));
+    }
+
+    #[tokio::test]
+    async fn completing_every_campaign_round_is_not_budget_exhaustion() {
+        let store = Store::open_in_memory().await.unwrap();
+        let mut g = goal(Mode::Campaign, "find explanations for X", &[]);
+        g.budget.max_iterations = 10;
+        g.budget.max_model_calls = 2;
+        g.budget.reserve_calls_for_output = 1;
+        let usage = BudgetUsage {
+            model_calls: 1,
+            ..Default::default()
+        };
+
+        let stop = should_stop(&store, &g.run_id, &g, &usage, g.budget.max_iterations)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            stop.map(|condition| condition.as_str()),
+            Some("rounds_completed")
+        );
     }
 }

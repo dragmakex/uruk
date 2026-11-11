@@ -198,6 +198,8 @@ pub struct Goal {
 pub enum StopCondition {
     /// The requested deliverable is satisfied.
     DeliverableSatisfied,
+    /// Every configured campaign round finished.
+    RoundsCompleted,
     /// A budget limit was reached.
     BudgetExhausted,
     /// No permitted work remains.
@@ -216,6 +218,7 @@ impl StopCondition {
     pub fn parse(s: &str) -> Option<Self> {
         Some(match s {
             "deliverable_satisfied" => Self::DeliverableSatisfied,
+            "rounds_completed" => Self::RoundsCompleted,
             "budget_exhausted" => Self::BudgetExhausted,
             "work_exhausted" => Self::WorkExhausted,
             "progress_stalled" => Self::ProgressStalled,
@@ -229,6 +232,7 @@ impl StopCondition {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::DeliverableSatisfied => "deliverable_satisfied",
+            Self::RoundsCompleted => "rounds_completed",
             Self::BudgetExhausted => "budget_exhausted",
             Self::WorkExhausted => "work_exhausted",
             Self::ProgressStalled => "progress_stalled",
