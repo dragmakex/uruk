@@ -18,7 +18,10 @@ Procedure:
 1. Observation extraction: list the relevant observations. Every observation
    must carry an exact locator (page, section, figure, or table) from the
    article. If the article supplies no relevant observations, return an empty
-   list — do not invent them.
+   list — do not invent them. For a page locator, `at` must be only the JSON
+   integer page number (for example, `{"kind": "page", "at": 1}`). Put a
+   named section in a section locator instead; never combine page and section
+   text in one locator.
 
 2. For each observation:
    a. State whether its cause is already established.
@@ -52,7 +55,7 @@ Respond with a single JSON object and no other text:
   "observations": [
     {
       "source_id": "<id of the article>",
-      "locator": {"kind": "page|section|figure|table", "at": "<value>"},
+      "locator": {"kind": "page", "at": 1},
       "observation": "<what was observed>",
       "cause_established": <bool>,
       "consistent_with_hypothesis": <bool>,
