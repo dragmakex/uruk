@@ -130,25 +130,25 @@ export function LiveRun({
       <div className="canvas">
         {stream.status === "failed" ? (
           <div className="error-box" role="alert">
-            <h1>The run stream is unavailable</h1>
+            <h1>Unavailable</h1>
             <p>
               The uruk API did not answer for run {runId}. Check that
               `uruk serve` is running, then reload.
             </p>
-            <p className="error-kind">status: stream closed</p>
+            <p className="error-kind">Closed</p>
           </div>
         ) : stream.parseErrors > 0 ? (
           // Frames arrive but fail validation: a frontend/API contract
           // drift. Say so rather than showing "Connecting" forever.
           <div className="error-box" role="alert">
-            <h1>The run snapshot could not be read</h1>
+            <h1>Invalid</h1>
             <p>
               The API is answering, but its snapshots do not match what this
               console expects ({stream.parseErrors} rejected). The frontend
               and `uruk serve` are probably different versions; rebuild or
               restart both.
             </p>
-            <p className="error-kind">status: contract drift</p>
+            <p className="error-kind">Mismatched</p>
           </div>
         ) : (
           <div className="empty-state" aria-busy="true">
@@ -203,22 +203,14 @@ export function LiveRun({
 
         {stopError !== null && (
           <div className="error-box" role="alert" style={{ marginBottom: 24 }}>
-            <h2>Stop failed</h2>
+            <h2>Failed</h2>
             <p>{stopError}</p>
           </div>
         )}
 
         {terminal && (
           <div className="empty-state" style={{ marginBottom: 32, maxWidth: "none" }}>
-            <h2>
-              {run.state === "completed"
-                ? "Completed"
-                : `Run ${stateLabel(run.state)}${
-                    run.stop_condition
-                      ? ` (${run.stop_condition.replace(/_/g, " ")})`
-                      : ""
-                  }`}
-            </h2>
+            <h2>{stateLabel(run.state).replace(/^./, (letter) => letter.toUpperCase())}</h2>
             <p>
               {usage.model_calls} model calls, {usage.tokens.toLocaleString("en-US")}{" "}
               tokens,{" "}
@@ -253,9 +245,9 @@ export function LiveRun({
             aria-label="Queued"
             style={{ marginBottom: 32, maxWidth: "none" }}
           >
-            <h2>Queued, position {run.queue_position}</h2>
+            <h2>Queued</h2>
             <p>
-              Runs execute one at a time: yours in the order you started
+              position {run.queue_position}. Runs execute one at a time: yours in the order you started
               them, taking turns with other researchers&apos; runs:{" "}
               {queueNote(run.queue_position)}. Research begins when this run
               reaches its turn. Stop remains available.
@@ -270,7 +262,7 @@ export function LiveRun({
             aria-label="Model provider status"
             style={{ marginBottom: 24 }}
           >
-            <h2>The active run is waiting for the model provider</h2>
+            <h2>Waiting</h2>
             <p>
               Your place in the queue is preserved and this run will start
               automatically when its turn comes; no action is required. Your
@@ -286,7 +278,7 @@ export function LiveRun({
             aria-label="Model provider status"
             style={{ marginBottom: 24, maxWidth: "none" }}
           >
-            <h2>Model provider available again</h2>
+            <h2>Available</h2>
             <p>
               The queue is moving again. Your place is unchanged and this run
               will start automatically when its turn comes; no action is
@@ -302,7 +294,7 @@ export function LiveRun({
             aria-label="Waiting for the model provider"
             style={{ marginBottom: 24 }}
           >
-            <h2>Waiting for the model provider</h2>
+            <h2>Waiting</h2>
             <p>
               This run is still live: it is {providerWaitNote(run.provider_wait)}.
               Work resumes automatically when the provider answers again, and

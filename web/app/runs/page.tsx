@@ -10,16 +10,23 @@ import type { RunOverview } from "@/lib/types";
 export const metadata: Metadata = { title: "Runs" };
 export const dynamic = "force-dynamic";
 
-/** The state as the card prints it: queued runs say where they stand, a
- * running run waiting out a provider outage says so (it is not failed). */
+/** A card's status line is deliberately one word. */
 function cardState(run: RunOverview): string {
-  if (run.state === "queued" && run.queue_position !== null) {
-    return `queued, position ${run.queue_position} (${queueNote(run.queue_position)})`;
-  }
   if (run.state === "running" && run.paused_since !== null) {
-    return "running, waiting for provider";
+    return "waiting";
   }
   return stateLabel(run.state);
+}
+
+/** Operational detail belongs below the question, not in the status line. */
+function cardDetail(run: RunOverview): string | null {
+  if (run.state === "queued" && run.queue_position !== null) {
+    return `position ${run.queue_position} (${queueNote(run.queue_position)})`;
+  }
+  if (run.state === "running" && run.paused_since !== null) {
+    return "waiting for provider";
+  }
+  return null;
 }
 
 function RunCard({ run }: { run: RunOverview }) {
@@ -30,13 +37,14 @@ function RunCard({ run }: { run: RunOverview }) {
         <span className="micro">
           run {shortRunId(run.id)}, {created} UTC
         </span>
-        <span className="micro-ink">{cardState(run)}</span>
+        <span className="micro-ink" aria-label="run status">{cardState(run)}</span>
       </div>
       <p className="run-card-question" style={{ margin: 0 }}>
         {run.question}
       </p>
       <p className="micro" style={{ marginTop: 6, marginBottom: 0 }}>
         {run.mode}
+        {cardDetail(run) ? `, ${cardDetail(run)}` : ""}
         {run.stop_condition ? `, ${run.stop_condition.replace(/_/g, " ")}` : ""}
         {run.iterations > 0
           ? `, ${run.iterations} round${run.iterations === 1 ? "" : "s"}`

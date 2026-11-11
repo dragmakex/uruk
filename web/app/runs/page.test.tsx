@@ -63,7 +63,10 @@ describe("RunsPage queue facts", () => {
     ]);
     render(await RunsPage());
 
-    expect(screen.getByText(/queued, position 2/)).toBeInTheDocument();
+    const statuses = screen.getAllByLabelText("run status", { selector: "span" });
+    expect(statuses[0]).toHaveTextContent("queued");
+    expect(statuses[1]).toHaveTextContent("waiting");
+    expect(screen.getByText(/position 2/)).toBeInTheDocument();
     expect(screen.getByText(/waiting for provider/)).toBeInTheDocument();
     expect(screen.queryByText(/failed/)).not.toBeInTheDocument();
   });
