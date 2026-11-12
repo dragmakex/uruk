@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { ApiDown } from "@/components/ApiDown";
 import { ReportMarkdown } from "@/components/ReportMarkdown";
 import { ApiFailure, fetchReport } from "@/lib/api";
-import { shortRunId } from "@/lib/format";
+import { shortRunId, stateLabel } from "@/lib/format";
 import { identityCookieHeader } from "@/lib/server-identity";
 import type { ReportView } from "@/lib/types";
 
@@ -16,7 +16,13 @@ function manifestFacts(
 ): Array<{ label: string; value: string }> {
   const facts: Array<{ label: string; value: string }> = [];
   if (typeof manifest.state === "string") {
-    facts.push({ label: "state", value: manifest.state });
+    const state = manifest.state === "budget-exhausted"
+      ? stateLabel("budget-exhausted")
+      : manifest.state;
+    facts.push({
+      label: "state",
+      value: state.replace(/^./, (letter) => letter.toUpperCase()),
+    });
   }
   if (typeof manifest.partial === "boolean") {
     facts.push({ label: "partial", value: manifest.partial ? "yes" : "no" });
