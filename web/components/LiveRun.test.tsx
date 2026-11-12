@@ -107,10 +107,10 @@ describe("LiveRun", () => {
   });
 
   it.each([
-    ["budget-exhausted", "Exhausted"],
+    ["budget-exhausted", "Budget exhausted"],
     ["cancelled", "Cancelled"],
     ["failed", "Failed"],
-  ])("uses a one-word heading for the %s status", (state, heading) => {
+  ])("uses a concise heading for the %s status", (state, heading) => {
     const finished = snapshotFixture() as { run: Record<string, unknown> };
     finished.run.state = state;
     finished.run.stop_condition = "model_call_budget_reached";

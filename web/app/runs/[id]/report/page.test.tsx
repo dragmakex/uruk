@@ -41,4 +41,17 @@ describe("ReportPage", () => {
       screen.getByRole("heading", { level: 2, name: "2. Findings" }),
     ).toBeInTheDocument();
   });
+
+  it("renders the budget status as plain UI copy", async () => {
+    fetchReportMock.mockResolvedValue({
+      run_id: "run_4b7b",
+      markdown: "# Report\n",
+      manifest: { state: "budget-exhausted", partial: true },
+    });
+
+    render(await ReportPage({ params: Promise.resolve({ id: "run_4b7b" }) }));
+
+    expect(screen.getByText("Budget exhausted")).toBeInTheDocument();
+    expect(screen.queryByText("budget-exhausted")).not.toBeInTheDocument();
+  });
 });

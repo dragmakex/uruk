@@ -65,7 +65,7 @@ export function isTerminal(state: RunState): boolean {
 export function stateLabel(state: RunState): string {
   switch (state) {
     case "budget-exhausted":
-      return "exhausted";
+      return "budget exhausted";
     default:
       return state;
   }

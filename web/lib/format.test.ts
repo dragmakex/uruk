@@ -77,7 +77,7 @@ describe("roundLabel", () => {
 describe("stateLabel", () => {
   it("humanizes the kebab-case run states", () => {
     expect(stateLabel("running")).toBe("running");
-    expect(stateLabel("budget-exhausted")).toBe("exhausted");
+    expect(stateLabel("budget-exhausted")).toBe("budget exhausted");
   });
 });
 

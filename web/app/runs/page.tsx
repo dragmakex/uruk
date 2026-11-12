@@ -10,7 +10,7 @@ import type { RunOverview } from "@/lib/types";
 export const metadata: Metadata = { title: "Runs" };
 export const dynamic = "force-dynamic";
 
-/** A card's status line is deliberately one word. */
+/** A card's status line is deliberately concise. */
 function cardState(run: RunOverview): string {
   if (run.state === "running" && run.paused_since !== null) {
     return "waiting";
