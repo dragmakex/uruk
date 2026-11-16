@@ -27,6 +27,7 @@ import {
   parseSources,
   parseStartedRun,
   parseTaskReasoning,
+  parseTournamentFeed,
   parseUpload,
   parseUploads,
 } from "./parse";
@@ -44,6 +45,7 @@ import type {
   SourceView,
   StartRunInput,
   TaskReasoning,
+  TournamentFeed,
   UploadView,
 } from "./types";
 
@@ -131,6 +133,24 @@ export async function fetchTaskReasoning(
       cookie,
     ),
   );
+}
+
+/**
+ * The recorded tournament so far: every match this run played, with the
+ * Elo movement each verdict caused. Read-only; a run with no matches yet
+ * answers with an empty feed rather than a placeholder.
+ */
+export async function fetchTournament(
+  runId: string,
+  cookie?: string,
+): Promise<TournamentFeed> {
+  const body = await request(
+    `/api/runs/${encodeURIComponent(runId)}/tournament`,
+    undefined,
+    cookie,
+  );
+  const envelope = body as { tournament?: unknown };
+  return parseTournamentFeed(envelope.tournament);
 }
 
 export async function fetchReport(

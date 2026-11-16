@@ -1095,6 +1095,161 @@ details.legend-fold .legend-line {
   }
 }
 
+/* ---------- match log ---------- */
+
+.match-log {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.match-card {
+  border: var(--hairline) solid var(--line);
+  background: var(--surface);
+  padding: 14px 18px 12px;
+}
+
+/* A match that arrived while this panel was open draws once, so the log
+   reads as something that is happening rather than a static report. */
+@media (prefers-reduced-motion: no-preference) {
+  .match-card[data-fresh="true"] {
+    animation: match-arrive 420ms ease-out;
+  }
+}
+
+@keyframes match-arrive {
+  from {
+    border-color: var(--focus);
+    background: var(--surface-raised);
+  }
+  to {
+    border-color: var(--line);
+    background: var(--surface);
+  }
+}
+
+.match-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 14px;
+  padding-bottom: 10px;
+  border-bottom: var(--hairline) solid var(--line-soft);
+}
+
+.match-verdict {
+  margin-left: auto;
+  color: var(--ink);
+}
+
+.match-sides {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.match-side {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto auto;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 0;
+}
+
+.match-side + .match-side {
+  border-top: var(--hairline) dotted var(--line-soft);
+}
+
+.match-side-mark {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1;
+  text-align: center;
+  border: var(--hairline) solid var(--line-soft);
+  color: var(--muted);
+}
+
+.match-side-won .match-side-mark {
+  border-color: var(--ink);
+  background: var(--fill);
+  color: var(--fill-ink);
+}
+
+.match-side-lost .match-side-mark {
+  opacity: 0.55;
+}
+
+.match-side-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.match-side-won .match-side-title {
+  font-weight: 650;
+}
+
+.match-side-lost .match-side-title {
+  color: var(--muted);
+}
+
+.match-side-elo {
+  white-space: nowrap;
+}
+
+.match-side-delta {
+  min-width: 44px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.delta-up {
+  color: var(--ink);
+}
+
+.delta-down {
+  color: var(--muted);
+}
+
+.match-rationale {
+  margin: 10px 0 0;
+  padding-left: 30px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--ink);
+  border-left: var(--hairline) solid var(--line-soft);
+  margin-left: 9px;
+}
+
+.match-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 14px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: var(--hairline) solid var(--line-soft);
+}
+
+@media (max-width: 640px) {
+  .match-side {
+    grid-template-columns: 18px minmax(0, 1fr) auto;
+  }
+
+  .match-side-delta {
+    display: none;
+  }
+
+  .match-rationale {
+    padding-left: 0;
+    margin-left: 0;
+    border-left: 0;
+  }
+}
+
 /* ---------- run list ---------- */
 
 .run-card {

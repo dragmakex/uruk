@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   elapsedBetween,
   formatClock,
+  formatDelta,
   formatElo,
   providerWaitNote,
   queueNote,
@@ -109,5 +110,19 @@ describe("queue and provider-wait labels", () => {
     expect(
       providerWaitNote({ since: "2026-10-04T14:03:00Z", note: null }),
     ).toBe("waiting for the model provider since 14:03 UTC");
+  });
+});
+
+describe("formatDelta", () => {
+  it("signs both directions and keeps one decimal", () => {
+    expect(formatDelta(16)).toBe("+16");
+    expect(formatDelta(-16)).toBe("-16");
+    expect(formatDelta(7.25)).toBe("+7.3");
+    expect(formatDelta(-0.4)).toBe("-0.4");
+  });
+
+  it("prints a verdict that moved nothing as a plain zero", () => {
+    expect(formatDelta(0)).toBe("0");
+    expect(formatDelta(-0.04)).toBe("0");
   });
 });

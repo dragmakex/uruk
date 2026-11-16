@@ -281,6 +281,91 @@ fn panel_for_role(
     }
 }
 
+/// One side of a recorded match: the candidate as the judge saw it, with
+/// the rating movement the verdict caused.
+#[derive(Debug, Serialize)]
+pub struct FeedSide {
+    pub item_id: String,
+    pub title: String,
+    pub rating_before: f64,
+    pub rating_after: f64,
+    /// `rating_after - rating_before`, signed. Zero when the verdict
+    /// changed nothing (an `insufficient_basis` match).
+    pub delta: f64,
+}
+
+/// One recorded match as a feed entry: both candidates, the verdict, the
+/// judge that gave it, and the rating movement it produced.
+#[derive(Debug, Serialize)]
+pub struct FeedMatch {
+    pub id: String,
+    pub method: String,
+    pub judge_model: String,
+    pub outcome: String,
+    pub rationale: String,
+    /// The candidate presented first (`order_randomized` says whether that
+    /// order was shuffled).
+    pub first: FeedSide,
+    /// The candidate presented second.
+    pub second: FeedSide,
+    pub order_randomized: bool,
+    pub created_at: String,
+    /// The task that produced this match, when one is recorded.
+    pub produced_by: Option<String>,
+}
+
+/// Every match the engine recorded for one run, in recording order.
+#[derive(Debug, Serialize)]
+pub struct TournamentFeed {
+    pub run_id: String,
+    pub matches: Vec<FeedMatch>,
+}
+
+/// Build the tournament feed from persisted matches. Titles come from the
+/// item records; a match whose candidate has since been removed keeps its
+/// ID as the label rather than inventing one.
+pub async fn tournament_feed(store: &Store, run_id: &RunId) -> Result<TournamentFeed> {
+    let matches = store.list_matches(run_id).await?;
+    let titles: HashMap<String, String> = store
+        .item_summaries(run_id, None)
+        .await?
+        .into_iter()
+        .map(|item| (item.id.as_str().to_string(), item.title))
+        .collect();
+
+    let side = |item_id: &ItemId, before: f64, after: f64| FeedSide {
+        item_id: item_id.as_str().to_string(),
+        title: titles
+            .get(item_id.as_str())
+            .cloned()
+            .unwrap_or_else(|| item_id.as_str().to_string()),
+        rating_before: before,
+        rating_after: after,
+        delta: after - before,
+    };
+
+    let entries = matches
+        .iter()
+        .map(|m| FeedMatch {
+            id: m.id.as_str().to_string(),
+            method: m.method.as_str().to_string(),
+            judge_model: m.judge_model.clone(),
+            outcome: m.outcome.as_str().to_string(),
+            rationale: m.rationale.clone(),
+            first: side(&m.item_a, m.rating_a_before, m.rating_a_after),
+            second: side(&m.item_b, m.rating_b_before, m.rating_b_after),
+            order_randomized: m.order_randomized,
+            created_at: rfc3339(m.created_at),
+            produced_by: m.produced_by.as_ref().map(|task| task.as_str().to_string()),
+        })
+        .collect();
+
+    Ok(TournamentFeed {
+        run_id: run_id.as_str().to_string(),
+        matches: entries,
+    })
+}
+
 /// Build the complete snapshot for one run.
 pub async fn run_snapshot(store: &Store, run_id: &RunId) -> Result<RunSnapshot> {
     let run = store.get_run(run_id).await?;

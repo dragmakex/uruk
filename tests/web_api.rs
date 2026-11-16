@@ -316,6 +316,87 @@ async fn run_snapshot_ranks_items_by_rating_and_counts_reviews() {
 }
 
 #[tokio::test]
+async fn tournament_feed_reports_each_match_with_its_rating_movement() {
+    let (app, fixture) = seeded_app(Mode::Campaign).await;
+    let first = common::seed_item(&fixture, "Alpha candidate").await;
+    let second = common::seed_item(&fixture, "Beta candidate").await;
+    let plan_id = fixture.plan.id.clone();
+    for item in [&first, &second] {
+        fixture
+            .store
+            .ensure_rating(&item.id, &plan_id)
+            .await
+            .unwrap();
+    }
+    let m = uruk::records::Match {
+        id: uruk::records::MatchId::new(),
+        schema_version: uruk::records::SCHEMA_VERSION,
+        run_id: fixture.run_id.clone(),
+        item_a: first.id.clone(),
+        item_b: second.id.clone(),
+        rubric_id: plan_id,
+        evidence_snapshot: uruk::records::ContentHash::of_str("evidence"),
+        order_randomized: true,
+        method: uruk::records::MatchMethod::Debate,
+        judge_model: "judge-test".into(),
+        outcome: uruk::records::MatchOutcome::WinA,
+        rationale: "Alpha explains the observed effect; Beta does not.".into(),
+        rating_a_before: 0.0,
+        rating_b_before: 0.0,
+        rating_a_after: 0.0,
+        rating_b_after: 0.0,
+        produced_by: None,
+        created_at: time::OffsetDateTime::now_utc(),
+    };
+    fixture
+        .store
+        .commit_match(&m, "tournament-feed-test", uruk::records::DEFAULT_K)
+        .await
+        .unwrap();
+
+    let uri = format!("/api/runs/{}/tournament", fixture.run_id);
+    let response = app.oneshot(get(&uri)).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    assert_eq!(body["ok"], true);
+
+    let matches = body["tournament"]["matches"]
+        .as_array()
+        .expect("matches array");
+    assert_eq!(matches.len(), 1, "one recorded match, one feed entry");
+    let entry = &matches[0];
+    assert_eq!(entry["method"], "debate");
+    assert_eq!(entry["outcome"], "win_a");
+    assert_eq!(entry["judge_model"], "judge-test");
+    assert_eq!(entry["order_randomized"], true);
+    assert_eq!(entry["first"]["item_id"], first.id.as_str());
+    assert_eq!(entry["first"]["title"], "Alpha candidate");
+    assert_eq!(entry["second"]["title"], "Beta candidate");
+
+    // The winner gains what the loser loses: the feed reports real Elo.
+    let gain = entry["first"]["delta"].as_f64().unwrap();
+    let loss = entry["second"]["delta"].as_f64().unwrap();
+    assert!(gain > 0.0, "winner gains rating, got {gain}");
+    assert!(loss < 0.0, "loser loses rating, got {loss}");
+    assert!((gain + loss).abs() < 1e-9, "zero-sum: {gain} vs {loss}");
+    assert_eq!(
+        entry["first"]["rating_after"].as_f64().unwrap(),
+        uruk::records::INITIAL_ELO + gain
+    );
+}
+
+#[tokio::test]
+async fn tournament_feed_is_empty_for_a_run_with_no_matches() {
+    let (app, fixture) = seeded_app(Mode::Campaign).await;
+    let uri = format!("/api/runs/{}/tournament", fixture.run_id);
+    let response = app.oneshot(get(&uri)).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    // Nothing happened, so the feed says nothing: no placeholder entries.
+    assert_eq!(body["tournament"]["matches"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
 async fn stop_marks_the_run_cancelled_and_records_the_decision() {
     let (app, fixture) = seeded_app(Mode::Campaign).await;
     let uri = format!("/api/runs/{}/stop", fixture.run_id);

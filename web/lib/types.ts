@@ -305,6 +305,63 @@ export interface ReportView {
   manifest: Record<string, unknown> | null;
 }
 
+/**
+ * One side of a recorded comparison, with the rating it entered and left
+ * with. `delta` is what the match did to that candidate, and it is zero
+ * when the verdict updated nothing (an insufficient basis).
+ */
+export interface TournamentSide {
+  item_id: string;
+  /** The candidate's title, or its ID when the record no longer has one. */
+  title: string;
+  rating_before: number;
+  rating_after: number;
+  delta: number;
+}
+
+/**
+ * Which side won, in presentation order. `first` is the candidate the judge
+ * saw first (`item_a`), so a verdict maps onto a stable ID; `win_a` means
+ * the first side won, not that a particular candidate won.
+ */
+export type MatchOutcome = "win_a" | "win_b" | "draw" | "insufficient_basis";
+
+export const MATCH_OUTCOMES: readonly MatchOutcome[] = [
+  "win_a",
+  "win_b",
+  "draw",
+  "insufficient_basis",
+];
+
+/** How a comparison was conducted: one turn, or a multi-turn debate. */
+export type MatchMethod = "pairwise" | "debate";
+
+export const MATCH_METHODS: readonly MatchMethod[] = ["pairwise", "debate"];
+
+/** One recorded match, as the tournament feed reports it. */
+export interface TournamentMatch {
+  id: string;
+  method: MatchMethod;
+  /** Model and configuration that judged. */
+  judge_model: string;
+  outcome: MatchOutcome;
+  /** The judge's stated reason, in its own words. */
+  rationale: string;
+  first: TournamentSide;
+  second: TournamentSide;
+  /** True when the pair was shuffled before presentation. */
+  order_randomized: boolean;
+  created_at: string;
+  /** The task that played the match, if the record names one. */
+  produced_by: string | null;
+}
+
+export interface TournamentFeed {
+  run_id: string;
+  /** Every recorded match for this run, oldest first as the API returns it. */
+  matches: TournamentMatch[];
+}
+
 /** The stable error body every API error returns. */
 export interface ApiErrorBody {
   error: string;

@@ -215,6 +215,16 @@ pub async fn sources(
     Ok(Json(serde_json::json!({"ok": true, "sources": sources})))
 }
 
+/// Every recorded tournament match for this run, in recording order, with
+/// the rating movement each verdict caused.
+pub async fn tournament(
+    State(state): State<AppState>,
+    OwnedRun(run_id): OwnedRun,
+) -> ApiResult<Json<serde_json::Value>> {
+    let feed = view::tournament_feed(state.store(), &run_id).await?;
+    Ok(Json(serde_json::json!({"ok": true, "tournament": feed})))
+}
+
 /// Metadata filters for the library listing. Empty values mean "no
 /// filter" (an untouched form field submits an empty string); unknown
 /// parameter names and unknown filter values are validation errors.

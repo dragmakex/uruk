@@ -117,3 +117,66 @@ export function snapshotFixture(): unknown {
     ],
   };
 }
+
+/**
+ * A tournament feed as the API reports it: two matches, one decided and
+ * one declined for lack of basis, so both rating movements a log can show
+ * (a real shift and a deliberate zero) are covered by one fixture.
+ */
+export function tournamentFixture(): unknown {
+  return {
+    run_id: "run_0412aa",
+    matches: [
+      {
+        id: "match_01",
+        method: "pairwise",
+        judge_model: "deepseek-v4.1-flash",
+        outcome: "win_a",
+        rationale:
+          "The first candidate names the escape mechanism and the readout that would falsify it; the second only restates the premise.",
+        first: {
+          item_id: "item_h7",
+          title: "XBP1 splicing escape",
+          rating_before: 1200.0,
+          rating_after: 1216.0,
+          delta: 16.0,
+        },
+        second: {
+          item_id: "item_k2",
+          title: "IRE1 armouring",
+          rating_before: 1200.0,
+          rating_after: 1184.0,
+          delta: -16.0,
+        },
+        order_randomized: true,
+        created_at: "2026-10-04T14:02:11Z",
+        produced_by: "task_m01",
+      },
+      {
+        id: "match_02",
+        method: "debate",
+        judge_model: "deepseek-v4.1-flash",
+        outcome: "insufficient_basis",
+        rationale:
+          "Both sides cite the same two papers and neither defends a distinct prediction, so there is nothing to separate them.",
+        first: {
+          item_id: "item_k2",
+          title: "IRE1 armouring",
+          rating_before: 1184.0,
+          rating_after: 1184.0,
+          delta: 0,
+        },
+        second: {
+          item_id: "item_m9",
+          title: "PERK titration",
+          rating_before: 1200.0,
+          rating_after: 1200.0,
+          delta: 0,
+        },
+        order_randomized: false,
+        created_at: "2026-10-04T14:06:40Z",
+        produced_by: null,
+      },
+    ],
+  };
+}

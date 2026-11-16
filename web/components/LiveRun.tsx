@@ -18,6 +18,7 @@ import { useRunStream, type StreamStatus } from "@/lib/sse";
 import type { RunSnapshot } from "@/lib/types";
 import { RankingList } from "./RankingList";
 import { Topology } from "./Topology";
+import { TournamentFeed } from "./TournamentFeed";
 
 function connectionNote(status: StreamStatus): string | null {
   switch (status) {
@@ -330,6 +331,17 @@ export function LiveRun({
                 <span className="micro">Dashed box: idle</span>
               </div>
             </details>
+
+            <section className="items-section" aria-label="Match log">
+              <div className="items-head">
+                <h2>Match log</h2>
+                <span className="micro">
+                  {stats.matches}{" "}
+                  {stats.matches === 1 ? "match" : "matches"} judged
+                </span>
+              </div>
+              <TournamentFeed runId={run.id} matchCount={stats.matches} />
+            </section>
 
             <section className="items-section" aria-label="Ranked candidates">
               <div className="items-head">

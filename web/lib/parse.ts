@@ -22,6 +22,8 @@ import type {
   ItemCard,
   Leader,
   LibraryPassageHit,
+  MatchMethod,
+  MatchOutcome,
   PassagePage,
   PassageView,
   PlanView,
@@ -39,9 +41,11 @@ import type {
   TaskCounts,
   TaskFacts,
   TaskReasoning,
+  TournamentFeed,
+  TournamentSide,
   UploadView,
 } from "./types";
-import { RUN_STATES } from "./types";
+import { MATCH_METHODS, MATCH_OUTCOMES, RUN_STATES } from "./types";
 
 export class ParseError extends Error {
   constructor(path: string, expected: string, got: unknown) {
@@ -500,6 +504,62 @@ export function parseCitations(value: unknown): CitationView[] {
       resolution: parseResolution(c.resolution, `citations[${i}].resolution`),
     };
   });
+}
+
+function parseMatchOutcome(value: unknown, path: string): MatchOutcome {
+  const s = str(value, path);
+  if (!(MATCH_OUTCOMES as readonly string[]).includes(s)) {
+    throw new ParseError(path, `one of ${MATCH_OUTCOMES.join(", ")}`, s);
+  }
+  return s as MatchOutcome;
+}
+
+function parseMatchMethod(value: unknown, path: string): MatchMethod {
+  const s = str(value, path);
+  if (!(MATCH_METHODS as readonly string[]).includes(s)) {
+    throw new ParseError(path, `one of ${MATCH_METHODS.join(", ")}`, s);
+  }
+  return s as MatchMethod;
+}
+
+function parseTournamentSide(value: unknown, path: string): TournamentSide {
+  const s = record(value, path);
+  return {
+    item_id: str(s.item_id, `${path}.item_id`),
+    title: str(s.title, `${path}.title`),
+    rating_before: num(s.rating_before, `${path}.rating_before`),
+    rating_after: num(s.rating_after, `${path}.rating_after`),
+    delta: num(s.delta, `${path}.delta`),
+  };
+}
+
+/**
+ * Validate the tournament feed. A match is only usable if every fact that
+ * explains it survives: both sides, the verdict, the judge, and the stated
+ * rationale. Nothing is defaulted, because a fabricated rationale would
+ * read as the judge's own words.
+ */
+export function parseTournamentFeed(value: unknown): TournamentFeed {
+  const r = record(value, "tournament response");
+  return {
+    run_id: str(r.run_id, "tournament response.run_id"),
+    matches: array(r.matches, "tournament response.matches").map((v, i) => {
+      const path = `matches[${i}]`;
+      const m = record(v, path);
+      return {
+        id: str(m.id, `${path}.id`),
+        method: parseMatchMethod(m.method, `${path}.method`),
+        judge_model: str(m.judge_model, `${path}.judge_model`),
+        outcome: parseMatchOutcome(m.outcome, `${path}.outcome`),
+        rationale: str(m.rationale, `${path}.rationale`),
+        first: parseTournamentSide(m.first, `${path}.first`),
+        second: parseTournamentSide(m.second, `${path}.second`),
+        order_randomized: bool(m.order_randomized, `${path}.order_randomized`),
+        created_at: str(m.created_at, `${path}.created_at`),
+        produced_by: strOrNull(m.produced_by, `${path}.produced_by`),
+      };
+    }),
+  };
 }
 
 /** Validate the report payload. */
