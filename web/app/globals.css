@@ -688,6 +688,20 @@ a {
   display: none;
 }
 
+/* A dot of ink travelling a wire: work moving from one role to the next.
+   SMIL drives the travel, so the element only needs to look like a parcel. */
+.handoff-pulse {
+  fill: var(--ink);
+  stroke: none;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .handoff-pulse {
+    display: none;
+  }
+}
+
 @media (max-width: 1439px) {
   .topology {
     grid-template-columns: minmax(210px, 250px) minmax(0, 1fr);

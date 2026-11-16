@@ -16,6 +16,8 @@ import {
 } from "@/lib/format";
 import { useRunStream, type StreamStatus } from "@/lib/sse";
 import type { RunSnapshot } from "@/lib/types";
+import { moveSentence } from "@/lib/handoff";
+import { roleLabel } from "@/lib/roles";
 import { RankingList } from "./RankingList";
 import { Topology } from "./Topology";
 import { TournamentFeed } from "./TournamentFeed";
@@ -321,7 +323,12 @@ export function LiveRun({
               </span>
             </div>
 
-            <Topology runId={run.id} agents={agents} stats={stats} />
+            <Topology
+              runId={run.id}
+              agents={agents}
+              stats={stats}
+              onMove={(move) => setAnnouncement(moveSentence(move, roleLabel))}
+            />
 
             <details className="legend-fold" open>
               <summary>Key</summary>
