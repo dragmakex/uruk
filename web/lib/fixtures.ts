@@ -81,6 +81,7 @@ export function snapshotFixture(): unknown {
       items: 13,
       reviews: 4,
       matches: 34,
+      decisions: 5,
       clusters: 4,
       sources: 41,
       works: 0,

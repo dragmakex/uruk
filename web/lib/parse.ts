@@ -19,6 +19,8 @@ import type {
   CitationResolutionView,
   CandidateHistory,
   CitationView,
+  DecisionLedger,
+  DecisionView,
   GoalView,
   HistoryEntry,
   HistoryResult,
@@ -287,6 +289,7 @@ function parseStats(value: unknown, path: string): Stats {
     items: num(r.items, `${path}.items`),
     reviews: num(r.reviews, `${path}.reviews`),
     matches: num(r.matches, `${path}.matches`),
+    decisions: num(r.decisions, `${path}.decisions`),
     clusters: num(r.clusters, `${path}.clusters`),
     sources: num(r.sources, `${path}.sources`),
     works: num(r.works, `${path}.works`),
@@ -561,6 +564,34 @@ export function parseTournamentFeed(value: unknown): TournamentFeed {
         created_at: str(m.created_at, `${path}.created_at`),
         produced_by: strOrNull(m.produced_by, `${path}.produced_by`),
       };
+    }),
+  };
+}
+
+/**
+ * Validate the decisions ledger. `kind` is deliberately not narrowed to a
+ * union: an engine that records a kind this build has never heard of is
+ * still telling the truth, and the ledger should show it rather than drop
+ * the row.
+ */
+export function parseDecisionLedger(value: unknown): DecisionLedger {
+  const r = record(value, "ledger response");
+  return {
+    run_id: str(r.run_id, "ledger response.run_id"),
+    decisions: array(r.decisions, "ledger response.decisions").map((v, i) => {
+      const path = `decisions[${i}]`;
+      const d = record(v, path);
+      const decision: DecisionView = {
+        id: str(d.id, `${path}.id`),
+        kind: str(d.kind, `${path}.kind`),
+        actor: str(d.actor, `${path}.actor`),
+        reason: str(d.reason, `${path}.reason`),
+        referenced: array(d.referenced, `${path}.referenced`).map((ref, j) =>
+          str(ref, `${path}.referenced[${j}]`),
+        ),
+        created_at: str(d.created_at, `${path}.created_at`),
+      };
+      return decision;
     }),
   };
 }

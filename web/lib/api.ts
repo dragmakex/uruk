@@ -15,6 +15,7 @@
 
 import {
   parseApiError,
+  parseDecisionLedger,
   parseCandidateHistory,
   parseCitations,
   parseLibraryPassageHits,
@@ -35,6 +36,7 @@ import {
 import type {
   CandidateHistory,
   CitationView,
+  DecisionLedger,
   LibraryFilter,
   LibraryPassageHit,
   PassagePage,
@@ -153,6 +155,24 @@ export async function fetchTournament(
   );
   const envelope = body as { tournament?: unknown };
   return parseTournamentFeed(envelope.tournament);
+}
+
+/**
+ * The run's decisions, oldest first. A run that has decided nothing answers
+ * with an empty ledger rather than a placeholder, and the page re-reads it
+ * when the snapshot's decision count changes.
+ */
+export async function fetchDecisions(
+  runId: string,
+  cookie?: string,
+): Promise<DecisionLedger> {
+  const body = await request(
+    `/api/runs/${encodeURIComponent(runId)}/decisions`,
+    undefined,
+    cookie,
+  );
+  const envelope = body as { ledger?: unknown };
+  return parseDecisionLedger(envelope.ledger);
 }
 
 /**

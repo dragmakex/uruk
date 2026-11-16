@@ -169,6 +169,9 @@ pub struct Stats {
     pub items: u32,
     pub reviews: u32,
     pub matches: u32,
+    /// Decisions on the record, so the page can tell when the ledger it
+    /// last read is out of date.
+    pub decisions: u32,
     pub clusters: u32,
     pub sources: u32,
     pub works: u32,
@@ -366,6 +369,58 @@ pub async fn tournament_feed(store: &Store, run_id: &RunId) -> Result<Tournament
     })
 }
 
+/// One recorded decision: who took it, what kind it was, why, and which
+/// records it refers to. The structured `payload` is deliberately left out:
+/// it is shaped per kind, and a ledger that renders it as prose would be
+/// inventing a reading of it.
+#[derive(Debug, Serialize)]
+pub struct DecisionView {
+    pub id: String,
+    pub kind: String,
+    /// `researcher`, `supervisor`, `system`, or the agent's own name.
+    pub actor: String,
+    /// The actor's stated reason, in its own words.
+    pub reason: String,
+    pub referenced: Vec<String>,
+    pub created_at: String,
+}
+
+/// Every decision on the run's record, in the order it was taken.
+#[derive(Debug, Serialize)]
+pub struct DecisionLedger {
+    pub run_id: String,
+    pub decisions: Vec<DecisionView>,
+}
+
+fn actor_label(actor: &Actor) -> String {
+    match actor {
+        Actor::Researcher => "researcher".to_string(),
+        Actor::Supervisor => "supervisor".to_string(),
+        Actor::Agent(name) => name.clone(),
+        Actor::System => "system".to_string(),
+    }
+}
+
+/// The run's decisions, oldest first: a ledger reads as the sequence of
+/// choices the run actually made.
+pub async fn decision_ledger(store: &Store, run_id: &RunId) -> Result<DecisionLedger> {
+    let decisions = store.list_decisions(run_id).await?;
+    Ok(DecisionLedger {
+        run_id: run_id.as_str().to_string(),
+        decisions: decisions
+            .iter()
+            .map(|d| DecisionView {
+                id: d.id.as_str().to_string(),
+                kind: d.kind.as_str().to_string(),
+                actor: actor_label(&d.actor),
+                reason: d.reason.clone(),
+                referenced: d.referenced.clone(),
+                created_at: rfc3339(d.created_at),
+            })
+            .collect(),
+    })
+}
+
 /// One match as a single candidate's history reads it: the opponent, what
 /// the verdict meant from this candidate's side, and the rating it moved.
 #[derive(Debug, Serialize)]
@@ -480,6 +535,7 @@ pub async fn run_snapshot(store: &Store, run_id: &RunId) -> Result<RunSnapshot> 
     sort_items(&mut items);
 
     let matches = store.list_matches(run_id).await?.len() as u32;
+    let decisions = store.count_decisions(run_id).await?;
     let clusters = store.list_clusters(run_id).await?.len() as u32;
     let sources = store.list_sources(run_id).await?.len() as u32;
     let works = store.list_works(run_id).await?.len() as u32;
@@ -600,6 +656,7 @@ pub async fn run_snapshot(store: &Store, run_id: &RunId) -> Result<RunSnapshot> 
             items: items.len() as u32,
             reviews,
             matches,
+            decisions,
             clusters,
             sources,
             works,

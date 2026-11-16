@@ -274,6 +274,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/runs/{run_id}/report.md", get(routes::report_markdown))
         .route("/api/runs/{run_id}/sources", get(routes::sources))
         .route("/api/runs/{run_id}/tournament", get(routes::tournament))
+        .route("/api/runs/{run_id}/decisions", get(routes::decisions))
         .route(
             "/api/runs/{run_id}/items/{item_id}/matches",
             get(routes::candidate_matches),

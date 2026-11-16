@@ -225,6 +225,15 @@ pub async fn tournament(
     Ok(Json(serde_json::json!({"ok": true, "tournament": feed})))
 }
 
+/// The run's decisions, oldest first: what was chosen, by whom, and why.
+pub async fn decisions(
+    State(state): State<AppState>,
+    OwnedRun(run_id): OwnedRun,
+) -> ApiResult<Json<serde_json::Value>> {
+    let ledger = view::decision_ledger(state.store(), &run_id).await?;
+    Ok(Json(serde_json::json!({ "ok": true, "ledger": ledger })))
+}
+
 /// One candidate's recorded matches, newest first, each with the rating
 /// movement the verdict caused. `history` is `null` when the candidate is
 /// not in this run, which the route answers as `not_found` rather than as
