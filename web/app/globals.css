@@ -1098,6 +1098,31 @@ details.legend-fold .legend-line {
   color: var(--danger-ink);
 }
 
+/* Places gained or lost since the previous snapshot. The glyph is short
+   enough to sit beside a rating without moving it. */
+.rank-move {
+  display: inline-block;
+  margin-left: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  vertical-align: 1px;
+}
+
+.rank-move.is-up {
+  color: var(--ink);
+}
+
+.rank-move.is-down {
+  color: var(--muted);
+}
+
+.rank-move.is-new {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
 @media (max-width: 640px) {
   .item-row {
     flex-direction: column;
