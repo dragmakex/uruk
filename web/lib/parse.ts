@@ -17,8 +17,11 @@ import type {
   BudgetView,
   CitationOriginView,
   CitationResolutionView,
+  CandidateHistory,
   CitationView,
   GoalView,
+  HistoryEntry,
+  HistoryResult,
   ItemCard,
   Leader,
   LibraryPassageHit,
@@ -555,6 +558,53 @@ export function parseTournamentFeed(value: unknown): TournamentFeed {
         first: parseTournamentSide(m.first, `${path}.first`),
         second: parseTournamentSide(m.second, `${path}.second`),
         order_randomized: bool(m.order_randomized, `${path}.order_randomized`),
+        created_at: str(m.created_at, `${path}.created_at`),
+        produced_by: strOrNull(m.produced_by, `${path}.produced_by`),
+      };
+    }),
+  };
+}
+
+const HISTORY_RESULTS: readonly HistoryResult[] = [
+  "won",
+  "lost",
+  "drew",
+  "unresolved",
+];
+
+function parseHistoryResult(value: unknown, path: string): HistoryResult {
+  const raw = str(value, path);
+  if (!HISTORY_RESULTS.includes(raw as HistoryResult)) {
+    throw new ParseError(path, `one of ${HISTORY_RESULTS.join(", ")}`, raw);
+  }
+  return raw as HistoryResult;
+}
+
+/**
+ * Validate one candidate's match history. Every entry carries the opponent,
+ * the verdict from this candidate's side, and the rating movement, so a row
+ * can only be rendered from facts the record actually holds.
+ */
+export function parseCandidateHistory(value: unknown): CandidateHistory {
+  const r = record(value, "history response");
+  return {
+    run_id: str(r.run_id, "history response.run_id"),
+    item_id: str(r.item_id, "history response.item_id"),
+    title: str(r.title, "history response.title"),
+    matches: array(r.matches, "history response.matches").map((v, i) => {
+      const path = `matches[${i}]`;
+      const m = record(v, path);
+      return {
+        id: str(m.id, `${path}.id`),
+        opponent_id: str(m.opponent_id, `${path}.opponent_id`),
+        opponent_title: str(m.opponent_title, `${path}.opponent_title`),
+        result: parseHistoryResult(m.result, `${path}.result`),
+        method: parseMatchMethod(m.method, `${path}.method`),
+        judge_model: str(m.judge_model, `${path}.judge_model`),
+        rationale: str(m.rationale, `${path}.rationale`),
+        rating_before: num(m.rating_before, `${path}.rating_before`),
+        rating_after: num(m.rating_after, `${path}.rating_after`),
+        delta: num(m.delta, `${path}.delta`),
         created_at: str(m.created_at, `${path}.created_at`),
         produced_by: strOrNull(m.produced_by, `${path}.produced_by`),
       };

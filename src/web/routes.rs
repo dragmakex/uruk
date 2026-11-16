@@ -2,7 +2,7 @@
 //! serialize. No business logic lives here.
 
 use super::error::{ApiError, ApiResult, rejection_to_error};
-use super::owner::{OwnedRun, OwnedSource, OwnedTask, Owner};
+use super::owner::{OwnedItem, OwnedRun, OwnedSource, OwnedTask, Owner};
 use super::{AppState, start, view};
 use crate::records::{AccessLevel, Origin, RunId};
 use crate::runtime;
@@ -223,6 +223,21 @@ pub async fn tournament(
 ) -> ApiResult<Json<serde_json::Value>> {
     let feed = view::tournament_feed(state.store(), &run_id).await?;
     Ok(Json(serde_json::json!({"ok": true, "tournament": feed})))
+}
+
+/// One candidate's recorded matches, newest first, each with the rating
+/// movement the verdict caused. `history` is `null` when the candidate is
+/// not in this run, which the route answers as `not_found` rather than as
+/// an empty history that would read like "never fought".
+pub async fn candidate_matches(
+    State(state): State<AppState>,
+    OwnedItem { run_id, item }: OwnedItem,
+) -> ApiResult<Json<serde_json::Value>> {
+    let history = view::candidate_history(state.store(), &run_id, &item.id).await?;
+    match history {
+        Some(history) => Ok(Json(serde_json::json!({ "ok": true, "history": history }))),
+        None => Err(ApiError(crate::Error::not_found("no such candidate"))),
+    }
 }
 
 /// Metadata filters for the library listing. Empty values mean "no

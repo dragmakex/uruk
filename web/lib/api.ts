@@ -15,6 +15,7 @@
 
 import {
   parseApiError,
+  parseCandidateHistory,
   parseCitations,
   parseLibraryPassageHits,
   parsePassagePage,
@@ -32,6 +33,7 @@ import {
   parseUploads,
 } from "./parse";
 import type {
+  CandidateHistory,
   CitationView,
   LibraryFilter,
   LibraryPassageHit,
@@ -151,6 +153,26 @@ export async function fetchTournament(
   );
   const envelope = body as { tournament?: unknown };
   return parseTournamentFeed(envelope.tournament);
+}
+
+/**
+ * One candidate's recorded matches, newest first. A candidate with no
+ * matches answers with an empty list — that is a fact about the board, not
+ * a failed read — while a candidate the run does not have answers 404 and
+ * throws.
+ */
+export async function fetchCandidateHistory(
+  runId: string,
+  itemId: string,
+  cookie?: string,
+): Promise<CandidateHistory> {
+  const body = await request(
+    `/api/runs/${encodeURIComponent(runId)}/items/${encodeURIComponent(itemId)}/matches`,
+    undefined,
+    cookie,
+  );
+  const envelope = body as { history?: unknown };
+  return parseCandidateHistory(envelope.history);
 }
 
 export async function fetchReport(

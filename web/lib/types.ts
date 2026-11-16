@@ -306,6 +306,44 @@ export interface ReportView {
 }
 
 /**
+ * What one match meant from a particular candidate's side. Stated by the
+ * service, so the UI never has to work out which side was `item_a`.
+ * `unresolved` is a verdict of insufficient basis: real, but no rating
+ * moved and no winner was named.
+ */
+export type HistoryResult = "won" | "lost" | "drew" | "unresolved";
+
+/** One match as it reads in a single candidate's history. */
+export interface HistoryEntry {
+  id: string;
+  opponent_id: string;
+  /** The opponent's title, or its ID when the record no longer has one. */
+  opponent_title: string;
+  result: HistoryResult;
+  method: MatchMethod;
+  judge_model: string;
+  /** The judge's stated reason, in its own words. */
+  rationale: string;
+  rating_before: number;
+  rating_after: number;
+  /** `rating_after - rating_before`, signed. Zero for `unresolved`. */
+  delta: number;
+  created_at: string;
+  produced_by: string | null;
+}
+
+/**
+ * Every match the record has for one candidate, newest first. An empty list
+ * means the candidate has not fought yet; it does not mean the read failed.
+ */
+export interface CandidateHistory {
+  run_id: string;
+  item_id: string;
+  title: string;
+  matches: HistoryEntry[];
+}
+
+/**
  * One side of a recorded comparison, with the rating it entered and left
  * with. `delta` is what the match did to that candidate, and it is zero
  * when the verdict updated nothing (an insufficient basis).

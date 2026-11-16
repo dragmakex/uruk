@@ -1868,3 +1868,132 @@ details.legend-fold .legend-line {
   margin: 0;
   font-size: 14px;
 }
+
+/* A candidate row is a disclosure: opening it reads that candidate's own
+   match history rather than a summary written on top of the record. */
+.item-entry + .item-entry .item-row {
+  border-top: 0;
+}
+
+summary.item-row {
+  cursor: pointer;
+  list-style: none;
+}
+
+summary.item-row::-webkit-details-marker {
+  display: none;
+}
+
+/* The row now has a third child (the affordance), so the title column has
+   to claim the free space itself; otherwise `space-between` strands the
+   rating in the middle of the row. */
+summary.item-row > .item-main {
+  flex: 1 1 auto;
+}
+
+summary.item-row::after {
+  content: "matches \25B8";
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  align-self: center;
+}
+
+.row-history[open] > summary.item-row::after {
+  content: "matches \25BE";
+}
+
+.row-history > summary:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: -2px;
+}
+
+.history {
+  border: var(--hairline) solid var(--line);
+  border-top: 0;
+  background: var(--surface);
+  padding: 12px 20px 16px;
+}
+
+.history-note {
+  border: var(--hairline) solid var(--line);
+  border-top: 0;
+  background: var(--surface);
+  padding: 12px 20px;
+}
+
+.history-tally {
+  margin: 0 0 10px;
+}
+
+.history-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.history-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) max-content max-content;
+  grid-template-areas:
+    "mark opponent elo delta"
+    ". method method method"
+    ". rationale rationale rationale";
+  column-gap: 12px;
+  row-gap: 2px;
+  padding: 9px 0;
+  border-top: var(--hairline) solid var(--line-soft);
+}
+
+.history-row:first-child {
+  border-top: 0;
+}
+
+.history-mark {
+  grid-area: mark;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.history-row.is-won .history-mark {
+  color: var(--ink);
+}
+
+.history-opponent {
+  grid-area: opponent;
+  font-size: 14px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.history-elo {
+  grid-area: elo;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.history-delta {
+  grid-area: delta;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.history-method {
+  grid-area: method;
+}
+
+.history-rationale {
+  grid-area: rationale;
+  margin: 4px 0 0;
+  padding-left: 12px;
+  border-left: var(--hairline) solid var(--line-soft);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink);
+}

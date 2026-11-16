@@ -366,6 +366,105 @@ pub async fn tournament_feed(store: &Store, run_id: &RunId) -> Result<Tournament
     })
 }
 
+/// One match as a single candidate's history reads it: the opponent, what
+/// the verdict meant from this candidate's side, and the rating it moved.
+#[derive(Debug, Serialize)]
+pub struct HistoryEntry {
+    pub id: String,
+    pub opponent_id: String,
+    pub opponent_title: String,
+    /// `won`, `lost`, `drew` or `unresolved`, stated from this candidate's
+    /// side so a reader never has to work out which one was `item_a`.
+    pub result: String,
+    pub method: String,
+    pub judge_model: String,
+    pub rationale: String,
+    pub rating_before: f64,
+    pub rating_after: f64,
+    /// `rating_after - rating_before`, signed. Zero for `unresolved`.
+    pub delta: f64,
+    pub created_at: String,
+    pub produced_by: Option<String>,
+}
+
+/// Everything the record says about one candidate's matches, newest first.
+#[derive(Debug, Serialize)]
+pub struct CandidateHistory {
+    pub run_id: String,
+    pub item_id: String,
+    /// The candidate's title, or its ID when the item record is gone.
+    pub title: String,
+    pub matches: Vec<HistoryEntry>,
+}
+
+/// Build one candidate's match history. `None` when the run has no such
+/// item: a route that answers `null` for a candidate it cannot find is
+/// clearer than an empty history that reads like "never fought".
+pub async fn candidate_history(
+    store: &Store,
+    run_id: &RunId,
+    item_id: &ItemId,
+) -> Result<Option<CandidateHistory>> {
+    let titles: HashMap<String, String> = store
+        .item_summaries(run_id, None)
+        .await?
+        .into_iter()
+        .map(|item| (item.id.as_str().to_string(), item.title))
+        .collect();
+    let title = match titles.get(item_id.as_str()) {
+        Some(title) => title.clone(),
+        None => return Ok(None),
+    };
+
+    let mut entries: Vec<HistoryEntry> = store
+        .list_matches(run_id)
+        .await?
+        .iter()
+        .filter_map(|m| {
+            let own_first = m.item_a == *item_id;
+            let (opponent, before, after) = if own_first {
+                (&m.item_b, m.rating_a_before, m.rating_a_after)
+            } else if m.item_b == *item_id {
+                (&m.item_a, m.rating_b_before, m.rating_b_after)
+            } else {
+                return None;
+            };
+            let result = match (m.outcome, own_first) {
+                (MatchOutcome::WinA, true) | (MatchOutcome::WinB, false) => "won",
+                (MatchOutcome::WinA, false) | (MatchOutcome::WinB, true) => "lost",
+                (MatchOutcome::Draw, _) => "drew",
+                (MatchOutcome::InsufficientBasis, _) => "unresolved",
+            };
+            Some(HistoryEntry {
+                id: m.id.as_str().to_string(),
+                opponent_id: opponent.as_str().to_string(),
+                opponent_title: titles
+                    .get(opponent.as_str())
+                    .cloned()
+                    .unwrap_or_else(|| opponent.as_str().to_string()),
+                result: result.to_string(),
+                method: m.method.as_str().to_string(),
+                judge_model: m.judge_model.clone(),
+                rationale: m.rationale.clone(),
+                rating_before: before,
+                rating_after: after,
+                delta: after - before,
+                created_at: rfc3339(m.created_at),
+                produced_by: m.produced_by.as_ref().map(|task| task.as_str().to_string()),
+            })
+        })
+        .collect();
+    // Newest first: a history is read from the most recent result back.
+    entries.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+
+    Ok(Some(CandidateHistory {
+        run_id: run_id.as_str().to_string(),
+        item_id: item_id.as_str().to_string(),
+        title,
+        matches: entries,
+    }))
+}
+
 /// Build the complete snapshot for one run.
 pub async fn run_snapshot(store: &Store, run_id: &RunId) -> Result<RunSnapshot> {
     let run = store.get_run(run_id).await?;

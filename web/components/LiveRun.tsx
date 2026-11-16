@@ -358,7 +358,7 @@ export function LiveRun({
                   used
                 </span>
               </div>
-              <RankingList items={items} />
+              <RankingList runId={runId} items={items} />
             </section>
           </>
         )}
