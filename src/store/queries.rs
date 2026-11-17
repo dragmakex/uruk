@@ -438,6 +438,17 @@ impl Store {
         bodies(rows).await
     }
 
+    /// How many decisions the run has on record. A count, not the rows:
+    /// the snapshot only needs a number to tell the page when to re-read
+    /// the ledger.
+    pub async fn count_decisions(&self, run_id: &RunId) -> Result<u32> {
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM decisions WHERE run_id = ?")
+            .bind(run_id.as_str())
+            .fetch_one(self.pool())
+            .await?;
+        Ok(n as u32)
+    }
+
     pub async fn list_decisions(&self, run_id: &RunId) -> Result<Vec<Decision>> {
         let rows = sqlx::query_scalar(
             "SELECT body FROM decisions WHERE run_id = ? ORDER BY created_at, id",

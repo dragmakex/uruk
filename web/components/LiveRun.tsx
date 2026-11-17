@@ -18,6 +18,7 @@ import { useRunStream, type StreamStatus } from "@/lib/sse";
 import type { RunSnapshot } from "@/lib/types";
 import { moveSentence } from "@/lib/handoff";
 import { roleLabel } from "@/lib/roles";
+import { DecisionLedger } from "./DecisionLedger";
 import { RankingList } from "./RankingList";
 import { Topology } from "./Topology";
 import { TournamentFeed } from "./TournamentFeed";
@@ -358,7 +359,18 @@ export function LiveRun({
                   used
                 </span>
               </div>
-              <RankingList items={items} />
+              <RankingList runId={runId} items={items} />
+            </section>
+
+            <section className="items-section" aria-label="Decisions">
+              <div className="items-head">
+                <h2>Decisions</h2>
+                <span className="micro">
+                  {stats.decisions}{" "}
+                  {stats.decisions === 1 ? "decision" : "decisions"} on record
+                </span>
+              </div>
+              <DecisionLedger runId={runId} decisionCount={stats.decisions} />
             </section>
           </>
         )}
