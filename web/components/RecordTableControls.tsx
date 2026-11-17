@@ -37,20 +37,16 @@ export function RecordTableControls({
   );
 }
 
-/** The common previous/page/next footer used by every paginated record table. */
+/** The common arrow/page/arrow footer used by every paginated record table. */
 export function RecordTablePager({
   label,
   page,
   totalPages,
-  previousLabel,
-  nextLabel,
   onPage,
 }: {
   label: string;
   page: number;
   totalPages: number;
-  previousLabel: string;
-  nextLabel: string;
   onPage: (page: number) => void;
 }) {
   if (totalPages <= 1) return null;
@@ -60,10 +56,12 @@ export function RecordTablePager({
       <Button
         size="xs"
         variant="outline"
+        aria-label={`Previous ${label} page`}
+        title={`Previous ${label} page`}
         disabled={page === 1}
         onClick={() => onPage(Math.max(1, page - 1))}
       >
-        {previousLabel}
+        <span aria-hidden="true">←</span>
       </Button>
       <span className="micro" aria-live="polite">
         Page {page} of {totalPages}
@@ -71,10 +69,12 @@ export function RecordTablePager({
       <Button
         size="xs"
         variant="outline"
+        aria-label={`Next ${label} page`}
+        title={`Next ${label} page`}
         disabled={page === totalPages}
         onClick={() => onPage(Math.min(totalPages, page + 1))}
       >
-        {nextLabel}
+        <span aria-hidden="true">→</span>
       </Button>
     </nav>
   );

@@ -193,8 +193,6 @@ export function RankingList({
               label="Candidates"
               page={page}
               totalPages={totalPages}
-              previousLabel="Higher-ranked"
-              nextLabel="Lower-ranked"
               onPage={setRequestedPage}
             />
           </>

@@ -222,8 +222,6 @@ export function TournamentFeed({
           label="Match log"
           page={page}
           totalPages={totalPages}
-          previousLabel="Newer matches"
-          nextLabel="Older matches"
           onPage={setRequestedPage}
         />
       </div>
