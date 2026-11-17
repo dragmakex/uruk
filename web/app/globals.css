@@ -1136,6 +1136,23 @@ details.legend-fold .legend-line {
 
 /* ---------- match log ---------- */
 
+.match-log-shell {
+  margin-top: 16px;
+}
+
+.match-log-controls,
+.match-log-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.match-log-pager {
+  justify-content: center;
+  margin-top: 14px;
+}
+
 .match-log {
   list-style: none;
   margin: 16px 0 0;

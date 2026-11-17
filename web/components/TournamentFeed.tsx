@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Button } from "./Button";
 import { fetchTournament } from "@/lib/api";
 import { formatDelta, formatElo } from "@/lib/format";
 import type {
@@ -156,6 +157,8 @@ export function TournamentFeed({
   matchCount: number;
 }) {
   const { feed, unavailable } = useMatchLog(runId, matchCount);
+  const [open, setOpen] = useState(true);
+  const [requestedPage, setRequestedPage] = useState(1);
   const matches = feed?.matches ?? [];
 
   if (matches.length === 0) {
@@ -184,18 +187,70 @@ export function TournamentFeed({
 
   // Newest first: the last match played is the one worth watching, and
   // revision order (not the match id) is the honest order.
+  const pageSize = 5;
   const ordered = [...matches].reverse();
+  const totalPages = Math.ceil(ordered.length / pageSize);
+  const page = Math.min(requestedPage, totalPages);
+  const pageStart = (page - 1) * pageSize;
+  const visibleMatches = ordered.slice(pageStart, pageStart + pageSize);
 
   return (
-    <ol className="match-log" aria-label="Match log">
-      {ordered.map((match, index) => (
-        <MatchCard
-          key={match.id}
-          match={match}
-          index={matches.length - index}
-          fresh={index === 0 && matchCount > 0}
-        />
-      ))}
-    </ol>
+    <div className="match-log-shell">
+      <div className="match-log-controls">
+        <span className="micro">
+          {matches.length} {matches.length === 1 ? "match" : "matches"} recorded
+        </span>
+        <Button
+          size="xs"
+          variant="outline"
+          aria-expanded={open}
+          aria-controls="match-log-list"
+          onClick={() => setOpen((visible) => !visible)}
+        >
+          {open ? "Close match log" : "Open match log"}
+        </Button>
+      </div>
+
+      {open && (
+        <>
+          <ol id="match-log-list" className="match-log" aria-label="Match log">
+            {visibleMatches.map((match, index) => (
+              <MatchCard
+                key={match.id}
+                match={match}
+                index={matches.length - pageStart - index}
+                fresh={page === 1 && index === 0 && matchCount > 0}
+              />
+            ))}
+          </ol>
+
+          {totalPages > 1 && (
+            <nav className="match-log-pager" aria-label="Match log pages">
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={page === 1}
+                onClick={() => setRequestedPage((current) => Math.max(1, current - 1))}
+              >
+                Newer matches
+              </Button>
+              <span className="micro" aria-live="polite">
+                Page {page} of {totalPages}
+              </span>
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={page === totalPages}
+                onClick={() =>
+                  setRequestedPage((current) => Math.min(totalPages, current + 1))
+                }
+              >
+                Older matches
+              </Button>
+            </nav>
+          )}
+        </>
+      )}
+    </div>
   );
 }

@@ -82,10 +82,66 @@ pub fn extract_json(text: &str) -> Result<serde_json::Value> {
         }
     }
 
+    if let Some(repaired) = close_unterminated_containers(&body[start..])
+        && let Ok(value) = serde_json::from_str::<serde_json::Value>(&repaired)
+            .or_else(|_| serde_json::from_str(&repair_escapes(&repaired)))
+        && value.is_object()
+    {
+        return Ok(value);
+    }
+
     Err(Error::validation(format!(
         "model output has unbalanced JSON: {}",
         truncate(body, 200)
     )))
+}
+
+/// Close only containers whose values are already complete.
+///
+/// Some providers report a normal stop even when a model omits the final `]}`.
+/// Appending those delimiters is mechanical and preserves every model-supplied
+/// value. An open string, mismatched delimiter, or dangling value separator is
+/// not repairable because completing it would require inventing content.
+fn close_unterminated_containers(candidate: &str) -> Option<String> {
+    let mut stack = Vec::new();
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for byte in candidate.bytes() {
+        if in_string {
+            match byte {
+                _ if escaped => escaped = false,
+                b'\\' => escaped = true,
+                b'"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+
+        match byte {
+            b'"' => in_string = true,
+            b'{' | b'[' => stack.push(byte),
+            b'}' if stack.pop() != Some(b'{') => return None,
+            b']' if stack.pop() != Some(b'[') => return None,
+            _ => {}
+        }
+    }
+
+    if in_string || stack.is_empty() {
+        return None;
+    }
+    if matches!(
+        candidate.trim_end().as_bytes().last(),
+        Some(b':' | b',' | b'{' | b'[')
+    ) {
+        return None;
+    }
+
+    let mut repaired = candidate.to_string();
+    for opener in stack.into_iter().rev() {
+        repaired.push(if opener == b'{' { '}' } else { ']' });
+    }
+    Some(repaired)
 }
 
 /// Drop the backslash from escapes JSON does not define (`\_`, `\-`, `\*`
@@ -838,6 +894,28 @@ mod tests {
             v["body"],
             "snake_case and a - dash, kept \"quote\" and \\ backslash"
         );
+    }
+
+    #[test]
+    fn omitted_final_json_delimiters_are_repaired_without_inventing_content() {
+        let reply =
+            r#"{"critiques":[{"issue":"Composite novelty remains unresolved","occurrences":2}"#;
+        let parsed: MetaReviewOutput = parse(reply).unwrap();
+
+        assert_eq!(parsed.critiques.len(), 1);
+        assert_eq!(
+            parsed.critiques[0].issue,
+            "Composite novelty remains unresolved"
+        );
+        assert_eq!(parsed.critiques[0].occurrences, 2);
+    }
+
+    #[test]
+    fn an_unterminated_json_string_is_not_repaired() {
+        let reply = r#"{"critiques":[{"issue":"Composite novelty remains unresolved"#;
+        let err = extract_json(reply).unwrap_err();
+
+        assert!(err.to_string().contains("unbalanced JSON"), "{err}");
     }
 
     #[test]

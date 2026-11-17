@@ -1,4 +1,5 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { tournamentFixture } from "@/lib/fixtures";
 import { TournamentFeed } from "./TournamentFeed";
@@ -17,6 +18,23 @@ function stubTournament(body: unknown, status = 200): string[] {
     },
   );
   return seen;
+}
+
+function tournamentWithMatches(count: number) {
+  const fixture = tournamentFixture() as {
+    run_id: string;
+    matches: Array<Record<string, unknown>>;
+  };
+  const first = fixture.matches[0]!;
+  return {
+    ...fixture,
+    matches: Array.from({ length: count }, (_, index) => ({
+      ...first,
+      id: `match_${index + 1}`,
+      rationale: `rationale ${index + 1}`,
+      created_at: `2026-10-04T14:${String(index).padStart(2, "0")}:00Z`,
+    })),
+  };
 }
 
 afterEach(() => {
@@ -92,5 +110,49 @@ describe("TournamentFeed", () => {
     stubTournament({ ok: true, tournament: { run_id: "run_0412aa", matches: [{}] } });
     render(<TournamentFeed runId="run_0412aa" matchCount={1} />);
     expect(await screen.findByText(/could not be read/)).toBeDefined();
+  });
+
+  it("shows only the five most recent matches on the first page", async () => {
+    stubTournament({ ok: true, tournament: tournamentWithMatches(7) });
+    render(<TournamentFeed runId="run_0412aa" matchCount={7} />);
+
+    const log = await screen.findByRole("list", { name: "Match log" });
+    expect(log.children).toHaveLength(5);
+    expect(within(log).getByText("rationale 7")).toBeDefined();
+    expect(within(log).getByText("rationale 3")).toBeDefined();
+    expect(within(log).queryByText("rationale 2")).toBeNull();
+    expect(screen.getByText("Page 1 of 2")).toBeDefined();
+  });
+
+  it("pages through older matches without extending the document forever", async () => {
+    const user = userEvent.setup();
+    stubTournament({ ok: true, tournament: tournamentWithMatches(7) });
+    render(<TournamentFeed runId="run_0412aa" matchCount={7} />);
+    await screen.findByText("rationale 7");
+
+    await user.click(screen.getByRole("button", { name: "Older matches" }));
+
+    const log = screen.getByRole("list", { name: "Match log" });
+    expect(log.children).toHaveLength(2);
+    expect(within(log).getByText("rationale 2")).toBeDefined();
+    expect(within(log).getByText("rationale 1")).toBeDefined();
+    expect(within(log).queryByText("rationale 7")).toBeNull();
+    expect(screen.getByText("Page 2 of 2")).toBeDefined();
+  });
+
+  it("can close and reopen the match log", async () => {
+    const user = userEvent.setup();
+    stubTournament({ ok: true, tournament: tournamentWithMatches(6) });
+    render(<TournamentFeed runId="run_0412aa" matchCount={6} />);
+    await screen.findByText("rationale 6");
+
+    const toggle = screen.getByRole("button", { name: "Close match log" });
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    await user.click(toggle);
+    expect(screen.queryByRole("list", { name: "Match log" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Open match log" })).toBeDefined();
+
+    await user.click(screen.getByRole("button", { name: "Open match log" }));
+    expect(await screen.findByRole("list", { name: "Match log" })).toBeDefined();
   });
 });
