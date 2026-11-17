@@ -4,6 +4,7 @@ import {
   ParseError,
   parseApiError,
   parseCitations,
+  parseDecisionLedger,
   parseLibraryPassageHits,
   parsePassagePage,
   parseReport,
@@ -51,6 +52,57 @@ describe("parseTaskReasoning", () => {
         reasoning: [{ started_at: "now", finished_at: null, model: null }],
       }),
     ).toThrow(/content/);
+  });
+});
+
+describe("parseDecisionLedger", () => {
+  const one = {
+    id: "decision_1",
+    kind: "scheduling",
+    actor: "supervisor",
+    reason: "Generation has the thinnest coverage of the mechanism.",
+    referenced: ["task_generation_01"],
+    created_at: "2026-01-01T00:00:00Z",
+  };
+
+  it("keeps the actor, reason and references of every decision", () => {
+    const ledger = parseDecisionLedger({
+      run_id: "run_1",
+      decisions: [one, { ...one, id: "decision_2", actor: "reflection", referenced: [] }],
+    });
+    expect(ledger.run_id).toBe("run_1");
+    expect(ledger.decisions).toHaveLength(2);
+    expect(ledger.decisions[0]).toEqual(one);
+    expect(ledger.decisions[1]?.actor).toBe("reflection");
+    expect(ledger.decisions[1]?.referenced).toEqual([]);
+  });
+
+  it("keeps an unrecognised kind verbatim rather than dropping the row", () => {
+    const ledger = parseDecisionLedger({
+      run_id: "run_1",
+      decisions: [{ ...one, kind: "evidence_replan" }],
+    });
+    expect(ledger.decisions[0]?.kind).toBe("evidence_replan");
+  });
+
+  it("rejects a decision without a reason, because the reason is the point", () => {
+    const { reason: _reason, ...withoutReason } = one;
+    expect(() =>
+      parseDecisionLedger({ run_id: "run_1", decisions: [withoutReason] }),
+    ).toThrow(ParseError);
+  });
+
+  it("rejects a non-string reference instead of stringifying it", () => {
+    expect(() =>
+      parseDecisionLedger({
+        run_id: "run_1",
+        decisions: [{ ...one, referenced: [7] }],
+      }),
+    ).toThrow(ParseError);
+  });
+
+  it("accepts an empty ledger: a run can start without deciding anything", () => {
+    expect(parseDecisionLedger({ run_id: "run_1", decisions: [] }).decisions).toEqual([]);
   });
 });
 

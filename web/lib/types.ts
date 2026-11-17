@@ -151,6 +151,8 @@ export interface Stats {
   items: number;
   reviews: number;
   matches: number;
+  /** Decisions on the record; the ledger re-reads when this changes. */
+  decisions: number;
   clusters: number;
   sources: number;
   works: number;
@@ -303,6 +305,68 @@ export interface ReportView {
   run_id: string;
   markdown: string;
   manifest: Record<string, unknown> | null;
+}
+
+/**
+ * One decision on the record: who took it, what kind it was, and why in
+ * their own words. The structured payload stays on the server — it is
+ * shaped per kind, and rendering it as prose would invent a reading of it.
+ */
+export interface DecisionView {
+  id: string;
+  /** `plan_change`, `human_feedback`, `scheduling`, `disposition`,
+   *  `meta_feedback` or `stop`. Kept as a string: an unknown kind from a
+   *  newer engine still renders as itself rather than disappearing. */
+  kind: string;
+  /** `researcher`, `supervisor`, `system`, or an agent's own name. */
+  actor: string;
+  reason: string;
+  referenced: string[];
+  created_at: string;
+}
+
+/** Every decision on the run's record, oldest first. */
+export interface DecisionLedger {
+  run_id: string;
+  decisions: DecisionView[];
+}
+
+/**
+ * What one match meant from a particular candidate's side. Stated by the
+ * service, so the UI never has to work out which side was `item_a`.
+ * `unresolved` is a verdict of insufficient basis: real, but no rating
+ * moved and no winner was named.
+ */
+export type HistoryResult = "won" | "lost" | "drew" | "unresolved";
+
+/** One match as it reads in a single candidate's history. */
+export interface HistoryEntry {
+  id: string;
+  opponent_id: string;
+  /** The opponent's title, or its ID when the record no longer has one. */
+  opponent_title: string;
+  result: HistoryResult;
+  method: MatchMethod;
+  judge_model: string;
+  /** The judge's stated reason, in its own words. */
+  rationale: string;
+  rating_before: number;
+  rating_after: number;
+  /** `rating_after - rating_before`, signed. Zero for `unresolved`. */
+  delta: number;
+  created_at: string;
+  produced_by: string | null;
+}
+
+/**
+ * Every match the record has for one candidate, newest first. An empty list
+ * means the candidate has not fought yet; it does not mean the read failed.
+ */
+export interface CandidateHistory {
+  run_id: string;
+  item_id: string;
+  title: string;
+  matches: HistoryEntry[];
 }
 
 /**

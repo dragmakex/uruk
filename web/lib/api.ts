@@ -15,6 +15,8 @@
 
 import {
   parseApiError,
+  parseDecisionLedger,
+  parseCandidateHistory,
   parseCitations,
   parseLibraryPassageHits,
   parsePassagePage,
@@ -32,7 +34,9 @@ import {
   parseUploads,
 } from "./parse";
 import type {
+  CandidateHistory,
   CitationView,
+  DecisionLedger,
   LibraryFilter,
   LibraryPassageHit,
   PassagePage,
@@ -151,6 +155,44 @@ export async function fetchTournament(
   );
   const envelope = body as { tournament?: unknown };
   return parseTournamentFeed(envelope.tournament);
+}
+
+/**
+ * The run's decisions, oldest first. A run that has decided nothing answers
+ * with an empty ledger rather than a placeholder, and the page re-reads it
+ * when the snapshot's decision count changes.
+ */
+export async function fetchDecisions(
+  runId: string,
+  cookie?: string,
+): Promise<DecisionLedger> {
+  const body = await request(
+    `/api/runs/${encodeURIComponent(runId)}/decisions`,
+    undefined,
+    cookie,
+  );
+  const envelope = body as { ledger?: unknown };
+  return parseDecisionLedger(envelope.ledger);
+}
+
+/**
+ * One candidate's recorded matches, newest first. A candidate with no
+ * matches answers with an empty list — that is a fact about the board, not
+ * a failed read — while a candidate the run does not have answers 404 and
+ * throws.
+ */
+export async function fetchCandidateHistory(
+  runId: string,
+  itemId: string,
+  cookie?: string,
+): Promise<CandidateHistory> {
+  const body = await request(
+    `/api/runs/${encodeURIComponent(runId)}/items/${encodeURIComponent(itemId)}/matches`,
+    undefined,
+    cookie,
+  );
+  const envelope = body as { history?: unknown };
+  return parseCandidateHistory(envelope.history);
 }
 
 export async function fetchReport(
