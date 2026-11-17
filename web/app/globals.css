@@ -146,6 +146,9 @@ a {
 /* ---------- navigation ---------- */
 
 .site-nav {
+  position: sticky;
+  top: 0;
+  z-index: 40;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -196,6 +199,17 @@ a {
   text-underline-offset: 4px;
 }
 
+.nav-links a.nav-start {
+  min-height: 36px;
+  padding: 6px 14px;
+  font-family: var(--font-sans);
+  color: var(--fill-ink);
+}
+
+.nav-links a.nav-start:hover {
+  text-decoration: none;
+}
+
 /* ---------- page scaffolding ---------- */
 
 .canvas {
@@ -211,6 +225,23 @@ a {
 @media (max-width: 767px) {
   .site-nav {
     padding: 0 16px;
+  }
+
+  .wordmark-name {
+    display: none;
+  }
+
+  .nav-links {
+    gap: 10px;
+  }
+
+  .nav-links a {
+    font-size: 12px;
+  }
+
+  .nav-links a.nav-start {
+    padding-inline: 8px;
+    font-size: 11px;
   }
 
   .canvas {
