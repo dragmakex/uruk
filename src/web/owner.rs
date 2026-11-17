@@ -24,7 +24,7 @@
 use super::AppState;
 use super::error::ApiError;
 use crate::Error;
-use crate::records::{RunId, Source, SourceId, Task, TaskId};
+use crate::records::{ItemId, ResearchItem, RunId, Source, SourceId, Task, TaskId};
 use crate::store::OwnerDigest;
 use axum::RequestPartsExt;
 use axum::extract::{FromRequestParts, Path, Request, State};
@@ -283,6 +283,44 @@ impl FromRequestParts<AppState> for OwnedSource {
             .get_source_in_run(&run_id, &SourceId::from_raw(raw_source))
             .await?;
         Ok(Self { run_id, source })
+    }
+}
+
+/// A `{run_id}/{item_id}` path pair, already authorized against the
+/// requesting browser. The candidate must belong to the owned run; unknown
+/// and cross-run item ids answer with the same non-disclosing `not_found`,
+/// so the route never tells a stranger whether an id exists elsewhere.
+pub struct OwnedItem {
+    pub run_id: RunId,
+    pub item: ResearchItem,
+}
+
+impl FromRequestParts<AppState> for OwnedItem {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> std::result::Result<Self, Self::Rejection> {
+        let Owner(owner) = parts.extract_with_state::<Owner, _>(state).await?;
+        let Path((raw_run, raw_item)) = parts
+            .extract::<Path<(String, String)>>()
+            .await
+            .map_err(|rejection| ApiError(Error::validation(rejection.body_text())))?;
+        if !is_safe_run_id(&raw_run) || !is_safe_run_id(&raw_item) {
+            return Err(ApiError(Error::not_found("no such candidate")));
+        }
+        let run_id = RunId::from_raw(raw_run);
+        state.store().get_run_owned(&run_id, &owner).await?;
+        let item = state
+            .store()
+            .get_item(&ItemId::from_raw(raw_item))
+            .await
+            .map_err(|_| ApiError(Error::not_found("no such candidate")))?;
+        if item.run_id != run_id {
+            return Err(ApiError(Error::not_found("no such candidate")));
+        }
+        Ok(Self { run_id, item })
     }
 }
 

@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { CandidateHistory } from "./CandidateHistory";
 import type { ItemCard } from "@/lib/types";
 import { formatElo } from "@/lib/format";
 import { moveGlyph, orderOf, rankMovement, type RankMove } from "@/lib/ranking";
@@ -23,9 +24,21 @@ function reducedMotion(): boolean {
  * from where it was and carries the number of places it gained or lost
  * since the previous snapshot. The count stays until the next reorder, so
  * a reader arriving late still sees which way the last result pushed it.
+ *
+ * Each row is a disclosure: opening it reads that candidate's own match
+ * history, so the board answers "why is this one first?" in the record's
+ * words rather than in a summary of them.
  */
-export function RankingList({ items }: { items: ItemCard[] }) {
-  const rows = useRef(new Map<string, HTMLLIElement>());
+export function RankingList({
+  runId,
+  items,
+}: {
+  runId: string;
+  items: ItemCard[];
+}) {
+  const rows = useRef(new Map<string, HTMLElement>());
+  /** Candidates whose history has been asked for at least once. */
+  const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
   const tops = useRef(new Map<string, number>());
   const previousOrder = useRef<string[] | null>(null);
   const [movement, setMovement] = useState<Map<string, RankMove>>(() => new Map());
@@ -77,15 +90,24 @@ export function RankingList({ items }: { items: ItemCard[] }) {
       {items.map((item, index) => {
         const move = moveGlyph(movement.get(item.id));
         return (
-          <li
-            key={item.id}
-            className="item-row"
-            ref={(el) => {
-              if (el) rows.current.set(item.id, el);
-              else rows.current.delete(item.id);
-            }}
-          >
-            <div className="item-main">
+          <li key={item.id} className="item-entry">
+            <details
+              className="row-history"
+              onToggle={(event) => {
+                if (!event.currentTarget.open) return;
+                setOpened((prev) =>
+                  prev.has(item.id) ? prev : new Set(prev).add(item.id),
+                );
+              }}
+            >
+              <summary
+                className="item-row"
+                ref={(el) => {
+                  if (el) rows.current.set(item.id, el);
+                  else rows.current.delete(item.id);
+                }}
+              >
+                <div className="item-main">
               <span className="item-title">
                 {index + 1}. {item.title}
               </span>
@@ -120,6 +142,11 @@ export function RankingList({ items }: { items: ItemCard[] }) {
                 </span>
               )}
             </div>
+              </summary>
+              {opened.has(item.id) && (
+                <CandidateHistory runId={runId} itemId={item.id} />
+              )}
+            </details>
           </li>
         );
       })}

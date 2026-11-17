@@ -1110,3 +1110,253 @@ async fn report_download_ids_cannot_traverse_outside_the_runs_directory() {
         assert_eq!(body["kind"], "not_found");
     }
 }
+
+#[tokio::test]
+async fn candidate_history_answers_from_that_candidate_side_of_each_match() {
+    let (app, fixture) = seeded_app(Mode::Campaign).await;
+    let alpha = common::seed_item(&fixture, "Alpha candidate").await;
+    let beta = common::seed_item(&fixture, "Beta candidate").await;
+    let gamma = common::seed_item(&fixture, "Gamma candidate").await;
+    let plan_id = fixture.plan.id.clone();
+    for item in [&alpha, &beta, &gamma] {
+        fixture
+            .store
+            .ensure_rating(&item.id, &plan_id)
+            .await
+            .unwrap();
+    }
+
+    let base = uruk::records::Match {
+        id: uruk::records::MatchId::new(),
+        schema_version: uruk::records::SCHEMA_VERSION,
+        run_id: fixture.run_id.clone(),
+        item_a: alpha.id.clone(),
+        item_b: beta.id.clone(),
+        rubric_id: plan_id,
+        evidence_snapshot: uruk::records::ContentHash::of_str("evidence"),
+        order_randomized: true,
+        method: uruk::records::MatchMethod::Debate,
+        judge_model: "judge-test".into(),
+        outcome: uruk::records::MatchOutcome::WinA,
+        rationale: "Alpha explains the observed effect; Beta does not.".into(),
+        rating_a_before: 0.0,
+        rating_b_before: 0.0,
+        rating_a_after: 0.0,
+        rating_b_after: 0.0,
+        produced_by: None,
+        created_at: time::OffsetDateTime::now_utc(),
+    };
+    fixture
+        .store
+        .commit_match(&base, "history-test-1", uruk::records::DEFAULT_K)
+        .await
+        .unwrap();
+
+    // Second match: alpha is now `item_b`, so the perspective flips.
+    let mut second = base.clone();
+    second.id = uruk::records::MatchId::new();
+    second.item_a = gamma.id.clone();
+    second.item_b = alpha.id.clone();
+    second.outcome = uruk::records::MatchOutcome::WinA;
+    second.rationale = "Gamma survives the counterexample; Alpha does not.".into();
+    second.created_at = base.created_at + time::Duration::seconds(5);
+    fixture
+        .store
+        .commit_match(&second, "history-test-2", uruk::records::DEFAULT_K)
+        .await
+        .unwrap();
+
+    let uri = format!(
+        "/api/runs/{}/items/{}/matches",
+        fixture.run_id,
+        alpha.id.as_str()
+    );
+    let response = app.oneshot(get(&uri)).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    assert_eq!(body["ok"], true);
+
+    let history = &body["history"];
+    assert_eq!(history["item_id"], alpha.id.as_str());
+    assert_eq!(history["title"], "Alpha candidate");
+    let matches = history["matches"].as_array().expect("matches array");
+    assert_eq!(matches.len(), 2, "only alpha's own matches");
+
+    // Newest first.
+    let latest = &matches[0];
+    assert_eq!(latest["opponent_id"], gamma.id.as_str());
+    assert_eq!(latest["opponent_title"], "Gamma candidate");
+    // Gamma was `item_a` and won, so from alpha's side this is a loss.
+    assert_eq!(latest["result"], "lost");
+    assert!(
+        latest["delta"].as_f64().unwrap() < 0.0,
+        "a loss costs rating"
+    );
+    assert_eq!(latest["judge_model"], "judge-test");
+    assert_eq!(
+        latest["rationale"],
+        "Gamma survives the counterexample; Alpha does not."
+    );
+
+    let earlier = &matches[1];
+    assert_eq!(earlier["opponent_title"], "Beta candidate");
+    assert_eq!(earlier["result"], "won");
+    assert!(earlier["delta"].as_f64().unwrap() > 0.0);
+
+    // Ratings line up across the entry: after - before == delta.
+    let before = earlier["rating_before"].as_f64().unwrap();
+    let after = earlier["rating_after"].as_f64().unwrap();
+    let delta = earlier["delta"].as_f64().unwrap();
+    assert!((after - before - delta).abs() < 1e-9);
+}
+
+#[tokio::test]
+async fn candidate_history_for_a_candidate_with_no_matches_says_nothing() {
+    let (app, fixture) = seeded_app(Mode::Campaign).await;
+    let lone = common::seed_item(&fixture, "Unfought candidate").await;
+    let uri = format!(
+        "/api/runs/{}/items/{}/matches",
+        fixture.run_id,
+        lone.id.as_str()
+    );
+    let response = app.oneshot(get(&uri)).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    assert_eq!(body["history"]["title"], "Unfought candidate");
+    assert_eq!(
+        body["history"]["matches"].as_array().unwrap().len(),
+        0,
+        "no placeholder entries for a candidate that never fought"
+    );
+}
+
+#[tokio::test]
+async fn candidate_history_does_not_answer_for_another_runs_candidate() {
+    let (app, fixture) = seeded_app(Mode::Campaign).await;
+    let (_, other) = seeded_app(Mode::Campaign).await;
+    let theirs = common::seed_item(&other, "Their candidate").await;
+
+    let uri = format!(
+        "/api/runs/{}/items/{}/matches",
+        fixture.run_id,
+        theirs.id.as_str()
+    );
+    let response = app.oneshot(get(&uri)).await.unwrap();
+    // Unknown and cross-run ids answer the same way: no disclosure.
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn decisions_ledger_lists_who_decided_what_and_why_in_order() {
+    let (app, fixture) = seeded_app(Mode::Campaign).await;
+    let task = Task {
+        id: TaskId::new(),
+        schema_version: SCHEMA_VERSION,
+        run_id: fixture.run_id.clone(),
+        role: Role::Supervisor,
+        strategy: "scheduling".into(),
+        goal_id: fixture.goal.id.clone(),
+        plan_id: fixture.plan.id.clone(),
+        input_refs: vec![],
+        input_hash: ContentHash::of_str("decisions-test"),
+        prompt_id: None,
+        prompt_hash: None,
+        model: None,
+        provider: None,
+        payload: None,
+        feedback_id: None,
+        depends_on: vec![],
+        priority: 1.0,
+        priority_rationale: "test".into(),
+        permissions: fixture.goal.permissions.clone(),
+        reservation: CostReservation { model_calls: 0 },
+        state: TaskState::Pending,
+        attempts: 0,
+        max_attempts: 1,
+        seed: 7,
+        output_refs: vec![],
+        actual_cost: CostActual::default(),
+        error: None,
+        failure: None,
+        created_at: OffsetDateTime::now_utc(),
+        started_at: None,
+        finished_at: None,
+    };
+    fixture.store.enqueue_task(&task, None).await.unwrap();
+
+    let base = uruk::records::Decision {
+        id: uruk::records::DecisionId::new(),
+        schema_version: SCHEMA_VERSION,
+        run_id: fixture.run_id.clone(),
+        kind: uruk::records::DecisionKind::Scheduling,
+        actor: uruk::records::Actor::Supervisor,
+        reason: "Generation has the thinnest coverage of the mechanism.".into(),
+        referenced: vec!["task_generation_01".into()],
+        payload: serde_json::json!({ "role": "generation" }),
+        created_at: OffsetDateTime::now_utc(),
+    };
+    let mut batch = uruk::store::RecordBatch::default();
+    batch.decisions.push(base.clone());
+    // A second decision by a named agent, so the actor label is exercised.
+    let mut second = base.clone();
+    second.id = uruk::records::DecisionId::new();
+    second.kind = uruk::records::DecisionKind::MetaFeedback;
+    second.actor = uruk::records::Actor::Agent("reflection".into());
+    second.reason = "The rubric weights mechanism over plausibility.".into();
+    second.referenced = vec![];
+    second.created_at = base.created_at + time::Duration::seconds(3);
+    batch.decisions.push(second.clone());
+    fixture
+        .store
+        .commit_task(
+            &task.id,
+            TaskState::Completed,
+            &batch,
+            CostActual::default(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let uri = format!("/api/runs/{}/decisions", fixture.run_id);
+    let response = app.oneshot(get(&uri)).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    assert_eq!(body["ok"], true);
+
+    let ledger = body["ledger"]["decisions"].as_array().expect("decisions");
+    assert_eq!(ledger.len(), 2, "two decisions on the record");
+    assert_eq!(ledger[0]["kind"], "scheduling");
+    assert_eq!(ledger[0]["actor"], "supervisor");
+    assert_eq!(
+        ledger[0]["reason"],
+        "Generation has the thinnest coverage of the mechanism."
+    );
+    assert_eq!(ledger[0]["referenced"][0], "task_generation_01");
+    // The structured payload is not in the ledger: it is shaped per kind.
+    assert!(ledger[0].get("payload").is_none());
+
+    // Oldest first, and a named agent keeps its own name.
+    assert_eq!(ledger[1]["kind"], "meta_feedback");
+    assert_eq!(ledger[1]["actor"], "reflection");
+}
+
+#[tokio::test]
+async fn decisions_ledger_is_empty_for_a_run_that_decided_nothing() {
+    let (app, fixture) = seeded_app(Mode::Campaign).await;
+    let uri = format!("/api/runs/{}/decisions", fixture.run_id);
+    let response = app.oneshot(get(&uri)).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    assert_eq!(body["ledger"]["decisions"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn decisions_ledger_does_not_answer_for_another_runs_id() {
+    let (app, _fixture) = seeded_app(Mode::Campaign).await;
+    let (_, other) = seeded_app(Mode::Campaign).await;
+    let uri = format!("/api/runs/{}/decisions", other.run_id);
+    let response = app.oneshot(get(&uri)).await.unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
