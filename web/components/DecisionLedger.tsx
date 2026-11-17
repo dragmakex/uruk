@@ -3,6 +3,11 @@
 import { useEffect, useState } from "react";
 import { fetchDecisions } from "@/lib/api";
 import type { DecisionLedger as Ledger, DecisionView } from "@/lib/types";
+import {
+  RECORD_PAGE_SIZE,
+  RecordTableControls,
+  RecordTablePager,
+} from "./RecordTableControls";
 
 /**
  * What each recorded kind of decision is, in words a reader can use. The
@@ -63,6 +68,8 @@ export function DecisionLedger({
   const [read, setRead] = useState<
     { status: "reading" } | { status: "ready"; ledger: Ledger } | { status: "failed" }
   >({ status: "reading" });
+  const [open, setOpen] = useState(false);
+  const [requestedPage, setRequestedPage] = useState(1);
 
   useEffect(() => {
     let live = true;
@@ -97,11 +104,48 @@ export function DecisionLedger({
     );
   }
 
+  const decisions = read.ledger.decisions;
+  const totalPages = Math.ceil(decisions.length / RECORD_PAGE_SIZE);
+  const page = Math.min(requestedPage, totalPages);
+  const pageStart = (page - 1) * RECORD_PAGE_SIZE;
+  const visibleDecisions = decisions.slice(pageStart, pageStart + RECORD_PAGE_SIZE);
+
   return (
-    <ol className="decision-rows" aria-label="Decisions, oldest first">
-      {read.ledger.decisions.map((decision, index) => (
-        <DecisionRow key={decision.id} decision={decision} index={index} />
-      ))}
-    </ol>
+    <div className="record-table-shell">
+      <RecordTableControls
+        label="decisions"
+        summary={`${decisions.length} ${decisions.length === 1 ? "decision" : "decisions"} recorded`}
+        open={open}
+        controls="decision-table"
+        onToggle={() => setOpen((visible) => !visible)}
+      />
+      <div id="decision-table" hidden={!open}>
+        {open && (
+          <>
+            <ol
+              id="decision-list"
+              className="decision-rows record-table-body"
+              aria-label="Decisions, oldest first"
+            >
+              {visibleDecisions.map((decision, index) => (
+                <DecisionRow
+                  key={decision.id}
+                  decision={decision}
+                  index={pageStart + index}
+                />
+              ))}
+            </ol>
+            <RecordTablePager
+              label="Decisions"
+              page={page}
+              totalPages={totalPages}
+              previousLabel="Earlier decisions"
+              nextLabel="Later decisions"
+              onPage={setRequestedPage}
+            />
+          </>
+        )}
+      </div>
+    </div>
   );
 }

@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { snapshotFixture } from "@/lib/fixtures";
 import { parseRunSnapshot } from "@/lib/parse";
@@ -87,7 +87,9 @@ describe("LiveRun", () => {
     // Figure stats row shows the aggregate facts.
     expect(screen.getByText(/13 items, 34 matches/)).toBeInTheDocument();
 
-    // Ranked candidate with its recorded rating.
+    // Record tables are closed by default; opening candidates reveals the
+    // ranked row with its recorded rating.
+    fireEvent.click(screen.getByRole("button", { name: "Open candidates" }));
     expect(screen.getByText(/1\. XBP1 splicing escape/)).toBeInTheDocument();
     expect(screen.getByText(/elo 1412, 9 matches/)).toBeInTheDocument();
   });
@@ -325,6 +327,7 @@ describe("LiveRun while on the queue", () => {
     expect(screen.getByText(/Fig\. run/)).toBeInTheDocument();
     expect(screen.getByText("Key")).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Ranked candidates" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open candidates" }));
     expect(screen.getByText(/1\. XBP1 splicing escape/)).toBeInTheDocument();
   }
 

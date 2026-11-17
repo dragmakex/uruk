@@ -37,6 +37,15 @@ function tournamentWithMatches(count: number) {
   };
 }
 
+async function openMatchLog() {
+  const user = userEvent.setup();
+  const toggle = await screen.findByRole("button", { name: "Open match log" });
+  expect(toggle.textContent).toBe("Open");
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await user.click(toggle);
+  return screen.findByRole("list", { name: "Match log" });
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -53,7 +62,7 @@ describe("TournamentFeed", () => {
     stubTournament({ ok: true, tournament: tournamentFixture() });
     render(<TournamentFeed runId="run_0412aa" matchCount={2} />);
 
-    const log = await screen.findByRole("list", { name: "Match log" });
+    const log = await openMatchLog();
     const cards = Array.from(log.children) as HTMLElement[];
     expect(cards).toHaveLength(2);
 
@@ -71,7 +80,7 @@ describe("TournamentFeed", () => {
     stubTournament({ ok: true, tournament: tournamentFixture() });
     render(<TournamentFeed runId="run_0412aa" matchCount={2} />);
 
-    const log = await screen.findByRole("list", { name: "Match log" });
+    const log = await openMatchLog();
     const decided = Array.from(log.children)[1] as HTMLElement;
 
     const sides = within(decided).getAllByRole("listitem");
@@ -85,7 +94,7 @@ describe("TournamentFeed", () => {
     stubTournament({ ok: true, tournament: tournamentFixture() });
     render(<TournamentFeed runId="run_0412aa" matchCount={2} />);
 
-    const log = await screen.findByRole("list", { name: "Match log" });
+    const log = await openMatchLog();
     const declined = Array.from(log.children)[0] as HTMLElement;
     const sides = within(declined).getAllByRole("listitem");
 
@@ -116,7 +125,7 @@ describe("TournamentFeed", () => {
     stubTournament({ ok: true, tournament: tournamentWithMatches(7) });
     render(<TournamentFeed runId="run_0412aa" matchCount={7} />);
 
-    const log = await screen.findByRole("list", { name: "Match log" });
+    const log = await openMatchLog();
     expect(log.children).toHaveLength(5);
     expect(within(log).getByText("rationale 7")).toBeDefined();
     expect(within(log).getByText("rationale 3")).toBeDefined();
@@ -128,7 +137,7 @@ describe("TournamentFeed", () => {
     const user = userEvent.setup();
     stubTournament({ ok: true, tournament: tournamentWithMatches(7) });
     render(<TournamentFeed runId="run_0412aa" matchCount={7} />);
-    await screen.findByText("rationale 7");
+    await openMatchLog();
 
     await user.click(screen.getByRole("button", { name: "Older matches" }));
 
@@ -140,17 +149,22 @@ describe("TournamentFeed", () => {
     expect(screen.getByText("Page 2 of 2")).toBeDefined();
   });
 
-  it("can close and reopen the match log", async () => {
+  it("is closed by default and can open, close, and reopen", async () => {
     const user = userEvent.setup();
     stubTournament({ ok: true, tournament: tournamentWithMatches(6) });
     render(<TournamentFeed runId="run_0412aa" matchCount={6} />);
-    await screen.findByText("rationale 6");
+
+    const closedToggle = await screen.findByRole("button", { name: "Open match log" });
+    expect(screen.queryByRole("list", { name: "Match log" })).toBeNull();
+    expect(closedToggle.textContent).toBe("Open");
+    await user.click(closedToggle);
 
     const toggle = screen.getByRole("button", { name: "Close match log" });
+    expect(toggle.textContent).toBe("Close");
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
     await user.click(toggle);
     expect(screen.queryByRole("list", { name: "Match log" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Open match log" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Open match log" }).textContent).toBe("Open");
 
     await user.click(screen.getByRole("button", { name: "Open match log" }));
     expect(await screen.findByRole("list", { name: "Match log" })).toBeDefined();

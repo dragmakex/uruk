@@ -3,6 +3,11 @@ import { CandidateHistory } from "./CandidateHistory";
 import type { ItemCard } from "@/lib/types";
 import { formatElo } from "@/lib/format";
 import { moveGlyph, orderOf, rankMovement, type RankMove } from "@/lib/ranking";
+import {
+  RECORD_PAGE_SIZE,
+  RecordTableControls,
+  RecordTablePager,
+} from "./RecordTableControls";
 
 /** How long a row takes to slide to its new place. */
 const SLIDE_MS = 420;
@@ -37,6 +42,8 @@ export function RankingList({
   items: ItemCard[];
 }) {
   const rows = useRef(new Map<string, HTMLElement>());
+  const [open, setOpen] = useState(false);
+  const [requestedPage, setRequestedPage] = useState(1);
   /** Candidates whose history has been asked for at least once. */
   const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
   const tops = useRef(new Map<string, number>());
@@ -44,6 +51,10 @@ export function RankingList({
   const [movement, setMovement] = useState<Map<string, RankMove>>(() => new Map());
   const order = orderOf(items);
   const placed = order.join("\u0000");
+  const totalPages = Math.max(1, Math.ceil(items.length / RECORD_PAGE_SIZE));
+  const page = Math.min(requestedPage, totalPages);
+  const pageStart = (page - 1) * RECORD_PAGE_SIZE;
+  const visibleItems = items.slice(pageStart, pageStart + RECORD_PAGE_SIZE);
 
   // Movement is recorded when the board is actually reordered, not on every
   // snapshot: the count then stays put until a later result changes it, so
@@ -86,70 +97,93 @@ export function RankingList({
   }
 
   return (
-    <ol style={{ listStyle: "none", margin: 0, padding: 0 }}>
-      {items.map((item, index) => {
-        const move = moveGlyph(movement.get(item.id));
-        return (
-          <li key={item.id} className="item-entry">
-            <details
-              className="row-history"
-              onToggle={(event) => {
-                if (!event.currentTarget.open) return;
-                setOpened((prev) =>
-                  prev.has(item.id) ? prev : new Set(prev).add(item.id),
+    <div className="record-table-shell">
+      <RecordTableControls
+        label="candidates"
+        summary={`${items.length} ${items.length === 1 ? "candidate" : "candidates"} ranked`}
+        open={open}
+        controls="candidate-table"
+        onToggle={() => setOpen((visible) => !visible)}
+      />
+      <div id="candidate-table" hidden={!open}>
+        {open && (
+          <>
+            <ol id="candidate-list" className="candidate-rows record-table-body">
+              {visibleItems.map((item, index) => {
+                const move = moveGlyph(movement.get(item.id));
+                return (
+                  <li key={item.id} className="item-entry">
+                    <details
+                      className="row-history"
+                      onToggle={(event) => {
+                        if (!event.currentTarget.open) return;
+                        setOpened((prev) =>
+                          prev.has(item.id) ? prev : new Set(prev).add(item.id),
+                        );
+                      }}
+                    >
+                      <summary
+                        className="item-row"
+                        ref={(el) => {
+                          if (el) rows.current.set(item.id, el);
+                          else rows.current.delete(item.id);
+                        }}
+                      >
+                        <div className="item-main">
+                          <span className="item-title">
+                            {pageStart + index + 1}. {item.title}
+                          </span>
+                          <p className="item-meta micro">
+                            {item.kind}, {item.assessment}
+                            {item.disposition !== "active" ? `, ${item.disposition}` : ""}
+                            {item.review_count > 0
+                              ? `, ${item.review_count} review${item.review_count === 1 ? "" : "s"}`
+                              : ", unreviewed"}
+                          </p>
+                        </div>
+                        <div className="item-rating">
+                          {item.rating !== null ? (
+                            <>
+                              <span className="micro-ink">
+                                elo {formatElo(item.rating)}, {item.matches_played}{" "}
+                                {item.matches_played === 1 ? "match" : "matches"}
+                              </span>
+                              {item.stale_rating && (
+                                <span className="micro stale-flag"> STALE</span>
+                              )}
+                            </>
+                          ) : (
+                            <span className="micro">unrated</span>
+                          )}
+                          {/* A newcomer is usually unrated, so the movement mark cannot
+                              live inside the rated branch. */}
+                          {move !== null && (
+                            <span className={`rank-move is-${move.kind}`}>
+                              <span aria-hidden="true">{move.mark}</span>
+                              <span className="visually-hidden"> {move.label}</span>
+                            </span>
+                          )}
+                        </div>
+                      </summary>
+                      {opened.has(item.id) && (
+                        <CandidateHistory runId={runId} itemId={item.id} />
+                      )}
+                    </details>
+                  </li>
                 );
-              }}
-            >
-              <summary
-                className="item-row"
-                ref={(el) => {
-                  if (el) rows.current.set(item.id, el);
-                  else rows.current.delete(item.id);
-                }}
-              >
-                <div className="item-main">
-              <span className="item-title">
-                {index + 1}. {item.title}
-              </span>
-              <p className="item-meta micro">
-                {item.kind}, {item.assessment}
-                {item.disposition !== "active" ? `, ${item.disposition}` : ""}
-                {item.review_count > 0
-                  ? `, ${item.review_count} review${item.review_count === 1 ? "" : "s"}`
-                  : ", unreviewed"}
-              </p>
-            </div>
-            <div className="item-rating">
-              {item.rating !== null ? (
-                <>
-                  <span className="micro-ink">
-                    elo {formatElo(item.rating)}, {item.matches_played}{" "}
-                    {item.matches_played === 1 ? "match" : "matches"}
-                  </span>
-                  {item.stale_rating && (
-                    <span className="micro stale-flag"> STALE</span>
-                  )}
-                </>
-              ) : (
-                <span className="micro">unrated</span>
-              )}
-              {/* A newcomer is usually unrated, so the movement mark cannot
-                  live inside the rated branch. */}
-              {move !== null && (
-                <span className={`rank-move is-${move.kind}`}>
-                  <span aria-hidden="true">{move.mark}</span>
-                  <span className="visually-hidden"> {move.label}</span>
-                </span>
-              )}
-            </div>
-              </summary>
-              {opened.has(item.id) && (
-                <CandidateHistory runId={runId} itemId={item.id} />
-              )}
-            </details>
-          </li>
-        );
-      })}
-    </ol>
+              })}
+            </ol>
+            <RecordTablePager
+              label="Candidates"
+              page={page}
+              totalPages={totalPages}
+              previousLabel="Higher-ranked"
+              nextLabel="Lower-ranked"
+              onPage={setRequestedPage}
+            />
+          </>
+        )}
+      </div>
+    </div>
   );
 }

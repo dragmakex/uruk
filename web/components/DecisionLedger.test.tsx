@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DecisionLedger as Ledger } from "@/lib/types";
 
@@ -30,6 +30,12 @@ function ledger(overrides: Partial<Ledger> = {}): Ledger {
   };
 }
 
+async function openDecisions() {
+  const toggle = await screen.findByRole("button", { name: "Open decisions" });
+  expect(toggle.textContent).toBe("Open");
+  fireEvent.click(toggle);
+}
+
 afterEach(() => {
   cleanup();
   fetchDecisions.mockReset();
@@ -43,6 +49,7 @@ describe("DecisionLedger", () => {
     );
 
     expect(screen.getByText("reading decisions…")).toBeDefined();
+    await openDecisions();
     await waitFor(() => {
       expect(screen.getByText("supervisor")).toBeDefined();
     });
@@ -72,9 +79,8 @@ describe("DecisionLedger", () => {
     const { container } = render(
       <DecisionLedger runId="run_test" decisionCount={1} />,
     );
-    await waitFor(() => {
-      expect(screen.getByText("reflection")).toBeDefined();
-    });
+    await openDecisions();
+    expect(screen.getByText("reflection")).toBeDefined();
     expect(screen.getByText("metacognitive feedback")).toBeDefined();
     // Nothing referenced, so nothing is claimed.
     expect(container.querySelector(".decision-refs")).toBeNull();
@@ -89,9 +95,8 @@ describe("DecisionLedger", () => {
     const { container } = render(
       <DecisionLedger runId="run_test" decisionCount={1} />,
     );
-    await waitFor(() => {
-      expect(screen.getByText("system")).toBeDefined();
-    });
+    await openDecisions();
+    expect(screen.getByText("system")).toBeDefined();
     // Unknown kinds get the underscores read as spaces, not a guess.
     expect(screen.getByText("evidence replan")).toBeDefined();
     expect(container.querySelector(".decision-row")).not.toBeNull();
@@ -109,9 +114,8 @@ describe("DecisionLedger", () => {
     const { container } = render(
       <DecisionLedger runId="run_test" decisionCount={2} />,
     );
-    await waitFor(() => {
-      expect(screen.getByText("second choice")).toBeDefined();
-    });
+    await openDecisions();
+    expect(screen.getByText("second choice")).toBeDefined();
     const indices = Array.from(container.querySelectorAll(".decision-index")).map(
       (el) => el.textContent,
     );
@@ -143,6 +147,7 @@ describe("DecisionLedger", () => {
     await waitFor(() => {
       expect(fetchDecisions).toHaveBeenCalledTimes(1);
     });
+    await openDecisions();
 
     // A snapshot that adds no decision must not re-read anything.
     rerender(<DecisionLedger runId="run_test" decisionCount={1} />);
@@ -156,5 +161,29 @@ describe("DecisionLedger", () => {
       expect(fetchDecisions).toHaveBeenCalledTimes(2);
     });
     expect(screen.getByText("later")).toBeDefined();
+  });
+
+  it("is closed by default and pages five decisions at a time", async () => {
+    fetchDecisions.mockResolvedValue(
+      ledger({
+        decisions: Array.from({ length: 7 }, (_, index) =>
+          decision({ id: `d${index + 1}`, reason: `choice ${index + 1}` }),
+        ),
+      }),
+    );
+    render(<DecisionLedger runId="run_test" decisionCount={7} />);
+
+    const toggle = await screen.findByRole("button", { name: "Open decisions" });
+    expect(screen.queryByRole("list", { name: "Decisions, oldest first" })).toBeNull();
+    fireEvent.click(toggle);
+    expect(screen.getByRole("button", { name: "Close decisions" }).textContent).toBe("Close");
+    expect(screen.getByRole("list", { name: "Decisions, oldest first" }).children).toHaveLength(5);
+    expect(screen.getByText("choice 1")).toBeDefined();
+    expect(screen.queryByText("choice 6")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Later decisions" }));
+    expect(screen.getByText("choice 6")).toBeDefined();
+    expect(screen.getByText("D06")).toBeDefined();
+    expect(screen.getByText("Page 2 of 2")).toBeDefined();
   });
 });
