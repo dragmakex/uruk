@@ -17,7 +17,7 @@ function entry(overrides: Partial<History["matches"][number]> = {}) {
     opponent_title: "Beta candidate",
     result: "won" as const,
     method: "debate" as const,
-    judge_model: "judge-test",
+    judge_model: "RCP-AIaaS/deepseek-ai/DeepSeek-V4.1-Flash-1017",
     rationale: "Alpha explains the observed effect; Beta does not.",
     rating_before: 1200,
     rating_after: 1216,
@@ -66,6 +66,8 @@ describe("CandidateHistory", () => {
       screen.getByText("Alpha explains the observed effect; Beta does not."),
     ).toBeDefined();
     expect(screen.getByText(/multi-turn debate/)).toBeDefined();
+    expect(screen.getByText(/judge deepseek-ai\/DeepSeek-V4\.1-Flash-1017/)).toBeDefined();
+    expect(screen.queryByText(/RCP-AIaaS/)).toBeNull();
   });
 
   it("marks a loss and a draw differently from a win", async () => {

@@ -16,6 +16,7 @@
 
   /* Layout constants shared across themes. */
   --nav-height: 56px;
+  --run-head-height: 58px;
   --hairline: 1px;
   --gap: 24px;
 }
@@ -614,8 +615,9 @@ a {
 
 .run-head {
   position: sticky;
-  top: 0;
+  top: var(--nav-height);
   z-index: 10;
+  min-height: var(--run-head-height);
   display: flex;
   align-items: center;
   gap: 20px;
@@ -642,6 +644,10 @@ a {
 }
 
 @media (max-width: 767px) {
+  :root {
+    --run-head-height: 86px;
+  }
+
   .run-head {
     flex-wrap: wrap;
     gap: 8px;
@@ -928,6 +934,18 @@ a {
   line-height: 1.55;
 }
 
+.reasoning-back {
+  position: sticky;
+  top: calc(var(--nav-height) + 12px);
+  z-index: 30;
+  width: 40px;
+  min-width: 40px;
+  margin-bottom: 16px;
+  padding-inline: 0;
+  font-size: 20px;
+  line-height: 1;
+}
+
 .reasoning-note code {
   font-family: var(--font-mono);
   font-size: 12px;
@@ -1177,6 +1195,20 @@ details.legend-fold .legend-line {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+/* An open table can contain a long history. Keep its compact control beneath
+   both sticky headers so the reader can always close it without scrolling back. */
+.record-table-controls[data-open="true"] {
+  position: sticky;
+  top: calc(var(--nav-height) + var(--run-head-height));
+  z-index: 20;
+  min-height: 48px;
+  margin-inline: -1px;
+  padding: 8px 12px;
+  border: var(--hairline) solid var(--line);
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  backdrop-filter: blur(8px);
 }
 
 .record-table-pager {

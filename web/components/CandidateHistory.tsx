@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { fetchCandidateHistory } from "@/lib/api";
-import { formatDelta, formatElo } from "@/lib/format";
+import { formatDelta, formatElo, formatModelIdentity } from "@/lib/format";
 import type {
   CandidateHistory as History,
   HistoryEntry,
@@ -65,7 +65,7 @@ function HistoryRow({ entry }: { entry: HistoryEntry }) {
         {formatDelta(entry.delta)}
       </span>
       <span className="history-method micro">
-        {METHOD_LABEL[entry.method]} · judge {entry.judge_model}
+        {METHOD_LABEL[entry.method]} · judge {formatModelIdentity(entry.judge_model)}
       </span>
       <p className="history-rationale">{entry.rationale}</p>
     </li>
