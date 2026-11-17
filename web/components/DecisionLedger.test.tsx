@@ -180,8 +180,11 @@ describe("DecisionLedger", () => {
     expect(screen.getByRole("list", { name: "Decisions, oldest first" }).children).toHaveLength(5);
     expect(screen.getByText("choice 1")).toBeDefined();
     expect(screen.queryByText("choice 6")).toBeNull();
+    expect(screen.getByRole("button", { name: "Previous Decisions page" }).textContent).toBe("←");
 
-    fireEvent.click(screen.getByRole("button", { name: "Later decisions" }));
+    const next = screen.getByRole("button", { name: "Next Decisions page" });
+    expect(next.textContent).toBe("→");
+    fireEvent.click(next);
     expect(screen.getByText("choice 6")).toBeDefined();
     expect(screen.getByText("D06")).toBeDefined();
     expect(screen.getByText("Page 2 of 2")).toBeDefined();

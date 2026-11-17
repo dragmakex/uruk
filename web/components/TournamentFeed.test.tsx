@@ -139,7 +139,11 @@ describe("TournamentFeed", () => {
     render(<TournamentFeed runId="run_0412aa" matchCount={7} />);
     await openMatchLog();
 
-    await user.click(screen.getByRole("button", { name: "Older matches" }));
+    expect(screen.getByRole("button", { name: "Previous Match log page" }).textContent).toBe("←");
+    const next = screen.getByRole("button", { name: "Next Match log page" });
+    expect(next.textContent).toBe("→");
+    expect(screen.queryByText(/older matches|newer matches/i)).toBeNull();
+    await user.click(next);
 
     const log = screen.getByRole("list", { name: "Match log" });
     expect(log.children).toHaveLength(2);

@@ -223,8 +223,11 @@ describe("RankingList", () => {
     expect(screen.getByRole("list").children).toHaveLength(5);
     expect(screen.getByText("1. Candidate 1")).toBeDefined();
     expect(screen.queryByText("6. Candidate 6")).toBeNull();
+    expect(screen.getByRole("button", { name: "Previous Candidates page" }).textContent).toBe("←");
 
-    fireEvent.click(screen.getByRole("button", { name: "Lower-ranked" }));
+    const next = screen.getByRole("button", { name: "Next Candidates page" });
+    expect(next.textContent).toBe("→");
+    fireEvent.click(next);
     expect(screen.getByRole("list").children).toHaveLength(2);
     expect(screen.getByText("6. Candidate 6")).toBeDefined();
     expect(screen.getByText("Page 2 of 2")).toBeDefined();

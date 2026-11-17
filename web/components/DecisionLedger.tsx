@@ -139,8 +139,6 @@ export function DecisionLedger({
               label="Decisions"
               page={page}
               totalPages={totalPages}
-              previousLabel="Earlier decisions"
-              nextLabel="Later decisions"
               onPage={setRequestedPage}
             />
           </>
