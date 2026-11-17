@@ -2,10 +2,26 @@ import type { Metadata } from "next";
 import { ApiDown } from "@/components/ApiDown";
 import { Button } from "@/components/Button";
 import { ApiFailure, fetchTaskReasoning } from "@/lib/api";
+import { formatModelIdentity } from "@/lib/format";
 import { identityCookieHeader } from "@/lib/server-identity";
 
 export const metadata: Metadata = { title: "Agent reasoning trace" };
 export const dynamic = "force-dynamic";
+
+function ReasoningBackLink({ runId }: { runId: string }) {
+  return (
+    <Button
+      href={`/runs/${encodeURIComponent(runId)}`}
+      variant="outline"
+      size="sm"
+      className="reasoning-back"
+      aria-label="Back to run"
+      title="Back to run"
+    >
+      <span aria-hidden="true">←</span>
+    </Button>
+  );
+}
 
 /**
  * Verbatim provider-supplied reasoning for one agent task. The page is
@@ -27,20 +43,19 @@ export default async function TaskReasoningPage({
     if (error instanceof ApiFailure && error.kind === "not_found") {
       return (
         <div className="canvas canvas-narrow">
+          <ReasoningBackLink runId={id} />
           <div className="empty-state">
             <h1>Reasoning trace not found</h1>
             <p>
               No such task belongs to a run this browser can reach.
             </p>
-            <Button href={`/runs/${encodeURIComponent(id)}`} variant="outline" size="sm">
-              Back to run
-            </Button>
           </div>
         </div>
       );
     }
     return (
       <div className="canvas canvas-narrow">
+        <ReasoningBackLink runId={id} />
         <div className="page-head"><h1>Agent reasoning trace</h1></div>
         <ApiDown
           detail={error instanceof ApiFailure ? `kind: ${error.kind}` : "unexpected failure"}
@@ -51,14 +66,12 @@ export default async function TaskReasoningPage({
 
   return (
     <div className="canvas canvas-narrow">
+      <ReasoningBackLink runId={id} />
       <div className="page-head">
         <div>
           <p className="micro">{detail.task.role.replace(/_/g, " ")} · {detail.task.state}</p>
           <h1>{detail.task.strategy}</h1>
         </div>
-        <Button href={`/runs/${encodeURIComponent(id)}`} variant="outline" size="sm">
-          Back to run
-        </Button>
       </div>
 
       <aside className="reasoning-note">
@@ -86,7 +99,9 @@ export default async function TaskReasoningPage({
               <article className="thinking-message__bubble">
                 <header>
                   <strong>Thinking {index + 1}</strong>
-                  <span>{trace.model ?? "model not reported"}</span>
+                  <span>
+                    {trace.model === null ? "model not reported" : formatModelIdentity(trace.model)}
+                  </span>
                 </header>
                 <pre>{trace.content}</pre>
                 <footer>

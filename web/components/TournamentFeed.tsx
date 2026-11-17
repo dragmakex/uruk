@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { fetchTournament } from "@/lib/api";
-import { formatDelta, formatElo } from "@/lib/format";
+import { formatDelta, formatElo, formatModelIdentity } from "@/lib/format";
 import {
   RECORD_PAGE_SIZE,
   RecordTableControls,
@@ -117,7 +117,7 @@ function MatchCard({
       <div className="match-head">
         <span className="micro-ink">M{String(index).padStart(2, "0")}</span>
         <span className="micro">{METHOD_LABEL[match.method]}</span>
-        <span className="micro">judge {match.judge_model}</span>
+        <span className="micro">judge {formatModelIdentity(match.judge_model)}</span>
         {match.order_randomized && (
           <span className="micro" title="The pair was shuffled before judging.">
             order hidden

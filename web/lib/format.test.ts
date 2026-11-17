@@ -4,6 +4,7 @@ import {
   formatClock,
   formatDelta,
   formatElo,
+  formatModelIdentity,
   providerWaitNote,
   queueNote,
   rankingMethod,
@@ -85,6 +86,29 @@ describe("stateLabel", () => {
 describe("formatElo", () => {
   it("rounds to a whole number as the figure does", () => {
     expect(formatElo(1412.23)).toBe("1412");
+  });
+});
+
+describe("formatModelIdentity", () => {
+  it("removes an infrastructure host from slash-qualified models", () => {
+    expect(formatModelIdentity("RCP-AIaaS/deepseek-ai/DeepSeek-V4.1-Flash-1017")).toBe(
+      "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+    );
+    expect(formatModelIdentity("RCP-AIaaS/zai-org/GLM-5.3-Flash")).toBe(
+      "zai-org/GLM-5.3-Flash",
+    );
+  });
+
+  it("supports colon-qualified hosts and preserves model identities", () => {
+    expect(formatModelIdentity("openrouter:anthropic/claude-sonnet-4")).toBe(
+      "anthropic/claude-sonnet-4",
+    );
+    expect(formatModelIdentity("openrouter:org/team/model")).toBe("org/team/model");
+    expect(formatModelIdentity("deepseek-ai/DeepSeek-V4.1")).toBe(
+      "deepseek-ai/DeepSeek-V4.1",
+    );
+    expect(formatModelIdentity("org/team/model")).toBe("org/team/model");
+    expect(formatModelIdentity("local-model")).toBe("local-model");
   });
 });
 

@@ -30,7 +30,7 @@ beforeEach(() => {
       {
         started_at: "2026-11-06T10:00:00Z",
         finished_at: "2026-11-06T10:00:02Z",
-        model: "deepseek-test",
+        model: "RCP-AIaaS/deepseek-ai/DeepSeek-V4.1-Flash-1017",
         content: "Inspect the evidence first.\nThen compare candidates.",
         streaming: false,
       },
@@ -49,7 +49,11 @@ describe("TaskReasoningPage", () => {
     expect(screen.getByText(/verbatim reasoning traces/)).toBeInTheDocument();
     expect(screen.getByRole("list", { name: "Agent thinking messages" })).toBeInTheDocument();
     expect(screen.getByText("Thinking 1")).toBeInTheDocument();
-    expect(screen.getByText("deepseek-test")).toBeInTheDocument();
+    expect(screen.getByText("deepseek-ai/DeepSeek-V4.1-Flash-1017")).toBeInTheDocument();
+    expect(screen.queryByText(/RCP-AIaaS/)).not.toBeInTheDocument();
+    const back = screen.getByRole("link", { name: "Back to run" });
+    expect(back).toHaveAttribute("href", "/runs/run_abc");
+    expect(back.textContent).toBe("←");
     expect(screen.getByText("2026-11-06T10:00:00Z")).toBeInTheDocument();
     expect(screen.getByText(/Inspect the evidence first/)).toHaveTextContent(
       "Inspect the evidence first. Then compare candidates.",

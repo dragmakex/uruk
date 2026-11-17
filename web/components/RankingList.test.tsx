@@ -131,12 +131,14 @@ describe("RankingList", () => {
   it("slides rows that moved, and only when the browser can animate", () => {
     // jsdom reports a zero box for every element, so stand in a stack of
     // rows whose tops follow their position in the list.
+    let scrollY = 0;
+    vi.spyOn(window, "scrollY", "get").mockImplementation(() => scrollY);
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
       function (this: HTMLElement) {
         // Rows live inside their own disclosure, so their place is their
         // order in the board, not their order among siblings.
         const board = Array.from(document.querySelectorAll(".item-row"));
-        return rowBox(board.indexOf(this) * 40);
+        return rowBox(board.indexOf(this) * 40 - scrollY);
       },
     );
     const animate = vi.fn();
@@ -145,11 +147,39 @@ describe("RankingList", () => {
     const { rerender } = render(<RankingList runId="run_test" items={first} />);
     openCandidates();
     animate.mockClear();
+    scrollY = 500;
     rerender(<RankingList runId="run_test" items={reopened} />);
 
     expect(animate).toHaveBeenCalled();
     const [frames] = animate.mock.calls[0] as [Array<{ transform: string }>];
-    expect(frames[0]?.transform).toMatch(/^translateY\(-?\d+px\)$/);
+    const distance = Number(frames[0]?.transform.match(/-?\d+/)?.[0]);
+    expect(Math.abs(distance)).toBeLessThanOrEqual(80);
+    delete (Element.prototype as { animate?: unknown }).animate;
+  });
+
+  it("keeps an expanded match history still while live rankings refresh", async () => {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: HTMLElement) {
+        const board = Array.from(document.querySelectorAll(".item-row"));
+        return rowBox(board.indexOf(this) * 40);
+      },
+    );
+    const animate = vi.fn();
+    Element.prototype.animate = animate as unknown as Element["animate"];
+
+    const { container, rerender } = render(<RankingList runId="run_test" items={first} />);
+    openCandidates();
+    const summary = container.querySelector("summary.item-row")!;
+    fireEvent.click(summary);
+    await waitFor(() => expect(container.querySelector(".history")).not.toBeNull());
+    animate.mockClear();
+
+    rerender(<RankingList runId="run_test" items={reopened} />);
+    expect(animate).not.toHaveBeenCalled();
+
+    animate.mockClear();
+    fireEvent.click(summary);
+    expect(animate).not.toHaveBeenCalled();
     delete (Element.prototype as { animate?: unknown }).animate;
   });
 
@@ -187,7 +217,9 @@ describe("RankingList", () => {
 
     expect(screen.queryByRole("list")).toBeNull();
     openCandidates();
-    expect(screen.getByRole("button", { name: "Close candidates" }).textContent).toBe("Close");
+    const close = screen.getByRole("button", { name: "Close candidates" });
+    expect(close.textContent).toBe("Close");
+    expect(close.closest(".record-table-controls")).toHaveAttribute("data-open", "true");
     expect(screen.getByRole("list").children).toHaveLength(5);
     expect(screen.getByText("1. Candidate 1")).toBeDefined();
     expect(screen.queryByText("6. Candidate 6")).toBeNull();

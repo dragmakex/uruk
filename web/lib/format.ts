@@ -94,6 +94,46 @@ export function providerWaitNote(wait: ProviderWait): string {
   return wait.note ? `${base} (${wait.note})` : base;
 }
 
+const MODEL_ROUTING_HOSTS = new Set([
+  "azure",
+  "bedrock",
+  "cerebras",
+  "chutes",
+  "fireworks",
+  "fireworks-ai",
+  "groq",
+  "hyperbolic",
+  "nebius",
+  "nvidia",
+  "novita",
+  "ollama",
+  "openrouter",
+  "rcp-aiaas",
+  "replicate",
+  "sambanova",
+  "together",
+  "together-ai",
+  "vertex",
+  "vllm",
+]);
+
+/**
+ * Hide known routing hosts from provider-qualified model identifiers.
+ * `host/organization/model` becomes the stable `organization/model` name.
+ */
+export function formatModelIdentity(model: string): string {
+  const qualified = model.indexOf(":");
+  if (qualified > 0 && model.slice(qualified + 1).includes("/")) {
+    return model.slice(qualified + 1);
+  }
+
+  const parts = model.split("/");
+  if (parts.length >= 3 && MODEL_ROUTING_HOSTS.has(parts[0]!.toLowerCase())) {
+    return parts.slice(1).join("/");
+  }
+  return model;
+}
+
 /** Elo as the figure renders it: a whole number. */
 export function formatElo(rating: number): string {
   return String(Math.round(rating));

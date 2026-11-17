@@ -46,6 +46,8 @@ export function RankingList({
   const [requestedPage, setRequestedPage] = useState(1);
   /** Candidates whose history has been asked for at least once. */
   const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
+  const [disclosureRevision, setDisclosureRevision] = useState(0);
+  const disclosureChanged = useRef(false);
   const tops = useRef(new Map<string, number>());
   const previousOrder = useRef<string[] | null>(null);
   const [movement, setMovement] = useState<Map<string, RankMove>>(() => new Map());
@@ -74,11 +76,20 @@ export function RankingList({
   // the browser already computed.
   useLayoutEffect(() => {
     const next = new Map<string, number>();
+    const historyOpen = Array.from(rows.current.values()).some(
+      (row) => row.closest("details")?.open,
+    );
+    const suppressMotion = disclosureChanged.current || historyOpen;
     for (const [id, el] of rows.current) {
-      const top = el.getBoundingClientRect().top;
+      // Document coordinates stay stable while the reader scrolls. Viewport
+      // coordinates made an SSE refresh look like a rank change after scroll.
+      const top = el.getBoundingClientRect().top + window.scrollY;
       next.set(id, top);
       const was = tops.current.get(id);
       if (was === undefined || Math.abs(was - top) < 1) continue;
+      // Expanding or collapsing a history changes the board's height. Do not
+      // mix that disclosure reflow with rank motion.
+      if (suppressMotion) continue;
       if (reducedMotion() || typeof el.animate !== "function") continue;
       el.animate(
         [{ transform: `translateY(${was - top}px)` }, { transform: "none" }],
@@ -86,7 +97,8 @@ export function RankingList({
       );
     }
     tops.current = next;
-  });
+    disclosureChanged.current = false;
+  }, [disclosureRevision, open, page, placed]);
 
   if (items.length === 0) {
     return (
@@ -116,10 +128,14 @@ export function RankingList({
                     <details
                       className="row-history"
                       onToggle={(event) => {
-                        if (!event.currentTarget.open) return;
-                        setOpened((prev) =>
-                          prev.has(item.id) ? prev : new Set(prev).add(item.id),
-                        );
+                        const isOpen = event.currentTarget.open;
+                        disclosureChanged.current = true;
+                        setDisclosureRevision((revision) => revision + 1);
+                        if (isOpen) {
+                          setOpened((prev) =>
+                            prev.has(item.id) ? prev : new Set(prev).add(item.id),
+                          );
+                        }
                       }}
                     >
                       <summary

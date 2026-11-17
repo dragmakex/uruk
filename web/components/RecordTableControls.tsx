@@ -21,7 +21,7 @@ export function RecordTableControls({
   onToggle: () => void;
 }) {
   return (
-    <div className="record-table-controls">
+    <div className="record-table-controls" data-open={open}>
       <span className="micro">{summary}</span>
       <Button
         size="xs"
