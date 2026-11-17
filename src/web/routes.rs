@@ -2,7 +2,7 @@
 //! serialize. No business logic lives here.
 
 use super::error::{ApiError, ApiResult, rejection_to_error};
-use super::owner::{OwnedRun, OwnedSource, OwnedTask, Owner};
+use super::owner::{OwnedItem, OwnedRun, OwnedSource, OwnedTask, Owner};
 use super::{AppState, start, view};
 use crate::records::{AccessLevel, Origin, RunId};
 use crate::runtime;
@@ -213,6 +213,40 @@ pub async fn sources(
 ) -> ApiResult<Json<serde_json::Value>> {
     let sources = state.store().list_sources(&run_id).await?;
     Ok(Json(serde_json::json!({"ok": true, "sources": sources})))
+}
+
+/// Every recorded tournament match for this run, in recording order, with
+/// the rating movement each verdict caused.
+pub async fn tournament(
+    State(state): State<AppState>,
+    OwnedRun(run_id): OwnedRun,
+) -> ApiResult<Json<serde_json::Value>> {
+    let feed = view::tournament_feed(state.store(), &run_id).await?;
+    Ok(Json(serde_json::json!({"ok": true, "tournament": feed})))
+}
+
+/// The run's decisions, oldest first: what was chosen, by whom, and why.
+pub async fn decisions(
+    State(state): State<AppState>,
+    OwnedRun(run_id): OwnedRun,
+) -> ApiResult<Json<serde_json::Value>> {
+    let ledger = view::decision_ledger(state.store(), &run_id).await?;
+    Ok(Json(serde_json::json!({ "ok": true, "ledger": ledger })))
+}
+
+/// One candidate's recorded matches, newest first, each with the rating
+/// movement the verdict caused. `history` is `null` when the candidate is
+/// not in this run, which the route answers as `not_found` rather than as
+/// an empty history that would read like "never fought".
+pub async fn candidate_matches(
+    State(state): State<AppState>,
+    OwnedItem { run_id, item }: OwnedItem,
+) -> ApiResult<Json<serde_json::Value>> {
+    let history = view::candidate_history(state.store(), &run_id, &item.id).await?;
+    match history {
+        Some(history) => Ok(Json(serde_json::json!({ "ok": true, "history": history }))),
+        None => Err(ApiError(crate::Error::not_found("no such candidate"))),
+    }
 }
 
 /// Metadata filters for the library listing. Empty values mean "no

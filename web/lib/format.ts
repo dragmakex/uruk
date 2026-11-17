@@ -103,3 +103,16 @@ export function formatElo(rating: number): string {
 export function formatCount(n: number): string {
   return n.toLocaleString("en-US");
 }
+
+/**
+ * A rating change as the match log prints it: always signed, so a gain and
+ * a loss never read alike, and at one decimal, because Elo movements are
+ * fractional even when ratings print whole. A verdict that updated nothing
+ * prints `0`, not a signed zero.
+ */
+export function formatDelta(delta: number): string {
+  const rounded = Math.round(delta * 10) / 10;
+  if (rounded === 0) return "0";
+  const sign = rounded > 0 ? "+" : "-";
+  return `${sign}${Math.abs(rounded)}`;
+}

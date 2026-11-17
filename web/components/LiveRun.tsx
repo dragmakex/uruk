@@ -16,8 +16,12 @@ import {
 } from "@/lib/format";
 import { useRunStream, type StreamStatus } from "@/lib/sse";
 import type { RunSnapshot } from "@/lib/types";
+import { moveSentence } from "@/lib/handoff";
+import { roleLabel } from "@/lib/roles";
+import { DecisionLedger } from "./DecisionLedger";
 import { RankingList } from "./RankingList";
 import { Topology } from "./Topology";
+import { TournamentFeed } from "./TournamentFeed";
 
 function connectionNote(status: StreamStatus): string | null {
   switch (status) {
@@ -320,7 +324,12 @@ export function LiveRun({
               </span>
             </div>
 
-            <Topology runId={run.id} agents={agents} stats={stats} />
+            <Topology
+              runId={run.id}
+              agents={agents}
+              stats={stats}
+              onMove={(move) => setAnnouncement(moveSentence(move, roleLabel))}
+            />
 
             <details className="legend-fold" open>
               <summary>Key</summary>
@@ -331,6 +340,17 @@ export function LiveRun({
               </div>
             </details>
 
+            <section className="items-section" aria-label="Match log">
+              <div className="items-head">
+                <h2>Match log</h2>
+                <span className="micro">
+                  {stats.matches}{" "}
+                  {stats.matches === 1 ? "match" : "matches"} judged
+                </span>
+              </div>
+              <TournamentFeed runId={run.id} matchCount={stats.matches} />
+            </section>
+
             <section className="items-section" aria-label="Ranked candidates">
               <div className="items-head">
                 <h2>Candidates</h2>
@@ -339,7 +359,18 @@ export function LiveRun({
                   used
                 </span>
               </div>
-              <RankingList items={items} />
+              <RankingList runId={runId} items={items} />
+            </section>
+
+            <section className="items-section" aria-label="Decisions">
+              <div className="items-head">
+                <h2>Decisions</h2>
+                <span className="micro">
+                  {stats.decisions}{" "}
+                  {stats.decisions === 1 ? "decision" : "decisions"} on record
+                </span>
+              </div>
+              <DecisionLedger runId={runId} decisionCount={stats.decisions} />
             </section>
           </>
         )}

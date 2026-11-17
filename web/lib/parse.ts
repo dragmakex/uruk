@@ -17,11 +17,18 @@ import type {
   BudgetView,
   CitationOriginView,
   CitationResolutionView,
+  CandidateHistory,
   CitationView,
+  DecisionLedger,
+  DecisionView,
   GoalView,
+  HistoryEntry,
+  HistoryResult,
   ItemCard,
   Leader,
   LibraryPassageHit,
+  MatchMethod,
+  MatchOutcome,
   PassagePage,
   PassageView,
   PlanView,
@@ -39,9 +46,11 @@ import type {
   TaskCounts,
   TaskFacts,
   TaskReasoning,
+  TournamentFeed,
+  TournamentSide,
   UploadView,
 } from "./types";
-import { RUN_STATES } from "./types";
+import { MATCH_METHODS, MATCH_OUTCOMES, RUN_STATES } from "./types";
 
 export class ParseError extends Error {
   constructor(path: string, expected: string, got: unknown) {
@@ -280,6 +289,7 @@ function parseStats(value: unknown, path: string): Stats {
     items: num(r.items, `${path}.items`),
     reviews: num(r.reviews, `${path}.reviews`),
     matches: num(r.matches, `${path}.matches`),
+    decisions: num(r.decisions, `${path}.decisions`),
     clusters: num(r.clusters, `${path}.clusters`),
     sources: num(r.sources, `${path}.sources`),
     works: num(r.works, `${path}.works`),
@@ -500,6 +510,137 @@ export function parseCitations(value: unknown): CitationView[] {
       resolution: parseResolution(c.resolution, `citations[${i}].resolution`),
     };
   });
+}
+
+function parseMatchOutcome(value: unknown, path: string): MatchOutcome {
+  const s = str(value, path);
+  if (!(MATCH_OUTCOMES as readonly string[]).includes(s)) {
+    throw new ParseError(path, `one of ${MATCH_OUTCOMES.join(", ")}`, s);
+  }
+  return s as MatchOutcome;
+}
+
+function parseMatchMethod(value: unknown, path: string): MatchMethod {
+  const s = str(value, path);
+  if (!(MATCH_METHODS as readonly string[]).includes(s)) {
+    throw new ParseError(path, `one of ${MATCH_METHODS.join(", ")}`, s);
+  }
+  return s as MatchMethod;
+}
+
+function parseTournamentSide(value: unknown, path: string): TournamentSide {
+  const s = record(value, path);
+  return {
+    item_id: str(s.item_id, `${path}.item_id`),
+    title: str(s.title, `${path}.title`),
+    rating_before: num(s.rating_before, `${path}.rating_before`),
+    rating_after: num(s.rating_after, `${path}.rating_after`),
+    delta: num(s.delta, `${path}.delta`),
+  };
+}
+
+/**
+ * Validate the tournament feed. A match is only usable if every fact that
+ * explains it survives: both sides, the verdict, the judge, and the stated
+ * rationale. Nothing is defaulted, because a fabricated rationale would
+ * read as the judge's own words.
+ */
+export function parseTournamentFeed(value: unknown): TournamentFeed {
+  const r = record(value, "tournament response");
+  return {
+    run_id: str(r.run_id, "tournament response.run_id"),
+    matches: array(r.matches, "tournament response.matches").map((v, i) => {
+      const path = `matches[${i}]`;
+      const m = record(v, path);
+      return {
+        id: str(m.id, `${path}.id`),
+        method: parseMatchMethod(m.method, `${path}.method`),
+        judge_model: str(m.judge_model, `${path}.judge_model`),
+        outcome: parseMatchOutcome(m.outcome, `${path}.outcome`),
+        rationale: str(m.rationale, `${path}.rationale`),
+        first: parseTournamentSide(m.first, `${path}.first`),
+        second: parseTournamentSide(m.second, `${path}.second`),
+        order_randomized: bool(m.order_randomized, `${path}.order_randomized`),
+        created_at: str(m.created_at, `${path}.created_at`),
+        produced_by: strOrNull(m.produced_by, `${path}.produced_by`),
+      };
+    }),
+  };
+}
+
+/**
+ * Validate the decisions ledger. `kind` is deliberately not narrowed to a
+ * union: an engine that records a kind this build has never heard of is
+ * still telling the truth, and the ledger should show it rather than drop
+ * the row.
+ */
+export function parseDecisionLedger(value: unknown): DecisionLedger {
+  const r = record(value, "ledger response");
+  return {
+    run_id: str(r.run_id, "ledger response.run_id"),
+    decisions: array(r.decisions, "ledger response.decisions").map((v, i) => {
+      const path = `decisions[${i}]`;
+      const d = record(v, path);
+      const decision: DecisionView = {
+        id: str(d.id, `${path}.id`),
+        kind: str(d.kind, `${path}.kind`),
+        actor: str(d.actor, `${path}.actor`),
+        reason: str(d.reason, `${path}.reason`),
+        referenced: array(d.referenced, `${path}.referenced`).map((ref, j) =>
+          str(ref, `${path}.referenced[${j}]`),
+        ),
+        created_at: str(d.created_at, `${path}.created_at`),
+      };
+      return decision;
+    }),
+  };
+}
+
+const HISTORY_RESULTS: readonly HistoryResult[] = [
+  "won",
+  "lost",
+  "drew",
+  "unresolved",
+];
+
+function parseHistoryResult(value: unknown, path: string): HistoryResult {
+  const raw = str(value, path);
+  if (!HISTORY_RESULTS.includes(raw as HistoryResult)) {
+    throw new ParseError(path, `one of ${HISTORY_RESULTS.join(", ")}`, raw);
+  }
+  return raw as HistoryResult;
+}
+
+/**
+ * Validate one candidate's match history. Every entry carries the opponent,
+ * the verdict from this candidate's side, and the rating movement, so a row
+ * can only be rendered from facts the record actually holds.
+ */
+export function parseCandidateHistory(value: unknown): CandidateHistory {
+  const r = record(value, "history response");
+  return {
+    run_id: str(r.run_id, "history response.run_id"),
+    item_id: str(r.item_id, "history response.item_id"),
+    title: str(r.title, "history response.title"),
+    matches: array(r.matches, "history response.matches").map((v, i) => {
+      const path = `matches[${i}]`;
+      const m = record(v, path);
+      return {
+        id: str(m.id, `${path}.id`),
+        opponent_id: str(m.opponent_id, `${path}.opponent_id`),
+        opponent_title: str(m.opponent_title, `${path}.opponent_title`),
+        result: parseHistoryResult(m.result, `${path}.result`),
+        method: parseMatchMethod(m.method, `${path}.method`),
+        judge_model: str(m.judge_model, `${path}.judge_model`),
+        rationale: str(m.rationale, `${path}.rationale`),
+        rating_before: num(m.rating_before, `${path}.rating_before`),
+        rating_after: num(m.rating_after, `${path}.rating_after`),
+        delta: num(m.delta, `${path}.delta`),
+        created_at: str(m.created_at, `${path}.created_at`),
+        produced_by: strOrNull(m.produced_by, `${path}.produced_by`),
+      };
+    }),
+  };
 }
 
 /** Validate the report payload. */

@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { snapshotFixture } from "./fixtures";
+import { snapshotFixture, tournamentFixture } from "./fixtures";
 import {
   ParseError,
   parseApiError,
   parseCitations,
+  parseDecisionLedger,
   parseLibraryPassageHits,
   parsePassagePage,
   parseReport,
@@ -15,6 +16,7 @@ import {
   parseSources,
   parseStartedRun,
   parseTaskReasoning,
+  parseTournamentFeed,
   parseUpload,
   parseUploads,
 } from "./parse";
@@ -50,6 +52,57 @@ describe("parseTaskReasoning", () => {
         reasoning: [{ started_at: "now", finished_at: null, model: null }],
       }),
     ).toThrow(/content/);
+  });
+});
+
+describe("parseDecisionLedger", () => {
+  const one = {
+    id: "decision_1",
+    kind: "scheduling",
+    actor: "supervisor",
+    reason: "Generation has the thinnest coverage of the mechanism.",
+    referenced: ["task_generation_01"],
+    created_at: "2026-01-01T00:00:00Z",
+  };
+
+  it("keeps the actor, reason and references of every decision", () => {
+    const ledger = parseDecisionLedger({
+      run_id: "run_1",
+      decisions: [one, { ...one, id: "decision_2", actor: "reflection", referenced: [] }],
+    });
+    expect(ledger.run_id).toBe("run_1");
+    expect(ledger.decisions).toHaveLength(2);
+    expect(ledger.decisions[0]).toEqual(one);
+    expect(ledger.decisions[1]?.actor).toBe("reflection");
+    expect(ledger.decisions[1]?.referenced).toEqual([]);
+  });
+
+  it("keeps an unrecognised kind verbatim rather than dropping the row", () => {
+    const ledger = parseDecisionLedger({
+      run_id: "run_1",
+      decisions: [{ ...one, kind: "evidence_replan" }],
+    });
+    expect(ledger.decisions[0]?.kind).toBe("evidence_replan");
+  });
+
+  it("rejects a decision without a reason, because the reason is the point", () => {
+    const { reason: _reason, ...withoutReason } = one;
+    expect(() =>
+      parseDecisionLedger({ run_id: "run_1", decisions: [withoutReason] }),
+    ).toThrow(ParseError);
+  });
+
+  it("rejects a non-string reference instead of stringifying it", () => {
+    expect(() =>
+      parseDecisionLedger({
+        run_id: "run_1",
+        decisions: [{ ...one, referenced: [7] }],
+      }),
+    ).toThrow(ParseError);
+  });
+
+  it("accepts an empty ledger: a run can start without deciding anything", () => {
+    expect(parseDecisionLedger({ run_id: "run_1", decisions: [] }).decisions).toEqual([]);
   });
 });
 
@@ -643,5 +696,54 @@ describe("a queued follower's view of the head's provider wait", () => {
     expect(() => parseRunSnapshot(fixture)).toThrow(/queue_provider_waiting/);
     fixture.run.queue_provider_waiting = { since: "2026-10-04T14:03:00Z", note: null };
     expect(() => parseRunSnapshot(fixture)).toThrow(/queue_provider_waiting/);
+  });
+});
+
+describe("parseTournamentFeed", () => {
+  it("carries every match fact through, including both rating movements", () => {
+    const feed = parseTournamentFeed(tournamentFixture());
+    expect(feed.run_id).toBe("run_0412aa");
+    expect(feed.matches).toHaveLength(2);
+    const decided = feed.matches[0]!;
+    const declined = feed.matches[1]!;
+    expect(decided.outcome).toBe("win_a");
+    expect(decided.first.rating_before).toBe(1200);
+    expect(decided.first.rating_after).toBe(1216);
+    expect(decided.first.delta).toBe(16);
+    expect(decided.second.delta).toBe(-16);
+    expect(decided.order_randomized).toBe(true);
+    expect(decided.produced_by).toBe("task_m01");
+    expect(declined.outcome).toBe("insufficient_basis");
+    expect(declined.first.delta).toBe(0);
+    expect(declined.produced_by).toBeNull();
+  });
+
+  it("rejects an outcome or method outside the recorded vocabulary", () => {
+    const outcome = tournamentFixture() as { matches: Array<Record<string, unknown>> };
+    outcome.matches[0]!.outcome = "win";
+    expect(() => parseTournamentFeed(outcome)).toThrow(/matches\[0\]\.outcome/);
+
+    const method = tournamentFixture() as { matches: Array<Record<string, unknown>> };
+    method.matches[0]!.method = "tournament";
+    expect(() => parseTournamentFeed(method)).toThrow(/matches\[0\]\.method/);
+  });
+
+  it("refuses a match with no rationale rather than inventing one", () => {
+    const fixture = tournamentFixture() as { matches: Array<Record<string, unknown>> };
+    delete fixture.matches[0]!.rationale;
+    expect(() => parseTournamentFeed(fixture)).toThrow(/rationale/);
+  });
+
+  it("names the missing side field in the path", () => {
+    const fixture = tournamentFixture() as {
+      matches: Array<{ second: Record<string, unknown> }>;
+    };
+    delete fixture.matches[0]!.second.delta;
+    expect(() => parseTournamentFeed(fixture)).toThrow(/matches\[0\]\.second\.delta/);
+  });
+
+  it("rejects a feed that is not an object with a matches array", () => {
+    expect(() => parseTournamentFeed(null)).toThrow(ParseError);
+    expect(() => parseTournamentFeed({ run_id: "run_0412aa" })).toThrow(/matches/);
   });
 });

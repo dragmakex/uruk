@@ -688,6 +688,20 @@ a {
   display: none;
 }
 
+/* A dot of ink travelling a wire: work moving from one role to the next.
+   SMIL drives the travel, so the element only needs to look like a parcel. */
+.handoff-pulse {
+  fill: var(--ink);
+  stroke: none;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .handoff-pulse {
+    display: none;
+  }
+}
+
 @media (max-width: 1439px) {
   .topology {
     grid-template-columns: minmax(210px, 250px) minmax(0, 1fr);
@@ -1084,6 +1098,31 @@ details.legend-fold .legend-line {
   color: var(--danger-ink);
 }
 
+/* Places gained or lost since the previous snapshot. The glyph is short
+   enough to sit beside a rating without moving it. */
+.rank-move {
+  display: inline-block;
+  margin-left: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  vertical-align: 1px;
+}
+
+.rank-move.is-up {
+  color: var(--ink);
+}
+
+.rank-move.is-down {
+  color: var(--muted);
+}
+
+.rank-move.is-new {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
 @media (max-width: 640px) {
   .item-row {
     flex-direction: column;
@@ -1092,6 +1131,161 @@ details.legend-fold .legend-line {
 
   .item-rating {
     text-align: left;
+  }
+}
+
+/* ---------- match log ---------- */
+
+.match-log {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.match-card {
+  border: var(--hairline) solid var(--line);
+  background: var(--surface);
+  padding: 14px 18px 12px;
+}
+
+/* A match that arrived while this panel was open draws once, so the log
+   reads as something that is happening rather than a static report. */
+@media (prefers-reduced-motion: no-preference) {
+  .match-card[data-fresh="true"] {
+    animation: match-arrive 420ms ease-out;
+  }
+}
+
+@keyframes match-arrive {
+  from {
+    border-color: var(--focus);
+    background: var(--surface-raised);
+  }
+  to {
+    border-color: var(--line);
+    background: var(--surface);
+  }
+}
+
+.match-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 14px;
+  padding-bottom: 10px;
+  border-bottom: var(--hairline) solid var(--line-soft);
+}
+
+.match-verdict {
+  margin-left: auto;
+  color: var(--ink);
+}
+
+.match-sides {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.match-side {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto auto;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 0;
+}
+
+.match-side + .match-side {
+  border-top: var(--hairline) dotted var(--line-soft);
+}
+
+.match-side-mark {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1;
+  text-align: center;
+  border: var(--hairline) solid var(--line-soft);
+  color: var(--muted);
+}
+
+.match-side-won .match-side-mark {
+  border-color: var(--ink);
+  background: var(--fill);
+  color: var(--fill-ink);
+}
+
+.match-side-lost .match-side-mark {
+  opacity: 0.55;
+}
+
+.match-side-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.match-side-won .match-side-title {
+  font-weight: 650;
+}
+
+.match-side-lost .match-side-title {
+  color: var(--muted);
+}
+
+.match-side-elo {
+  white-space: nowrap;
+}
+
+.match-side-delta {
+  min-width: 44px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.delta-up {
+  color: var(--ink);
+}
+
+.delta-down {
+  color: var(--muted);
+}
+
+.match-rationale {
+  margin: 10px 0 0;
+  padding-left: 30px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--ink);
+  border-left: var(--hairline) solid var(--line-soft);
+  margin-left: 9px;
+}
+
+.match-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 14px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: var(--hairline) solid var(--line-soft);
+}
+
+@media (max-width: 640px) {
+  .match-side {
+    grid-template-columns: 18px minmax(0, 1fr) auto;
+  }
+
+  .match-side-delta {
+    display: none;
+  }
+
+  .match-rationale {
+    padding-left: 0;
+    margin-left: 0;
+    border-left: 0;
   }
 }
 
@@ -1673,4 +1867,185 @@ details.legend-fold .legend-line {
 .preview-grid dd {
   margin: 0;
   font-size: 14px;
+}
+
+/* A candidate row is a disclosure: opening it reads that candidate's own
+   match history rather than a summary written on top of the record. */
+.item-entry + .item-entry .item-row {
+  border-top: 0;
+}
+
+summary.item-row {
+  cursor: pointer;
+  list-style: none;
+}
+
+summary.item-row::-webkit-details-marker {
+  display: none;
+}
+
+/* The row now has a third child (the affordance), so the title column has
+   to claim the free space itself; otherwise `space-between` strands the
+   rating in the middle of the row. */
+summary.item-row > .item-main {
+  flex: 1 1 auto;
+}
+
+summary.item-row::after {
+  content: "matches \25B8";
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  align-self: center;
+}
+
+.row-history[open] > summary.item-row::after {
+  content: "matches \25BE";
+}
+
+.row-history > summary:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: -2px;
+}
+
+.history {
+  border: var(--hairline) solid var(--line);
+  border-top: 0;
+  background: var(--surface);
+  padding: 12px 20px 16px;
+}
+
+.history-note {
+  border: var(--hairline) solid var(--line);
+  border-top: 0;
+  background: var(--surface);
+  padding: 12px 20px;
+}
+
+.history-tally {
+  margin: 0 0 10px;
+}
+
+.history-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.history-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) max-content max-content;
+  grid-template-areas:
+    "mark opponent elo delta"
+    ". method method method"
+    ". rationale rationale rationale";
+  column-gap: 12px;
+  row-gap: 2px;
+  padding: 9px 0;
+  border-top: var(--hairline) solid var(--line-soft);
+}
+
+.history-row:first-child {
+  border-top: 0;
+}
+
+.history-mark {
+  grid-area: mark;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.history-row.is-won .history-mark {
+  color: var(--ink);
+}
+
+.history-opponent {
+  grid-area: opponent;
+  font-size: 14px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.history-elo {
+  grid-area: elo;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.history-delta {
+  grid-area: delta;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.history-method {
+  grid-area: method;
+}
+
+.history-rationale {
+  grid-area: rationale;
+  margin: 4px 0 0;
+  padding-left: 12px;
+  border-left: var(--hairline) solid var(--line-soft);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+/* The decisions ledger: the run's own account of what it chose and why. */
+.decision-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: var(--hairline) solid var(--line);
+  background: var(--surface);
+}
+
+.decision-row {
+  padding: 12px 20px;
+}
+
+.decision-row + .decision-row {
+  border-top: var(--hairline) solid var(--line-soft);
+}
+
+.decision-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.decision-index {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+
+.decision-actor {
+  font-weight: 650;
+  font-size: 13.5px;
+}
+
+.decision-kind {
+  color: var(--muted);
+}
+
+.decision-reason {
+  margin: 4px 0 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  max-width: 72ch;
+}
+
+.decision-refs {
+  margin: 6px 0 0;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
 }

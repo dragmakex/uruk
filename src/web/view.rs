@@ -169,6 +169,9 @@ pub struct Stats {
     pub items: u32,
     pub reviews: u32,
     pub matches: u32,
+    /// Decisions on the record, so the page can tell when the ledger it
+    /// last read is out of date.
+    pub decisions: u32,
     pub clusters: u32,
     pub sources: u32,
     pub works: u32,
@@ -281,6 +284,242 @@ fn panel_for_role(
     }
 }
 
+/// One side of a recorded match: the candidate as the judge saw it, with
+/// the rating movement the verdict caused.
+#[derive(Debug, Serialize)]
+pub struct FeedSide {
+    pub item_id: String,
+    pub title: String,
+    pub rating_before: f64,
+    pub rating_after: f64,
+    /// `rating_after - rating_before`, signed. Zero when the verdict
+    /// changed nothing (an `insufficient_basis` match).
+    pub delta: f64,
+}
+
+/// One recorded match as a feed entry: both candidates, the verdict, the
+/// judge that gave it, and the rating movement it produced.
+#[derive(Debug, Serialize)]
+pub struct FeedMatch {
+    pub id: String,
+    pub method: String,
+    pub judge_model: String,
+    pub outcome: String,
+    pub rationale: String,
+    /// The candidate presented first (`order_randomized` says whether that
+    /// order was shuffled).
+    pub first: FeedSide,
+    /// The candidate presented second.
+    pub second: FeedSide,
+    pub order_randomized: bool,
+    pub created_at: String,
+    /// The task that produced this match, when one is recorded.
+    pub produced_by: Option<String>,
+}
+
+/// Every match the engine recorded for one run, in recording order.
+#[derive(Debug, Serialize)]
+pub struct TournamentFeed {
+    pub run_id: String,
+    pub matches: Vec<FeedMatch>,
+}
+
+/// Build the tournament feed from persisted matches. Titles come from the
+/// item records; a match whose candidate has since been removed keeps its
+/// ID as the label rather than inventing one.
+pub async fn tournament_feed(store: &Store, run_id: &RunId) -> Result<TournamentFeed> {
+    let matches = store.list_matches(run_id).await?;
+    let titles: HashMap<String, String> = store
+        .item_summaries(run_id, None)
+        .await?
+        .into_iter()
+        .map(|item| (item.id.as_str().to_string(), item.title))
+        .collect();
+
+    let side = |item_id: &ItemId, before: f64, after: f64| FeedSide {
+        item_id: item_id.as_str().to_string(),
+        title: titles
+            .get(item_id.as_str())
+            .cloned()
+            .unwrap_or_else(|| item_id.as_str().to_string()),
+        rating_before: before,
+        rating_after: after,
+        delta: after - before,
+    };
+
+    let entries = matches
+        .iter()
+        .map(|m| FeedMatch {
+            id: m.id.as_str().to_string(),
+            method: m.method.as_str().to_string(),
+            judge_model: m.judge_model.clone(),
+            outcome: m.outcome.as_str().to_string(),
+            rationale: m.rationale.clone(),
+            first: side(&m.item_a, m.rating_a_before, m.rating_a_after),
+            second: side(&m.item_b, m.rating_b_before, m.rating_b_after),
+            order_randomized: m.order_randomized,
+            created_at: rfc3339(m.created_at),
+            produced_by: m.produced_by.as_ref().map(|task| task.as_str().to_string()),
+        })
+        .collect();
+
+    Ok(TournamentFeed {
+        run_id: run_id.as_str().to_string(),
+        matches: entries,
+    })
+}
+
+/// One recorded decision: who took it, what kind it was, why, and which
+/// records it refers to. The structured `payload` is deliberately left out:
+/// it is shaped per kind, and a ledger that renders it as prose would be
+/// inventing a reading of it.
+#[derive(Debug, Serialize)]
+pub struct DecisionView {
+    pub id: String,
+    pub kind: String,
+    /// `researcher`, `supervisor`, `system`, or the agent's own name.
+    pub actor: String,
+    /// The actor's stated reason, in its own words.
+    pub reason: String,
+    pub referenced: Vec<String>,
+    pub created_at: String,
+}
+
+/// Every decision on the run's record, in the order it was taken.
+#[derive(Debug, Serialize)]
+pub struct DecisionLedger {
+    pub run_id: String,
+    pub decisions: Vec<DecisionView>,
+}
+
+fn actor_label(actor: &Actor) -> String {
+    match actor {
+        Actor::Researcher => "researcher".to_string(),
+        Actor::Supervisor => "supervisor".to_string(),
+        Actor::Agent(name) => name.clone(),
+        Actor::System => "system".to_string(),
+    }
+}
+
+/// The run's decisions, oldest first: a ledger reads as the sequence of
+/// choices the run actually made.
+pub async fn decision_ledger(store: &Store, run_id: &RunId) -> Result<DecisionLedger> {
+    let decisions = store.list_decisions(run_id).await?;
+    Ok(DecisionLedger {
+        run_id: run_id.as_str().to_string(),
+        decisions: decisions
+            .iter()
+            .map(|d| DecisionView {
+                id: d.id.as_str().to_string(),
+                kind: d.kind.as_str().to_string(),
+                actor: actor_label(&d.actor),
+                reason: d.reason.clone(),
+                referenced: d.referenced.clone(),
+                created_at: rfc3339(d.created_at),
+            })
+            .collect(),
+    })
+}
+
+/// One match as a single candidate's history reads it: the opponent, what
+/// the verdict meant from this candidate's side, and the rating it moved.
+#[derive(Debug, Serialize)]
+pub struct HistoryEntry {
+    pub id: String,
+    pub opponent_id: String,
+    pub opponent_title: String,
+    /// `won`, `lost`, `drew` or `unresolved`, stated from this candidate's
+    /// side so a reader never has to work out which one was `item_a`.
+    pub result: String,
+    pub method: String,
+    pub judge_model: String,
+    pub rationale: String,
+    pub rating_before: f64,
+    pub rating_after: f64,
+    /// `rating_after - rating_before`, signed. Zero for `unresolved`.
+    pub delta: f64,
+    pub created_at: String,
+    pub produced_by: Option<String>,
+}
+
+/// Everything the record says about one candidate's matches, newest first.
+#[derive(Debug, Serialize)]
+pub struct CandidateHistory {
+    pub run_id: String,
+    pub item_id: String,
+    /// The candidate's title, or its ID when the item record is gone.
+    pub title: String,
+    pub matches: Vec<HistoryEntry>,
+}
+
+/// Build one candidate's match history. `None` when the run has no such
+/// item: a route that answers `null` for a candidate it cannot find is
+/// clearer than an empty history that reads like "never fought".
+pub async fn candidate_history(
+    store: &Store,
+    run_id: &RunId,
+    item_id: &ItemId,
+) -> Result<Option<CandidateHistory>> {
+    let titles: HashMap<String, String> = store
+        .item_summaries(run_id, None)
+        .await?
+        .into_iter()
+        .map(|item| (item.id.as_str().to_string(), item.title))
+        .collect();
+    let title = match titles.get(item_id.as_str()) {
+        Some(title) => title.clone(),
+        None => return Ok(None),
+    };
+
+    let mut entries: Vec<HistoryEntry> = store
+        .list_matches(run_id)
+        .await?
+        .iter()
+        .filter_map(|m| {
+            let own_first = m.item_a == *item_id;
+            let (opponent, before, after) = if own_first {
+                (&m.item_b, m.rating_a_before, m.rating_a_after)
+            } else if m.item_b == *item_id {
+                (&m.item_a, m.rating_b_before, m.rating_b_after)
+            } else {
+                return None;
+            };
+            let result = match (m.outcome, own_first) {
+                (MatchOutcome::WinA, true) | (MatchOutcome::WinB, false) => "won",
+                (MatchOutcome::WinA, false) | (MatchOutcome::WinB, true) => "lost",
+                (MatchOutcome::Draw, _) => "drew",
+                (MatchOutcome::InsufficientBasis, _) => "unresolved",
+            };
+            Some(HistoryEntry {
+                id: m.id.as_str().to_string(),
+                opponent_id: opponent.as_str().to_string(),
+                opponent_title: titles
+                    .get(opponent.as_str())
+                    .cloned()
+                    .unwrap_or_else(|| opponent.as_str().to_string()),
+                result: result.to_string(),
+                method: m.method.as_str().to_string(),
+                judge_model: m.judge_model.clone(),
+                rationale: m.rationale.clone(),
+                rating_before: before,
+                rating_after: after,
+                delta: after - before,
+                created_at: rfc3339(m.created_at),
+                produced_by: m.produced_by.as_ref().map(|task| task.as_str().to_string()),
+            })
+        })
+        .collect();
+    // Newest first: a history is read from the most recent result back.
+    entries.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+
+    Ok(Some(CandidateHistory {
+        run_id: run_id.as_str().to_string(),
+        item_id: item_id.as_str().to_string(),
+        title,
+        matches: entries,
+    }))
+}
+
 /// Build the complete snapshot for one run.
 pub async fn run_snapshot(store: &Store, run_id: &RunId) -> Result<RunSnapshot> {
     let run = store.get_run(run_id).await?;
@@ -296,6 +535,7 @@ pub async fn run_snapshot(store: &Store, run_id: &RunId) -> Result<RunSnapshot> 
     sort_items(&mut items);
 
     let matches = store.list_matches(run_id).await?.len() as u32;
+    let decisions = store.count_decisions(run_id).await?;
     let clusters = store.list_clusters(run_id).await?.len() as u32;
     let sources = store.list_sources(run_id).await?.len() as u32;
     let works = store.list_works(run_id).await?.len() as u32;
@@ -416,6 +656,7 @@ pub async fn run_snapshot(store: &Store, run_id: &RunId) -> Result<RunSnapshot> 
             items: items.len() as u32,
             reviews,
             matches,
+            decisions,
             clusters,
             sources,
             works,

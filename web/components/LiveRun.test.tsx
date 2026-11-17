@@ -49,9 +49,22 @@ const initial = parseRunSnapshot(snapshotFixture());
 beforeEach(() => {
   FakeEventSource.instances = [];
   vi.stubGlobal("EventSource", FakeEventSource);
+  // The match log reads its own endpoint; this file is about the snapshot
+  // stream, so it answers with an empty feed.
+  vi.stubGlobal(
+    "fetch",
+    async (): Promise<Response> =>
+      new Response(JSON.stringify({ ok: true, tournament: { run_id: "run_0412aa", matches: [] } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+  );
 });
 
-afterEach(() => {
+afterEach(async () => {
+  // Let the match-log read settle inside act before the tree unmounts, so
+  // its arrival is not reported as an un-acted state update.
+  await act(async () => {});
   vi.unstubAllGlobals();
 });
 

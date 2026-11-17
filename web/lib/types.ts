@@ -151,6 +151,8 @@ export interface Stats {
   items: number;
   reviews: number;
   matches: number;
+  /** Decisions on the record; the ledger re-reads when this changes. */
+  decisions: number;
   clusters: number;
   sources: number;
   works: number;
@@ -303,6 +305,125 @@ export interface ReportView {
   run_id: string;
   markdown: string;
   manifest: Record<string, unknown> | null;
+}
+
+/**
+ * One decision on the record: who took it, what kind it was, and why in
+ * their own words. The structured payload stays on the server — it is
+ * shaped per kind, and rendering it as prose would invent a reading of it.
+ */
+export interface DecisionView {
+  id: string;
+  /** `plan_change`, `human_feedback`, `scheduling`, `disposition`,
+   *  `meta_feedback` or `stop`. Kept as a string: an unknown kind from a
+   *  newer engine still renders as itself rather than disappearing. */
+  kind: string;
+  /** `researcher`, `supervisor`, `system`, or an agent's own name. */
+  actor: string;
+  reason: string;
+  referenced: string[];
+  created_at: string;
+}
+
+/** Every decision on the run's record, oldest first. */
+export interface DecisionLedger {
+  run_id: string;
+  decisions: DecisionView[];
+}
+
+/**
+ * What one match meant from a particular candidate's side. Stated by the
+ * service, so the UI never has to work out which side was `item_a`.
+ * `unresolved` is a verdict of insufficient basis: real, but no rating
+ * moved and no winner was named.
+ */
+export type HistoryResult = "won" | "lost" | "drew" | "unresolved";
+
+/** One match as it reads in a single candidate's history. */
+export interface HistoryEntry {
+  id: string;
+  opponent_id: string;
+  /** The opponent's title, or its ID when the record no longer has one. */
+  opponent_title: string;
+  result: HistoryResult;
+  method: MatchMethod;
+  judge_model: string;
+  /** The judge's stated reason, in its own words. */
+  rationale: string;
+  rating_before: number;
+  rating_after: number;
+  /** `rating_after - rating_before`, signed. Zero for `unresolved`. */
+  delta: number;
+  created_at: string;
+  produced_by: string | null;
+}
+
+/**
+ * Every match the record has for one candidate, newest first. An empty list
+ * means the candidate has not fought yet; it does not mean the read failed.
+ */
+export interface CandidateHistory {
+  run_id: string;
+  item_id: string;
+  title: string;
+  matches: HistoryEntry[];
+}
+
+/**
+ * One side of a recorded comparison, with the rating it entered and left
+ * with. `delta` is what the match did to that candidate, and it is zero
+ * when the verdict updated nothing (an insufficient basis).
+ */
+export interface TournamentSide {
+  item_id: string;
+  /** The candidate's title, or its ID when the record no longer has one. */
+  title: string;
+  rating_before: number;
+  rating_after: number;
+  delta: number;
+}
+
+/**
+ * Which side won, in presentation order. `first` is the candidate the judge
+ * saw first (`item_a`), so a verdict maps onto a stable ID; `win_a` means
+ * the first side won, not that a particular candidate won.
+ */
+export type MatchOutcome = "win_a" | "win_b" | "draw" | "insufficient_basis";
+
+export const MATCH_OUTCOMES: readonly MatchOutcome[] = [
+  "win_a",
+  "win_b",
+  "draw",
+  "insufficient_basis",
+];
+
+/** How a comparison was conducted: one turn, or a multi-turn debate. */
+export type MatchMethod = "pairwise" | "debate";
+
+export const MATCH_METHODS: readonly MatchMethod[] = ["pairwise", "debate"];
+
+/** One recorded match, as the tournament feed reports it. */
+export interface TournamentMatch {
+  id: string;
+  method: MatchMethod;
+  /** Model and configuration that judged. */
+  judge_model: string;
+  outcome: MatchOutcome;
+  /** The judge's stated reason, in its own words. */
+  rationale: string;
+  first: TournamentSide;
+  second: TournamentSide;
+  /** True when the pair was shuffled before presentation. */
+  order_randomized: boolean;
+  created_at: string;
+  /** The task that played the match, if the record names one. */
+  produced_by: string | null;
+}
+
+export interface TournamentFeed {
+  run_id: string;
+  /** Every recorded match for this run, oldest first as the API returns it. */
+  matches: TournamentMatch[];
 }
 
 /** The stable error body every API error returns. */
