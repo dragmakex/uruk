@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check": "bun run lint && bun run typecheck && bun run test && bun run build"
+    "check": "bun run lint && bun run typecheck && bun run test && bun run build",
+    "check:mobile": "node scripts/mobile-check.mjs"
   },
   "trustedDependencies": [
     "unrs-resolver"
@@ -35,6 +36,7 @@
     "eslint": "^9.30.0",
     "eslint-config-next": "16.3.8",
     "jsdom": "^26.0.0",
+    "playwright": "1.64.0",
     "typescript": "^5.8.0",
     "vitest": "^5.0.3"
   }

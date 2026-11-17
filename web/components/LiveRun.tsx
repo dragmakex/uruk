@@ -85,6 +85,36 @@ export function LiveRun({
   const elapsed = useElapsedSeconds(snapshot);
   const [stopping, setStopping] = useState(false);
   const [stopError, setStopError] = useState<string | null>(null);
+  const headRef = useRef<HTMLDivElement | null>(null);
+  const hasSnapshot = snapshot !== null;
+
+  // The run header is sticky above the record controls, whose `top` offset
+  // is computed from its height. On a phone the question wraps to two lines
+  // and the facts row can wrap again, so a fixed token would leave those
+  // controls misaligned. Measure the header whenever its content reflows.
+  useEffect(() => {
+    const head = headRef.current;
+    if (head === null) return;
+    const sync = () => {
+      const height = Math.round(head.getBoundingClientRect().height);
+      if (height > 0) {
+        document.documentElement.style.setProperty(
+          "--run-head-height",
+          `${height}px`,
+        );
+      }
+    };
+    sync();
+    if (typeof ResizeObserver === "undefined") {
+      return () => document.documentElement.style.removeProperty("--run-head-height");
+    }
+    const observer = new ResizeObserver(sync);
+    observer.observe(head);
+    return () => {
+      observer.disconnect();
+      document.documentElement.style.removeProperty("--run-head-height");
+    };
+  }, [hasSnapshot]);
 
   // Announce state transitions politely, not every snapshot.
   const [announcement, setAnnouncement] = useState("");
@@ -175,7 +205,7 @@ export function LiveRun({
 
   return (
     <>
-      <div className="run-head">
+      <div className="run-head" ref={headRef}>
         <h1 className="run-head-question" title={goal.question}>
           {goal.question}
         </h1>

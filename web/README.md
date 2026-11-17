@@ -21,6 +21,9 @@ bun run typecheck  # tsc --noEmit (strict)
 bun run build      # production build
 bun run start      # serve the production build
 bun run check      # lint + typecheck + test + build
+bunx playwright install chromium   # once, for the responsive gate
+bun run check:mobile -- --base-url http://127.0.0.1:3000
+                   # headless responsive audit (320-768px) + screenshots
 ```
 
 Tooling is Bun (`packageManager` pins `bun@1.3.14`; the lockfile is
@@ -78,7 +81,12 @@ One semantic DOM tree at every width:
 - 768-1023px: Supervisor full width, two-column grid, wires hidden; each
   card shows its textual `feeds …` pipeline context instead.
 - <768px: single-column pipeline order, compact sticky run header,
-  collapsible key.
+  collapsible key. The run header is measured at runtime so the sticky
+  record controls stay below it when the question wraps to two lines.
+
+The layout is verified down to 320px. Both data tables (the library and
+the run-form agent legend) become stacked records rather than forcing a
+horizontal scroll, and interactive controls keep a 44px touch target.
 
 ## Accessibility
 
@@ -94,6 +102,15 @@ Vitest with jsdom and Testing Library. Covered behavior: every runtime
 parser (valid, missing, and type-drifted payloads), formatting rules, the
 SSE reducer's full lifecycle (live, reconnecting, parse errors, ended,
 failed), run-form validation and error bodies, agent-card fact rendering,
-and the live run view driven by a scripted EventSource. There is no
-Playwright suite in-repo; cross-viewport rendering was verified manually
-with Playwright screenshots during development.
+and the live run view driven by a scripted EventSource.
+
+`bun run check:mobile` is the layout gate. It drives the real pages with
+Playwright at 320, 360, 390, 414, and 768px and fails on sideways page
+scroll, an element outside the viewport, a cramped or wrapping header,
+an undersized control, or clipped `nowrap` text. Screenshots and the
+JSON report land in `.mobile-check/`. Run it against a local server
+before shipping UI changes; add `--run-id <id>` (and `--cookie <value>`
+when the run belongs to an existing browser identity) to cover the live
+run, report, and citations pages, plus `--task-id <id>` for a reasoning
+trace page. Add `--color-scheme dark` to run the same gate against the
+dark tokens.

@@ -161,7 +161,7 @@ export default async function LibraryPage({
             <tbody>
               {sources.map((source) => (
                 <tr key={source.id}>
-                  <td>
+                  <td data-label="Source">
                     <Link
                       href={`/runs/${encodeURIComponent(source.run_id)}/sources/${encodeURIComponent(source.id)}`}
                     >
@@ -183,9 +183,13 @@ export default async function LibraryPage({
                       </>
                     )}
                   </td>
-                  <td className="micro-ink">{originText(source)}</td>
-                  <td className="micro-ink">{source.access.replace(/_/g, " ")}</td>
-                  <td>
+                  <td className="micro-ink" data-label="Origin">
+                    {originText(source)}
+                  </td>
+                  <td className="micro-ink" data-label="Access">
+                    {source.access.replace(/_/g, " ")}
+                  </td>
+                  <td data-label="Run">
                     <Link
                       href={`/runs/${encodeURIComponent(source.run_id)}`}
                       className="micro-ink"
@@ -193,10 +197,12 @@ export default async function LibraryPage({
                       {shortRunId(source.run_id)}
                     </Link>
                   </td>
-                  <td className="micro-ink">
+                  <td className="micro-ink" data-label="Retrieved">
                     {source.retrieved_at.slice(0, 10)}
                   </td>
-                  <td className="micro-ink">{source.content_hash.slice(0, 12)}</td>
+                  <td className="micro-ink" data-label="Hash">
+                    {source.content_hash.slice(0, 12)}
+                  </td>
                 </tr>
               ))}
             </tbody>
