@@ -348,7 +348,7 @@ export function LiveRun({
                   {stats.matches === 1 ? "match" : "matches"} judged
                 </span>
               </div>
-              <TournamentFeed runId={run.id} matchCount={stats.matches} />
+              <TournamentFeed key={run.id} runId={run.id} matchCount={stats.matches} />
             </section>
 
             <section className="items-section" aria-label="Ranked candidates">
@@ -359,7 +359,7 @@ export function LiveRun({
                   used
                 </span>
               </div>
-              <RankingList runId={runId} items={items} />
+              <RankingList key={runId} runId={runId} items={items} />
             </section>
 
             <section className="items-section" aria-label="Decisions">
@@ -370,7 +370,7 @@ export function LiveRun({
                   {stats.decisions === 1 ? "decision" : "decisions"} on record
                 </span>
               </div>
-              <DecisionLedger runId={runId} decisionCount={stats.decisions} />
+              <DecisionLedger key={runId} runId={runId} decisionCount={stats.decisions} />
             </section>
           </>
         )}

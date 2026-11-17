@@ -1136,21 +1136,30 @@ details.legend-fold .legend-line {
 
 /* ---------- match log ---------- */
 
-.match-log-shell {
+.record-table-shell {
   margin-top: 16px;
 }
 
-.match-log-controls,
-.match-log-pager {
+.record-table-controls,
+.record-table-pager {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
 
-.match-log-pager {
+.record-table-pager {
   justify-content: center;
   margin-top: 14px;
+}
+
+.record-table-shell > .record-table-body {
+  margin-top: 16px;
+}
+
+.candidate-rows {
+  list-style: none;
+  padding: 0;
 }
 
 .match-log {
