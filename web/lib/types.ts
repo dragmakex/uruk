@@ -151,6 +151,8 @@ export interface Stats {
   items: number;
   reviews: number;
   matches: number;
+  /** Decisions on the record; the ledger re-reads when this changes. */
+  decisions: number;
   clusters: number;
   sources: number;
   works: number;
@@ -303,6 +305,30 @@ export interface ReportView {
   run_id: string;
   markdown: string;
   manifest: Record<string, unknown> | null;
+}
+
+/**
+ * One decision on the record: who took it, what kind it was, and why in
+ * their own words. The structured payload stays on the server — it is
+ * shaped per kind, and rendering it as prose would invent a reading of it.
+ */
+export interface DecisionView {
+  id: string;
+  /** `plan_change`, `human_feedback`, `scheduling`, `disposition`,
+   *  `meta_feedback` or `stop`. Kept as a string: an unknown kind from a
+   *  newer engine still renders as itself rather than disappearing. */
+  kind: string;
+  /** `researcher`, `supervisor`, `system`, or an agent's own name. */
+  actor: string;
+  reason: string;
+  referenced: string[];
+  created_at: string;
+}
+
+/** Every decision on the run's record, oldest first. */
+export interface DecisionLedger {
+  run_id: string;
+  decisions: DecisionView[];
 }
 
 /**

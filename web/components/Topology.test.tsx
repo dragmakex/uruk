@@ -8,6 +8,7 @@ const stats: Stats = {
   items: 3,
   reviews: 2,
   matches: 0,
+  decisions: 0,
   clusters: 0,
   sources: 1,
   works: 0,
