@@ -68,7 +68,8 @@ const args = parseArgs(process.argv.slice(2));
 if (args.help) {
   console.log(
     "Usage: bun run check:mobile [-- --base-url URL] [--run-id ID] [--cookie TOKEN] " +
-      "[--task-id ID] [--color-scheme light|dark] [--widths 320,360,390,414,768] [--out DIR]",
+      "[--task-id ID] [--color-scheme light|dark] [--user-agent UA] " +
+      "[--widths 320,360,390,414,768] [--out DIR]",
   );
   process.exit(0);
 }
@@ -84,6 +85,8 @@ const runId = typeof args["run-id"] === "string" ? args["run-id"] : "";
 const taskId = typeof args["task-id"] === "string" ? args["task-id"] : "";
 const cookie = typeof args.cookie === "string" ? args.cookie : "";
 const colorScheme = args["color-scheme"] === "dark" ? "dark" : "light";
+const customUserAgent =
+  typeof args["user-agent"] === "string" ? args["user-agent"] : "";
 const outDir = path.resolve(String(args.out ?? ".mobile-check"));
 
 if (widths.length === 0) {
@@ -126,6 +129,15 @@ function auditPage() {
     undersized: [],
     smallButtons: [],
     clipped: [],
+    blocked:
+      Boolean(
+        document.querySelector(
+          ".cf-footer-ip-reveal-btn, #challenge-form, .cf-browser-verification",
+        ),
+      ) ||
+      /just a moment|attention required|verify you are human|checking your browser/i.test(
+        `${document.title} ${document.body.innerText.slice(0, 500)}`,
+      ),
   };
 
   const isVisible = (el) => {
@@ -283,6 +295,11 @@ function auditPage() {
 
 function evaluate(result, width) {
   const failures = [];
+  if (result.blocked) {
+    failures.push(
+      "page was replaced by a Cloudflare challenge; pass --user-agent or an authenticated --cookie",
+    );
+  }
   if (result.documentWidth > result.viewportWidth + 1) {
     failures.push(
       `document is ${result.documentWidth}px wide in a ${result.viewportWidth}px viewport`,
@@ -347,6 +364,11 @@ const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE;
 const browser = await chromium.launch(
   executablePath ? { executablePath } : undefined,
 );
+const browserMajor = browser.version().split(".")[0];
+const userAgent =
+  customUserAgent ||
+  `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) ` +
+    `Chrome/${browserMajor}.0.0.0 Safari/537.36`;
 const report = [];
 let failed = 0;
 
@@ -356,6 +378,9 @@ try {
       viewport: { width, height: 844 },
       deviceScaleFactor: 1,
       colorScheme,
+      userAgent,
+      locale: "en-US",
+      timezoneId: "Europe/Zurich",
       // Desktop Chromium's `isMobile` emulation expands innerHeight to the
       // document height, which makes the page unscrollable and hides the
       // lower half from viewport checks. Width-driven media queries are the
