@@ -605,6 +605,13 @@ a {
   align-items: start;
 }
 
+/* Grid items default to `min-width: auto`, so a wide child (a nowrap
+   table column, a legend row) can push the whole track past the viewport.
+   The layouts below already wrap their content; let the tracks shrink. */
+.spec-layout > * {
+  min-width: 0;
+}
+
 @media (max-width: 1023px) {
   .spec-layout {
     grid-template-columns: 1fr;
@@ -691,6 +698,14 @@ a {
   grid-template-columns: minmax(230px, 300px) minmax(0, 1fr);
   gap: 56px;
   align-items: start;
+}
+
+/* Grid items default to their min-content width. A nowrap reasoning
+   preview inside one card would otherwise widen the whole worker grid
+   (and the page) instead of ellipsizing inside its own card. */
+.topology > *,
+.workers > * {
+  min-width: 0;
 }
 
 .workers {
@@ -959,7 +974,10 @@ a {
   gap: 18px;
   border: var(--hairline) solid var(--line);
   background:
-    linear-gradient(rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.72)),
+    linear-gradient(
+      color-mix(in srgb, var(--surface) 88%, transparent),
+      color-mix(in srgb, var(--surface) 88%, transparent)
+    ),
     repeating-linear-gradient(135deg, transparent 0 18px, var(--line-soft) 19px 20px);
 }
 
@@ -1087,6 +1105,10 @@ details.legend-fold summary {
   font-family: var(--font-mono);
   font-size: 12px;
   color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  min-width: 24px;
+  min-height: 24px;
 }
 
 details.legend-fold {
@@ -1832,6 +1854,7 @@ details.legend-fold .legend-line {
   border: 0;
   padding: 0;
   margin: 0;
+  min-width: 0;
 }
 
 .field-stack {
@@ -1869,6 +1892,10 @@ details.legend-fold .legend-line {
 .list-input {
   resize: vertical;
   min-height: 48px;
+}
+
+.num-field input[type="file"] {
+  min-height: 32px;
 }
 
 .num-input:focus,
@@ -2137,4 +2164,341 @@ summary.item-row::after {
   font-size: 10.5px;
   color: var(--muted);
   overflow-wrap: anywhere;
+}
+
+/* ---------- mobile refinements ---------- */
+/*
+ * Phones are a primary reading surface for the console: the live run page
+ * has to hold together at 320px, not just at the 390px of a recent phone.
+ * Every multi-column layout above collapses here, both data tables become
+ * stacked records, and controls keep a 44px touch target. The assertions
+ * live in scripts/mobile-check.mjs; run them before shipping UI changes.
+ */
+
+@media (max-width: 767px) {
+  .site-nav {
+    gap: 8px;
+    padding: 0 12px;
+  }
+
+  .nav-links {
+    gap: 8px;
+    margin-left: auto;
+  }
+
+  .nav-links a {
+    padding: 0 6px;
+  }
+
+  .btn,
+  .nav-links .btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .nav-links .btn {
+    padding-inline: 8px;
+  }
+
+  /* Beats the desktop `min-height: 36px` on this one control. */
+  .nav-links a.nav-start {
+    min-height: 44px;
+  }
+
+  .run-head {
+    gap: 6px;
+    padding: 8px 12px;
+  }
+
+  /* Two lines of the question, then an ellipsis. The sticky header is
+     measured at runtime (LiveRun) so the record controls below it stay
+     aligned whatever height this wraps to. */
+  .run-head-question {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    white-space: normal;
+    line-height: 1.3;
+  }
+
+  .run-head-facts {
+    width: 100%;
+    flex-wrap: wrap;
+    gap: 6px 12px;
+    white-space: normal;
+  }
+
+  .reasoning-back {
+    width: 44px;
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  details.legend-fold summary {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 640px) {
+  .canvas {
+    padding: 20px 12px 56px;
+  }
+
+  .page-head {
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  .page-head h1 {
+    font-size: 24px;
+  }
+
+  .panel-head {
+    flex-wrap: wrap;
+    gap: 2px 12px;
+    padding: 16px;
+  }
+
+  .panel-title {
+    font-size: 22px;
+  }
+
+  .panel-section {
+    padding: 16px;
+  }
+
+  .panel-foot {
+    flex-wrap: wrap;
+    padding: 16px;
+  }
+
+  .panel-foot .btn {
+    flex: 1 1 140px;
+  }
+
+  .items-head {
+    flex-wrap: wrap;
+    gap: 2px 12px;
+  }
+
+  .run-card {
+    padding: 16px;
+  }
+
+  .empty-state,
+  .error-box {
+    padding: 24px 18px;
+  }
+
+  .report-body {
+    padding: 20px 16px;
+  }
+
+  .manifest-cell {
+    padding: 12px 16px;
+    border-right: 0;
+  }
+
+  /* Filters stack instead of wrapping into uneven rows. */
+  .filter-bar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+    gap: 12px;
+    padding: 14px 16px;
+  }
+
+  .filter-field select,
+  .filter-field input {
+    width: 100%;
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  .filter-bar > .btn {
+    width: 100%;
+  }
+
+  /* 16px stops iOS Safari zooming the viewport when a field is focused. */
+  .goal-input,
+  .num-input,
+  .text-input,
+  .list-input {
+    font-size: 16px;
+  }
+
+  .num-input,
+  .text-input,
+  .list-input {
+    min-height: 44px;
+  }
+
+  .num-field input[type="file"],
+  .upload-row input[type="checkbox"] {
+    min-height: 24px;
+    min-width: 24px;
+  }
+
+  .num-field input[type="file"] {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  /* The agent legend is a two-column table on desktop; on a phone each
+     role becomes a block so the nowrap name column cannot widen the grid. */
+  .legend-table,
+  .legend-table thead,
+  .legend-table tbody,
+  .legend-table tr,
+  .legend-table th,
+  .legend-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .legend-table thead tr {
+    padding: 12px 16px;
+    border-bottom: var(--hairline) solid var(--line);
+  }
+
+  .legend-table th {
+    padding: 0;
+    border-bottom: 0;
+  }
+
+  .legend-table tr {
+    padding: 12px 16px;
+    border-bottom: var(--hairline) solid var(--line-soft);
+  }
+
+  .legend-table tr:last-child {
+    border-bottom: 0;
+  }
+
+  .legend-table td,
+  .legend-table td:first-child {
+    width: auto;
+    padding: 0;
+    border-bottom: 0;
+    white-space: normal;
+  }
+
+  .legend-table td:first-child {
+    padding-bottom: 2px;
+  }
+
+  /* The library table becomes one record per source. The `data-label`
+     attribute on each cell is the column header the reader loses when the
+     table head is hidden. */
+  .data-table,
+  .data-table tbody,
+  .data-table tr,
+  .data-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .data-table {
+    min-width: 0;
+  }
+
+  .data-table thead {
+    /* Keep the column headers in the accessibility tree even though the
+       cells now carry their own visible labels. */
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .data-table tr {
+    padding: 14px 16px;
+    border-bottom: var(--hairline) solid var(--line);
+  }
+
+  .data-table tr:last-child {
+    border-bottom: 0;
+  }
+
+  .data-table td {
+    padding: 2px 0;
+    border-bottom: 0;
+  }
+
+  .data-table td:first-child {
+    padding-top: 0;
+  }
+
+  .data-table td:last-child {
+    padding-bottom: 0;
+  }
+
+  .data-table td::before {
+    content: attr(data-label);
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.03em;
+    color: var(--muted);
+  }
+
+  .match-card {
+    padding: 14px 12px 12px;
+  }
+
+  .history,
+  .history-note {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .decision-row {
+    padding: 12px 14px;
+  }
+
+  /* A bubble sized from the viewport cannot also reserve the avatar
+     column inside a padded list. Let it take the remaining width. */
+  .thinking-chat {
+    padding: 14px;
+    gap: 14px;
+  }
+
+  .thinking-message {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .thinking-message__avatar {
+    flex: 0 0 24px;
+    width: 24px;
+    height: 24px;
+    font-size: 10px;
+  }
+
+  .thinking-message__bubble {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .thinking-message__bubble header,
+  .thinking-message__bubble footer {
+    flex-wrap: wrap;
+    gap: 2px 12px;
+  }
+}
+
+@media (max-width: 480px) {
+  .preview-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+
+  .preview-grid dd {
+    margin-bottom: 10px;
+  }
 }

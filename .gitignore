@@ -8,6 +8,7 @@ web/node_modules
 web/.next
 web/out
 web/*.tsbuildinfo
+web/.mobile-check*
 
 # Local agent cache; never commit (see .hermes/).
 /.hermes/
