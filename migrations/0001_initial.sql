@@ -22,8 +22,8 @@ CREATE TABLE runs (
     updated_at      TEXT NOT NULL
 );
 
--- Goal records are immutable. A different goal is a new run; in-flight
--- results keep the goal_id they were created under (SPEC §4.1).
+-- Goal revisions. A change creates a new row; in-flight results keep their
+-- original goal_id (SPEC §4.1).
 CREATE TABLE goals (
     id          TEXT PRIMARY KEY,
     run_id      TEXT NOT NULL REFERENCES runs(id),
