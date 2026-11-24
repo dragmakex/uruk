@@ -622,20 +622,6 @@ impl Scheduler {
         ceiling: u32,
     ) -> Result<()> {
         let feedback = self.store.latest_feedback(run_id).await?;
-        let human_feedback: Vec<String> = self
-            .store
-            .list_decisions_of_kind(run_id, DecisionKind::HumanFeedback)
-            .await?
-            .iter()
-            .rev()
-            .take(5)
-            .rev()
-            .filter_map(|d| {
-                d.payload["content"]
-                    .as_str()
-                    .map(|c| format!("[{}] {}", d.id, c.trim()))
-            })
-            .collect();
         let overview_hints: Vec<String> = self
             .store
             .list_decisions_of_kind(run_id, DecisionKind::MetaFeedback)
@@ -672,7 +658,6 @@ impl Scheduler {
                 work.clone(),
             );
             ctx.feedback = feedback.clone();
-            ctx.human_feedback = human_feedback.clone();
             ctx.overview_hints = overview_hints.clone();
             ctx.model = task.model.clone();
             ctx.set_call_allowance(&task, ceiling);

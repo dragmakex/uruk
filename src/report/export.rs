@@ -511,7 +511,6 @@ async fn build_report(
     s.push_str(REPORT_SECTIONS[0]);
     s.push_str("\n\n");
     s.push_str(&format!("- **Mode:** {}\n", goal.mode.as_str()));
-    s.push_str(&format!("- **Goal revision:** {}\n", goal.revision));
     if let Some(scope) = &goal.scope {
         s.push_str(&format!("- **Scope:** {scope}\n"));
     }

@@ -387,7 +387,7 @@ pub(crate) async fn stamp_started_in_tx(conn: &mut SqliteConnection, run_id: &Ru
 }
 
 impl Store {
-    /// Create a run, its first goal revision, its owner binding when there
+    /// Create a run, its goal, its owner binding when there
     /// is one, and its queue place in one transaction: a web run is either
     /// fully created *and* in the queue, or not created at all. The entry
     /// is `preparing`: it holds the run's place in the order but cannot

@@ -1,7 +1,7 @@
 //! Acceptance tests for the web-only command surface.
 //!
 //! The browser is the only frontend: `uruk serve` is the sole command the
-//! binary accepts. Research operations (starting, steering, stopping runs,
+//! binary accepts. Research operations (starting and stopping runs,
 //! reports, passage search) live in the web API (`src/web`, docs/WEB.md).
 //! These tests run the compiled binary itself, so they pin the contract a
 //! user actually sees, not an internal parser type.

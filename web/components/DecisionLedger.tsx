@@ -16,8 +16,6 @@ import {
  * itself instead of vanishing from the ledger.
  */
 const KIND_LABEL: Record<string, string> = {
-  plan_change: "plan changed",
-  human_feedback: "researcher weighed in",
   scheduling: "work scheduled",
   disposition: "candidate disposition",
   meta_feedback: "metacognitive feedback",

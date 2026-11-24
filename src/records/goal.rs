@@ -161,13 +161,13 @@ pub struct InputRef {
     pub note: Option<String>,
 }
 
-/// A research goal revision (SPEC §4.1).
+/// A research goal (SPEC §4.1). A goal is immutable once its run starts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Goal {
     pub id: GoalId,
     pub schema_version: u32,
     pub run_id: RunId,
-    /// Monotonic revision number within the run.
+    /// Revision number. This build creates only revision 0.
     pub revision: u32,
     /// The research question or requested task.
     pub question: String,
@@ -186,7 +186,7 @@ pub struct Goal {
     pub budget: Budget,
     /// Domain profile name, if any (SPEC §10).
     pub profile: Option<String>,
-    /// Why this revision was created.
+    /// Why this goal record exists; `None` for the initial goal.
     pub revision_reason: Option<String>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
@@ -249,7 +249,7 @@ pub struct Plan {
     pub id: PlanId,
     pub schema_version: u32,
     pub run_id: RunId,
-    /// Goal revision this plan serves.
+    /// The goal this plan serves.
     pub goal_id: GoalId,
     pub revision: u32,
     /// Roles selected for this plan.

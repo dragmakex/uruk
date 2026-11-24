@@ -314,9 +314,9 @@ export interface ReportView {
  */
 export interface DecisionView {
   id: string;
-  /** `plan_change`, `human_feedback`, `scheduling`, `disposition`,
-   *  `meta_feedback` or `stop`. Kept as a string: an unknown kind from a
-   *  newer engine still renders as itself rather than disappearing. */
+  /** `scheduling`, `disposition`, `meta_feedback` or `stop`. Kept as a
+   *  string: an unknown kind from a newer engine still renders as itself
+   *  rather than disappearing. */
   kind: string;
   /** `researcher`, `supervisor`, `system`, or an agent's own name. */
   actor: string;

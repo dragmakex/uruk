@@ -429,7 +429,7 @@ pub async fn select_work(
 
     let mut work: Vec<WorkItem> = Vec::new();
 
-    // --- Search: one federated discovery per goal revision ---
+    // --- Search: one federated discovery per run ---
     // Gated on the network permission and the per-connector allowlist; the
     // acquisition tasks are enqueued by the discover task itself, dependent
     // on it and priority-ordered by fused rank.
@@ -445,10 +445,7 @@ pub async fn select_work(
                 "discover",
                 inputs,
                 weights.unreviewed_item + 5.0,
-                format!(
-                    "federated literature discovery for goal revision {}",
-                    goal.revision
-                ),
+                "federated literature discovery".to_string(),
             ));
         }
     }
@@ -906,141 +903,6 @@ pub async fn should_stop(
     // pending work and fresh proposals, or when an explicit limit is hit.
 
     Ok(None)
-}
-
-/// Changes the researcher requests to a goal (SPEC §4.1, §6). Lists replace
-/// the current list when non-empty; `None` leaves a field unchanged.
-#[derive(Debug, Clone, Default, serde::Serialize)]
-pub struct GoalChanges {
-    pub question: Option<String>,
-    pub deliverables: Vec<String>,
-    pub preferences: Vec<String>,
-    pub attributes: Vec<String>,
-    pub constraints: Vec<String>,
-    pub exclusions: Vec<String>,
-    pub assumptions: Vec<String>,
-    pub max_model_calls: Option<u32>,
-    pub max_iterations: Option<u32>,
-    pub reason: Option<String>,
-}
-
-impl GoalChanges {
-    pub fn is_empty(&self) -> bool {
-        self.question.is_none()
-            && self.deliverables.is_empty()
-            && self.preferences.is_empty()
-            && self.attributes.is_empty()
-            && self.constraints.is_empty()
-            && self.exclusions.is_empty()
-            && self.assumptions.is_empty()
-            && self.max_model_calls.is_none()
-            && self.max_iterations.is_none()
-    }
-}
-
-/// What a revision produced.
-#[derive(Debug, Clone)]
-pub struct Revised {
-    pub goal: Goal,
-    pub plan: Plan,
-    /// Whether the rubric changed, which starts a new tournament cohort.
-    pub rubric_changed: bool,
-    pub decision: Decision,
-}
-
-/// Revise a run's goal (SPEC §4.1: "Goal or rubric changes create a
-/// revision. Subsequent tasks reference that revision; in-flight results
-/// retain their original context").
-///
-/// A changed rubric produces a new plan revision, which is a fresh Elo cohort
-/// (SPEC §7); a finished run is reopened so it can be resumed under the new
-/// revision.
-pub async fn revise(store: &Store, run_id: &RunId, changes: GoalChanges) -> Result<Revised> {
-    if changes.is_empty() {
-        return Err(crate::Error::validation(
-            "nothing to revise: supply a new goal, rubric entry, scope, or limit",
-        ));
-    }
-    let current = store.current_goal(run_id).await?;
-    let mut goal = current.clone();
-    goal.id = GoalId::new();
-    goal.revision = store.next_goal_revision(run_id).await?;
-    goal.revision_reason = Some(
-        changes
-            .reason
-            .clone()
-            .unwrap_or_else(|| "researcher revision".to_string()),
-    );
-    goal.created_at = OffsetDateTime::now_utc();
-
-    if let Some(q) = &changes.question {
-        goal.question = q.clone();
-    }
-    let replace = |target: &mut Vec<String>, with: &Vec<String>| {
-        if !with.is_empty() {
-            *target = with.clone();
-        }
-    };
-    replace(&mut goal.deliverables, &changes.deliverables);
-    replace(&mut goal.rubric.preferences, &changes.preferences);
-    replace(&mut goal.rubric.attributes, &changes.attributes);
-    replace(&mut goal.rubric.constraints, &changes.constraints);
-    replace(&mut goal.exclusions, &changes.exclusions);
-    replace(&mut goal.assumptions, &changes.assumptions);
-    if let Some(n) = changes.max_model_calls {
-        goal.budget.max_model_calls = n;
-    }
-    if let Some(n) = changes.max_iterations {
-        goal.budget.max_iterations = n;
-    }
-
-    let rubric_changed =
-        serde_json::to_value(&current.rubric)? != serde_json::to_value(&goal.rubric)?;
-    store.revise_goal(&goal).await?;
-
-    // A new plan serves the new revision. Its ID keys the rating cohort, so a
-    // plan is only replaced when the rubric or the selected roles change.
-    let candidate = build_plan(&goal, store.next_plan_revision(run_id).await?);
-    let plan = match store.current_plan(run_id).await? {
-        Some(existing) if !rubric_changed && existing.roles == candidate.roles => existing,
-        _ => {
-            store.insert_plan(&candidate).await?;
-            candidate
-        }
-    };
-
-    let decision = Decision {
-        id: DecisionId::new(),
-        schema_version: SCHEMA_VERSION,
-        run_id: run_id.clone(),
-        kind: DecisionKind::PlanChange,
-        actor: Actor::Researcher,
-        reason: format!(
-            "goal revised to revision {}: {}",
-            goal.revision,
-            goal.revision_reason.as_deref().unwrap_or("")
-        ),
-        referenced: vec![goal.id.0.clone(), plan.id.0.clone()],
-        payload: serde_json::json!({
-            "goal_revision": goal.revision,
-            "plan_revision": plan.revision,
-            "rubric_changed": rubric_changed,
-            "changes": changes,
-        }),
-        created_at: OffsetDateTime::now_utc(),
-    };
-    store.insert_decision(&decision).await?;
-
-    if store.get_run(run_id).await?.state.is_terminal() {
-        store.reopen_run(run_id).await?;
-    }
-
-    Ok(Revised {
-        goal,
-        plan,
-        rubric_changed,
-        decision,
-    })
 }
 
 /// Record a scheduling decision before dispatch (SPEC §5 Supervisor).

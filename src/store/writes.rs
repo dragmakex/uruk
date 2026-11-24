@@ -128,26 +128,10 @@ impl Store {
         guard.commit().await
     }
 
-    /// Insert a run together with its first goal revision, atomically.
+    /// Insert a run together with its goal, atomically.
     pub async fn create_run(&self, run: &Run, goal: &Goal) -> Result<()> {
         let mut guard = self.begin_write().await?;
         insert_run_and_goal_in_tx(guard.conn(), run, goal).await?;
-        guard.commit().await
-    }
-
-    /// Record a new goal revision and point the run at it (SPEC §4.1).
-    pub async fn revise_goal(&self, goal: &Goal) -> Result<()> {
-        let mut guard = self.begin_write().await?;
-        let conn = guard.conn();
-        insert_goal(conn, goal).await?;
-
-        sqlx::query("UPDATE runs SET goal_id = ?, updated_at = ? WHERE id = ?")
-            .bind(goal.id.as_str())
-            .bind(to_rfc3339(now()))
-            .bind(goal.run_id.as_str())
-            .execute(&mut *conn)
-            .await?;
-
         guard.commit().await
     }
 
@@ -324,21 +308,6 @@ impl Store {
         }
         guard.commit().await?;
         Ok(result.rows_affected() > 0)
-    }
-
-    /// Reopen a finished run after a goal revision, so it can be resumed
-    /// under the new revision (SPEC §6: the researcher may change constraints
-    /// at any point).
-    pub async fn reopen_run(&self, run_id: &RunId) -> Result<()> {
-        let mut guard = self.begin_write().await?;
-        sqlx::query(
-            "UPDATE runs SET state = 'running', stop_condition = NULL, updated_at = ? WHERE id = ?",
-        )
-        .bind(to_rfc3339(now()))
-        .bind(run_id.as_str())
-        .execute(guard.conn())
-        .await?;
-        guard.commit().await
     }
 
     pub async fn bump_iteration(&self, run_id: &RunId) -> Result<u32> {
@@ -532,7 +501,7 @@ impl Store {
     }
 }
 
-/// Insert a run and its first goal revision inside an open transaction.
+/// Insert a run and its goal inside an open transaction.
 /// Shared by [`Store::create_run`] (ownerless engine callers and tests)
 /// and [`Store::create_run_owned`] (web), so an owned run can never be
 /// committed without its owner row.
