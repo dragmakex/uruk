@@ -1,7 +1,7 @@
 //! The `uruk` binary: the web server launcher.
 //!
 //! The browser is the only frontend, so `uruk serve` is the only command.
-//! Research operations — starting, steering, and stopping runs, reports,
+//! Research operations — starting and stopping runs, reports,
 //! passage search — live in the web API (`src/web`, docs/WEB.md); the
 //! engine itself is the `uruk` library crate.
 //!

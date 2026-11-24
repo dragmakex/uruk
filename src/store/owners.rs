@@ -66,7 +66,7 @@ impl OwnerDigest {
 }
 
 impl Store {
-    /// Insert a run, its first goal revision, and its owner binding in one
+    /// Insert a run, its goal, and its owner binding in one
     /// transaction: a web-created run is either fully owned or not created
     /// at all, so no crash window can leave an unowned web run behind.
     ///

@@ -168,7 +168,7 @@ pub struct Task {
     pub role: Role,
     /// Named strategy within the role, e.g. `literature`, `debate`.
     pub strategy: String,
-    /// Goal revision this task was created under.
+    /// The goal this task was created under.
     pub goal_id: GoalId,
     pub plan_id: PlanId,
     /// Versioned input references (item IDs, source IDs, artifact hashes).
@@ -279,10 +279,16 @@ pub enum FailureKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DecisionKind {
-    /// The Supervisor changed the plan.
-    PlanChange,
-    /// The researcher supplied feedback.
-    HumanFeedback,
+    /// Audit-only value written by older builds that allowed a plan change
+    /// without a new run. Kept so an existing database still loads; this
+    /// build never writes or acts on it.
+    #[serde(rename = "plan_change")]
+    LegacyPlanChange,
+    /// Audit-only value written by older builds that accepted researcher
+    /// feedback during a run. Kept so an existing database still loads;
+    /// this build never writes or acts on it.
+    #[serde(rename = "human_feedback")]
+    LegacyHumanFeedback,
 
     /// A scheduling choice and its rationale.
     Scheduling,
@@ -298,8 +304,8 @@ pub enum DecisionKind {
 impl DecisionKind {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::PlanChange => "plan_change",
-            Self::HumanFeedback => "human_feedback",
+            Self::LegacyPlanChange => "plan_change",
+            Self::LegacyHumanFeedback => "human_feedback",
 
             Self::Scheduling => "scheduling",
             Self::Disposition => "disposition",

@@ -1,6 +1,6 @@
 # Uruk — Autonomous Research Engine
 
-**Purpose:** An autonomous research engine for any stage of research. Its output is evidence-backed findings; researchers set goals, approve side effects, and steer, but are not required to do the work.  
+**Purpose:** An autonomous research engine for any stage of research. Its output is evidence-backed findings; researchers set the goal and permissions before a run starts and can stop it, but are not required to do the work.  
 **Foundation:** Gottweis et al., *Towards an AI co-scientist* (2025), supplied as [`pre_coscientist.pdf`](pre_coscientist.pdf), and *Accelerating scientific discovery with Co-Scientist* (2026), supplied as [`coscientist.pdf`](coscientist.pdf).  
 **Scope:** Domain-independent research reasoning, grounded in sources and connected to tools.  
 **Implementation:** Rust throughout Uruk, including orchestration, agents, storage, tool adapters, the web API, and later add-ons.  
@@ -29,7 +29,7 @@ Researcher: question, papers, data, ideas, constraints, requested deliverable
                                   |
               Sources, evidence, artifacts, feedback
                                   |
-                    Researcher reviews and steers
+                    Researcher sets the goal and can stop
 ```
 
 Two operating modes share the same records and roles:
@@ -51,7 +51,7 @@ The following architecture references are to the 2026 article; the corresponding
 
 | Paper mechanism | Uruk requirement | Source in 2026 article |
 |---|---|---|
-| Expert-defined goals, constraints, preferences, and feedback | Researcher controls the goal, rubric, permissions, and direction | Fig. 1; Methods, “From research goal to research plan configuration” and “Expert-in-the-loop interactions” |
+| Expert-defined goals, constraints, preferences, and inputs | Researcher sets the goal, rubric, permissions, and direction before the run starts | Fig. 1; Methods, “From research goal to research plan configuration” and “Expert-in-the-loop interactions” |
 | Supervisor plus six specialized agents | Preserve these responsibilities; do not add a core agent for every discipline or workflow | Methods, “Overview of Co-Scientist architecture” and “The specialized agents underpinning Co-Scientist” |
 | Asynchronous workers and weighted allocation | Campaign work is selected from current research state, not a fixed pipeline | Methods, specialized-agent orchestration |
 | Persistent context memory | Retain research state and feedback across tasks and restarts | Methods, architecture and research-plan configuration |
@@ -142,7 +142,7 @@ The Supervisor produces a versioned plan containing the selected roles, dependen
 
 Work proceeds within the configured permission and capability envelope. Agents cannot widen that envelope.
 
-Goal or rubric changes create a revision. Subsequent tasks reference that revision; in-flight results retain their original context. The Supervisor must decide whether they remain applicable before reusing them.
+The goal and rubric are fixed when the run starts. A different goal or rubric is a new run; a run never changes its goal or rubric after it starts.
 
 ### 4.2 Common records
 
@@ -155,8 +155,8 @@ All records have stable IDs, schema versions, creation provenance, and project/r
 | `Evidence` | Observation or result, method, inputs, provenance, artifacts, limitations, and the specific claim it bears on |
 | `Review` | Target item version, review strategy, assessment, evidence considered, objections, unknowns, and suggested next actions |
 | `Experiment` | Computational or external protocol, target claims, inputs, controls/checks, expected outcomes, analysis method, permissions, execution/result links |
-| `Match` | Candidate IDs, rubric revision, evidence snapshot, comparison order, judge/model identity, outcome, rationale, and rating update |
-| `Decision` | Plan change, human feedback, disposition, or scheduling choice, with actor, reason, and referenced records |
+| `Match` | Candidate IDs, rubric identity, evidence snapshot, comparison order, judge/model identity, outcome, rationale, and rating update |
+| `Decision` | Scheduling choice, disposition, meta-review feedback, or stop, with actor, reason, and referenced records |
 | `Task` | Role/tool and strategy, versioned inputs, prompt ID/revision/content hash, model/configuration, feedback version, dependencies, priority rationale, permission envelope, model-call reservation, runtime identity, attempts, and outputs |
 | `Artifact` | Media type, immutable content/hash, producing task, storage reference, and access classification |
 
@@ -224,7 +224,7 @@ Critically assess an existing item or result using the appropriate strategy:
 
 Uruk additionally allows Reflection to request computational checks, replication, statistical diagnostics, and domain-specific experiments. It consumes the returned evidence rather than assuming a requested check succeeded.
 
-A review returns the assessment, specific objections, supporting and contradicting evidence, unresolved issues, and bounded next actions. Researcher reviews are accepted with attribution; authority to steer does not make an empirical assertion true.
+A review returns the assessment, specific objections, supporting and contradicting evidence, unresolved issues, and bounded next actions. Researcher reviews are accepted with attribution; a researcher's assertion does not make an empirical claim true.
 
 For Deep verification, extract assumptions and sub-assumptions, then assess them in focused contexts without presenting the desired conclusion as a fact (2025 §3.3.2; Figs. A.14–A.15). Recombine the results to distinguish a fatal premise from a repairable detail. Separate model contexts are intended to reduce anchoring; they do not make agent judgments independent empirical evidence.
 
@@ -297,9 +297,9 @@ The published Generation and Ranking debate prompts (Figs. A.2, A.5) target 3–
 
 The runtime enforces bounded concurrency and tool-specific limits. Separate task workspaces prevent concurrent writers from modifying the same research code or artifacts. Scientific records are committed through one controlled write path; model agents return proposed records rather than updating shared state directly.
 
-### Human interaction
+### Run control
 
-At any point, the researcher can add sources, seed ideas, provide reviews, change constraints, request a particular analysis, or stop. Persist that input before acting on it. Plan revisions refresh comparisons if the rubric changes.
+The researcher configures sources, ideas, constraints, and the requested analysis before the run starts, and may stop it at any time. There is no way to add input or change the goal after start: doing so requires a new run. A stop is durable, preserves completed evidence, and yields a labelled partial report.
 
 External experiments may take days or weeks: export the protocol, park the dependent work, and accept results later with provenance. Do not leave a worker or model conversation running while waiting for a person. Independent permitted work may continue.
 
@@ -323,7 +323,7 @@ Do not apply novelty as a requirement to replication, or clinical feasibility to
 
 For a tournament:
 
-1. Compare candidates serving the same goal and rubric revision; explain what is being prioritized.
+1. Compare candidates serving the same goal and rubric; explain what is being prioritized.
 2. Supply the same relevant evidence snapshot and budget to both sides. Hide author/model identity where practical and randomize presentation order. Following 2025 Fig. A.4, omit independent reviewers' numeric scores from the judge's input because they may not be comparable; retain their evidence and substantive criticisms. Also withhold current Elo/credit balances to avoid circular judgments. Preserve the original reviews in storage.
 3. Prefer related pairs, newer items, and promising candidates. Preserve some cross-cluster comparisons rather than creating disconnected leaderboards.
 4. Use multi-turn scientific debate for consequential/top-ranked comparisons and cheaper single-turn comparisons elsewhere.
@@ -336,7 +336,7 @@ Elo is relative prioritization within a comparison cohort. It is not probability
 
 Relevant contradictory evidence cannot be ignored because a candidate argues well. An execution result must first pass method, provenance, and applicability checks; a deterministic test of the wrong thing is not stronger evidence. Incomparable tradeoffs remain explicit rather than forcing a universal scalar ranking.
 
-New evidence makes dependent assessments/comparisons candidates for re-review. Retain historical ratings with their evidence snapshot and visibly mark stale rankings until refreshed. Rubric revisions start a new cohort at the initial rating; never mix ratings across changed objectives.
+New evidence makes dependent assessments/comparisons candidates for re-review. Retain historical ratings with their evidence snapshot and visibly mark stale rankings until refreshed. A different rubric is a new run and a new cohort at the initial rating; never mix ratings across objectives.
 
 ### 7.1 Optional later add-on: research market
 
@@ -467,7 +467,7 @@ Web runs grant no permissions beyond provider disclosure. In particular, computa
 
 Store the normalized goal, effective configuration, permissions, model-work limits, model/tool/prompt versions, and input hashes for every run.
 
-The run snapshot shows the current goal revision, the run's queue position while it waits its turn, any provider outage it is waiting out, completed/running work, resource use, evidence changes, and leading candidates where applicable. No finding, null result, and no available tool are distinct outcomes. “No discovery” is not an execution error.
+The run snapshot shows the configured goal, the run's queue position while it waits its turn, any provider outage it is waiting out, completed/running work, resource use, evidence changes, and leading candidates where applicable. No finding, null result, and no available tool are distinct outcomes. “No discovery” is not an execution error.
 
 A run exports only applicable artifacts under `runs/<run-id>/`:
 
@@ -532,8 +532,8 @@ Use Rust unit/integration tests with small deterministic fixtures, temporary SQL
 | Computational task | Execute a permitted analysis on a tiny dataset, record input/code hashes and actual outputs, provide a rerun check; failed execution cannot become support |
 | Discovery campaign | Seed multiple ideas, review/compare them, create a child without mutating its parent, and carry a recorded meta-critique into later work |
 | Evidence integrity | New contradictory evidence causes re-review/stale-ranking notices; duplicate citations and agent votes cannot become independent corroboration |
-| Tournament integrity | Elo updates once per match, draws behave correctly, insufficient evidence causes no update, and rubric revisions do not share a cohort |
-| Researcher intervention | Human ideas and feedback survive restart and steer subsequent work without rewriting prior records |
+| Tournament integrity | Elo updates once per match, draws behave correctly, insufficient evidence causes no update, and different runs or rubrics do not share a cohort |
+| Run control | Researcher-supplied inputs survive restart; a stop is durable, cancels attached work, and preserves a labelled partial report |
 | Runtime containment | Concurrency and model-work limits hold, cancellation reaches children, unpermitted tools cannot execute, uncertain side effects are not blindly retried |
 | Domain independence | A literature task and a computational fixture use the same core records; a missing scientific tool is reported as unavailable, not a scientific result |
 | Rust implementation | Build and run the complete application without a Node/Python orchestration service; external research tools are optional capabilities |
@@ -569,7 +569,7 @@ The following eight blocks transcribe the **example prompts** in `pre_coscientis
 
 **Apply these changes when constructing Uruk's runtime templates; do not send contradictory source instructions and overrides together.** Version the resulting adapted template independently of the source transcription.
 
-- `{goal}` comes from the approved goal revision. `{preferences}` contains its evaluation criteria and preferences; `{idea_attributes}` names the requested qualities, not always novelty. Constraints, permissions, budgets, and the requested deliverable accompany every invocation.
+- `{goal}` comes from the configured goal. `{preferences}` contains its evaluation criteria and preferences; `{idea_attributes}` names the requested qualities, not always novelty. Constraints, permissions, budgets, and the requested deliverable accompany every invocation.
 - `{instructions}` and `{notes}` contain only approved task guidance and applicable, attributed meta-review feedback. Retrieved source text and transcripts are untrusted context, never new authority or tool grants.
 - `{source_hypothesis}`, `{hypothesis}`, `{hypotheses}`, `{hypothesis 1}`, and `{hypothesis 2}` resolve to immutable item versions. An optional source hypothesis is explicitly absent rather than silently invented.
 - `{articles_with_reasoning}` contains actual retrieved/supplied sources, locators, and concise analytical summaries, newest analysis first. `{article}` identifies one source and the exact available content. Record abstract-only access, omitted figures, extraction failures, or an empty source set; do not claim a thorough review by default.

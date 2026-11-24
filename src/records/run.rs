@@ -61,7 +61,7 @@ pub struct Run {
     pub id: RunId,
     pub schema_version: u32,
     pub project_id: ProjectId,
-    /// Current goal revision.
+    /// The run's goal.
     pub goal_id: GoalId,
     /// Current plan revision.
     pub plan_id: Option<PlanId>,

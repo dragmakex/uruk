@@ -26,8 +26,6 @@ pub struct AgentContext {
     pub permissions: Permissions,
     /// Meta-review feedback supplied to this task, if any.
     pub feedback: Option<Feedback>,
-    /// Researcher feedback on record for this run, newest last, attributed.
-    pub human_feedback: Vec<String>,
     /// Underexplored directions from the latest research overview, fed back
     /// to Generation (SPEC §5 Meta-review).
     pub overview_hints: Vec<String>,
@@ -88,7 +86,6 @@ impl AgentContext {
             plan,
             permissions,
             feedback: None,
-            human_feedback: vec![],
             overview_hints: vec![],
             seed,
             cancel,
@@ -276,14 +273,6 @@ impl AgentContext {
             parts.push(format!(
                 "Constraints:\n{}",
                 bullets(&self.plan.rubric.constraints)
-            ));
-        }
-
-        if !self.human_feedback.is_empty() {
-            parts.push(format!(
-                "Researcher feedback (attributed to the researcher; it steers the work but is \
-                 not itself empirical evidence):\n{}",
-                bullets(&self.human_feedback)
             ));
         }
 

@@ -92,7 +92,7 @@ pub struct ResearchItem {
     pub author: Author,
     /// The task that produced it.
     pub produced_by: Option<TaskId>,
-    /// Goal revision this item was created under.
+    /// The goal this item was created under.
     pub goal_id: GoalId,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,

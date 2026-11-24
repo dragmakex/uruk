@@ -193,15 +193,6 @@ impl Store {
         })
     }
 
-    pub async fn next_goal_revision(&self, run_id: &RunId) -> Result<u32> {
-        let max: Option<i64> =
-            sqlx::query_scalar("SELECT MAX(revision) FROM goals WHERE run_id = ?")
-                .bind(run_id.as_str())
-                .fetch_one(self.pool())
-                .await?;
-        Ok((max.unwrap_or(-1) + 1) as u32)
-    }
-
     pub async fn next_plan_revision(&self, run_id: &RunId) -> Result<u32> {
         let max: Option<i64> =
             sqlx::query_scalar("SELECT MAX(revision) FROM plans WHERE run_id = ?")

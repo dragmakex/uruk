@@ -242,6 +242,10 @@ cannot quietly skip the check.
 | `GET /api/uploads` | this browser's uploads, newest first |
 | `DELETE /api/uploads/{id}` | remove an upload this browser owns |
 
+A run's configuration is fixed when it starts. The only command after
+start is `stop`; there is no way to add input or change the goal, and a
+stopped run is terminal.
+
 Every route except `/api/health` requires the browser identity: a request
 without a valid `uruk_browser` cookie gets one minted (and used for that
 same request) via `Set-Cookie`. All `{id}` routes are owner-checked; a

@@ -2,8 +2,9 @@
 
 An autonomous research engine, implemented entirely in Rust. It generates,
 reviews, ranks, and tests hypotheses, and reports a finding as supported only
-when evidence beyond agent opinion backs it. Researchers set the goal, approve
-side effects, and can steer at any point; they are not needed to do the work.
+when evidence beyond agent opinion backs it. Researchers set the goal and
+permissions before a run starts, and can stop it; they are not needed to do
+the work.
 
 Uruk is the system specified in [`docs/SPEC.md`](docs/SPEC.md): a Supervisor plus six
 specialized roles (Generation, Reflection, Ranking, Evolution, Proximity,
@@ -22,8 +23,8 @@ the test suite: records and SQLite persistence, the Tokio runtime with the
 §9.2 recovery and §9.3 cancellation guarantees, source ingestion from local
 files, PDFs, and URLs, task and campaign modes, all six roles scheduled by the
 Supervisor, the eight adapted prompt templates, contained execution with
-reproducibility records, mid-run goal revision, an
-OpenAI-compatible HTTP provider, the web API, and the report exporter.
+reproducibility records, an OpenAI-compatible HTTP provider, the web API,
+and the report exporter.
 The product surface is web-only: the binary's single command is
 `uruk serve`.
 
@@ -164,8 +165,9 @@ report says why.
   experiment and evidence linked as `context`; a later review interprets it,
   and only then can the assessment move.
 - **Elo is relative prioritisation within one rubric cohort**, never a
-  probability. A rubric revision starts a fresh cohort; new contradicting
-  evidence marks rankings stale and schedules a refresh comparison.
+  probability. A different rubric belongs to a different run and cohort;
+  new contradicting evidence marks rankings stale and schedules a refresh
+  comparison.
 - **Judges see substantive reviews, never numeric scores, Elo, or credits**, and
   presentation order is shuffled and mapped back to stable IDs.
 - **Debates stop at their turn cap** (10 max, 5 by default) without fabricating

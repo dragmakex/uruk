@@ -473,7 +473,7 @@ async fn a_pre_queue_database_migrates_running_runs_onto_the_queue_in_creation_o
         .execute(&pool)
         .await
         .unwrap();
-        // Its goal revision, as the pre-queue server stored it.
+        // Its goal, as the pre-queue server stored it.
         let (_, mut goal) = queued_run(OffsetDateTime::now_utc());
         goal.id = GoalId::from_raw(format!("goal_{id}"));
         goal.run_id = RunId::from_raw(id.to_string());

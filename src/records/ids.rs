@@ -60,7 +60,7 @@ id_type!(/// Identifies a run (one invocation of a goal).
     RunId, "run");
 id_type!(/// Identifies a project (a durable workspace across runs).
     ProjectId, "prj");
-id_type!(/// Identifies a goal revision (SPEC §4.1).
+id_type!(/// Identifies a goal (SPEC §4.1).
     GoalId, "goal");
 id_type!(/// Identifies a plan revision produced by the Supervisor.
     PlanId, "plan");
