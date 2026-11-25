@@ -1,4 +1,4 @@
--- Urukai durable state (SPEC §9.2). One SQLite database per project;
+-- Uruk durable state (SPEC §9.2). One SQLite database per project;
 -- the persisted task set is the queue's source of truth.
 
 PRAGMA foreign_keys = ON;
