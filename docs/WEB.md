@@ -1,6 +1,6 @@
-# The Uruk web interface
+# The Urukai web interface
 
-Uruk ships a local-first web console, and the browser is the product's
+Urukai ships a local-first web console, and the browser is the product's
 only frontend: a Rust API served by the `uruk` binary itself (whose
 single command is `uruk serve`), and a separate Next.js frontend under
 `web/`. The engine and its SQLite store remain authoritative; the web

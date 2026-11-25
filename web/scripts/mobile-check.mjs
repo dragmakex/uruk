@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Mobile responsiveness gate for the Uruk web console.
+ * Mobile responsiveness gate for the Urukai web console.
  *
  * The check loads the real pages at the widths that matter on a phone and
  * fails on the defects that break a layout rather than on cosmetics:

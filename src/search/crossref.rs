@@ -37,7 +37,7 @@ impl Connector for Crossref {
         ApiAccess::OpenWithEmail { required: false }
     }
 
-    /// Crossref publishes per-response `X-Rate-Limit-*` headers; Uruk's
+    /// Crossref publishes per-response `X-Rate-Limit-*` headers; Urukai's
     /// static floor stays below any advertised limit.
     fn min_interval(&self) -> Duration {
         Duration::from_millis(500)

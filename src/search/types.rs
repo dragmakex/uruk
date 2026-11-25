@@ -1,7 +1,7 @@
 //! Normalized records shared by every connector.
 //!
 //! Terminology discipline: the connectors are **freely accessible public
-//! APIs**, not open-source software — Uruk runs none of their code. Where an
+//! APIs**, not open-source software — Urukai runs none of their code. Where an
 //! operator also open-sources their backend or releases data under an open
 //! license, that is a property of the data/operator, stated as such.
 

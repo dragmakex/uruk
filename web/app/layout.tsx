@@ -5,11 +5,11 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: {
-    default: "URUK",
-    template: "%s | URUK",
+    default: "URUKAI",
+    template: "%s | URUKAI",
   },
   description:
-    "Uruk is an autonomous research engine. This local console specifies runs, watches the agent tournament live, and reads the exported reports.",
+    "Urukai is an autonomous research engine. This local console specifies runs, watches the agent tournament live, and reads the exported reports.",
   icons: {
     icon: "/favicon.svg",
   },

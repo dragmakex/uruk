@@ -54,7 +54,7 @@ impl ProjectLock {
                     || e.raw_os_error() == Some(libc_ewouldblock()) =>
             {
                 Err(Error::permission(format!(
-                    "another Uruk scheduler already owns this project (lock: {}). \
+                    "another Urukai scheduler already owns this project (lock: {}). \
                      Stop the other `uruk serve` process, or serve a different project.",
                     path.display()
                 )))

@@ -6,7 +6,7 @@ describe("SiteNav", () => {
   it("keeps every primary destination in the global header", () => {
     render(<SiteNav />);
 
-    const home = screen.getByRole("link", { name: "URUK home" });
+    const home = screen.getByRole("link", { name: "URUKAI home" });
     expect(home.querySelector("img")).toHaveAttribute("src", "/favicon.svg");
     expect(home.querySelector("img")).toHaveAttribute("alt", "");
     expect(screen.getByRole("link", { name: "Runs" })).toHaveAttribute("href", "/runs");

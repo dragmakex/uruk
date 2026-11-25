@@ -970,7 +970,7 @@ async fn report_pdf_download_carries_pdf_headers_and_magic() {
     assert_eq!(
         header(&response, "content-disposition"),
         format!(
-            "attachment; filename=\"uruk-report-{}.pdf\"",
+            "attachment; filename=\"urukai-report-{}.pdf\"",
             fixture.run_id
         )
     );
@@ -1070,7 +1070,10 @@ async fn report_markdown_download_serves_the_exact_canonical_bytes() {
     );
     assert_eq!(
         header(&response, "content-disposition"),
-        format!("attachment; filename=\"uruk-report-{}.md\"", fixture.run_id)
+        format!(
+            "attachment; filename=\"urukai-report-{}.md\"",
+            fixture.run_id
+        )
     );
     assert_eq!(
         body_bytes(response).await,

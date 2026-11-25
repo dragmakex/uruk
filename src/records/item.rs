@@ -44,7 +44,7 @@ impl ItemKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "by", content = "detail")]
 pub enum Author {
-    /// Produced by a Uruk role using a named strategy.
+    /// Produced by a Urukai role using a named strategy.
     Agent { role: String, strategy: String },
     /// Supplied by the researcher.
     Researcher,

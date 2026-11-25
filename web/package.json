@@ -2,7 +2,7 @@
   "name": "uruk-web",
   "version": "0.1.0",
   "private": true,
-  "description": "Uruk web frontend: a Next.js App Router UI over the local uruk API",
+  "description": "Urukai web frontend: a Next.js App Router UI over the local Urukai API",
   "packageManager": "bun@1.3.14",
   "scripts": {
     "dev": "next dev",

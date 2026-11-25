@@ -77,7 +77,7 @@ export default async function TaskReasoningPage({
       <aside className="reasoning-note">
         <strong>What this shows.</strong> These are the verbatim reasoning traces
         explicitly returned by the configured model provider as each model request
-        streams or completes. Uruk does not infer or claim access to hidden model state,
+        streams or completes. Urukai does not infer or claim access to hidden model state,
         and a provider that omits <code>reasoning_content</code> leaves no trace.
       </aside>
 

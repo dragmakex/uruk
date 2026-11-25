@@ -190,7 +190,7 @@ pub async fn report_pdf(
     Ok(file_download(
         bytes,
         "application/pdf",
-        format!("uruk-report-{run_id}.pdf"),
+        format!("urukai-report-{run_id}.pdf"),
     ))
 }
 
@@ -203,7 +203,7 @@ pub async fn report_markdown(
     Ok(file_download(
         markdown.into_bytes(),
         "text/markdown; charset=utf-8",
-        format!("uruk-report-{run_id}.md"),
+        format!("urukai-report-{run_id}.md"),
     ))
 }
 

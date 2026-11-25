@@ -1,18 +1,18 @@
-# Uruk — Autonomous Research Engine
+# Urukai — Autonomous Research Engine
 
 **Purpose:** An autonomous research engine for any stage of research. Its output is evidence-backed findings; researchers set the goal and permissions before a run starts and can stop it, but are not required to do the work.  
 **Foundation:** Gottweis et al., *Towards an AI co-scientist* (2025), supplied as [`pre_coscientist.pdf`](pre_coscientist.pdf), and *Accelerating scientific discovery with Co-Scientist* (2026), supplied as [`coscientist.pdf`](coscientist.pdf).  
 **Scope:** Domain-independent research reasoning, grounded in sources and connected to tools.  
-**Implementation:** Rust throughout Uruk, including orchestration, agents, storage, tool adapters, the web API, and later add-ons.  
-**Status:** Product specification, not an implemented system. Both Co-Scientist papers inform the research architecture; Rust-native execution is required (see §9). Published prompt examples and Uruk adaptation rules are included in §15.
+**Implementation:** Rust throughout Urukai, including orchestration, agents, storage, tool adapters, the web API, and later add-ons.  
+**Status:** Product specification, not an implemented system. Both Co-Scientist papers inform the research architecture; Rust-native execution is required (see §9). Published prompt examples and Urukai adaptation rules are included in §15.
 
-This specification defines Uruk's behavior. It does not claim to reproduce Google's private implementation or to validate Uruk across every scientific discipline. Defaults identified as Uruk choices are not claims about either paper.
+This specification defines Urukai's behavior. It does not claim to reproduce Google's private implementation or to validate Urukai across every scientific discipline. Defaults identified as Urukai choices are not claims about either paper.
 
 ---
 
 ## 0. Purpose and boundaries
 
-Uruk helps a researcher frame questions, understand prior work, generate and challenge ideas, design studies, perform authorized computational work, interpret results, and communicate evidence-backed conclusions.
+Urukai helps a researcher frame questions, understand prior work, generate and challenge ideas, design studies, perform authorized computational work, interpret results, and communicate evidence-backed conclusions.
 
 A researcher can enter at **any stage**, bring existing work, request only the help they need, and stop without completing a discovery loop.
 
@@ -45,11 +45,11 @@ Two operating modes share the same records and roles:
 
 ## 1. What comes from the papers
 
-The 2025 preprint and 2026 article describe the same research line: a general-purpose **structured scientific thinking and hypothesis-generation system**, validated primarily in three biomedical applications. They are not two independent validations of Uruk. Uruk extends that foundation to other research stages; those extensions must be evaluated separately.
+The 2025 preprint and 2026 article describe the same research line: a general-purpose **structured scientific thinking and hypothesis-generation system**, validated primarily in three biomedical applications. They are not two independent validations of Urukai. Urukai extends that foundation to other research stages; those extensions must be evaluated separately.
 
 The following architecture references are to the 2026 article; the corresponding earlier architecture is described in the 2025 preprint §§3.1–3.5.
 
-| Paper mechanism | Uruk requirement | Source in 2026 article |
+| Paper mechanism | Urukai requirement | Source in 2026 article |
 |---|---|---|
 | Expert-defined goals, constraints, preferences, and inputs | Researcher sets the goal, rubric, permissions, and direction before the run starts | Fig. 1; Methods, “From research goal to research plan configuration” and “Expert-in-the-loop interactions” |
 | Supervisor plus six specialized agents | Preserve these responsibilities; do not add a core agent for every discipline or workflow | Methods, “Overview of Co-Scientist architecture” and “The specialized agents underpinning Co-Scientist” |
@@ -61,13 +61,13 @@ The following architecture references are to the 2026 article; the corresponding
 | Proximity and meta-review | Organize related ideas and feed recurring critiques into subsequent work | Methods, Proximity and Meta-review agents |
 | Tools and private research material | Ground work in literature, supplied sources, databases, and specialized tools | Methods, “Tool use in Co-Scientist” |
 
-**Uruk extensions:** task mode, non-hypothesis deliverables, explicit evidence provenance, computational execution and result ingestion, reproducibility records, domain profiles, Rust-native execution, and an optional later research market.
+**Urukai extensions:** task mode, non-hypothesis deliverables, explicit evidence provenance, computational execution and result ingestion, reproducibility records, domain profiles, Rust-native execution, and an optional later research market.
 
-Rust is Uruk's implementation requirement, not a requirement of either paper. Neither prescribes a research-credit market or establishes autonomous laboratory validation. The 2026 Code availability section identifies Python as the implementation language and says the full source is not public. Its referenced Supplementary Notes 8 and 9 are not included in `coscientist.pdf`; however, the supplied 2025 preprint includes **eight example prompts** in Appendix A.2, Figures A.1–A.8 (pp. 40–46), reproduced in §15. These examples are not a complete system prompt library or executable implementation.
+Rust is Urukai's implementation requirement, not a requirement of either paper. Neither prescribes a research-credit market or establishes autonomous laboratory validation. The 2026 Code availability section identifies Python as the implementation language and says the full source is not public. Its referenced Supplementary Notes 8 and 9 are not included in `coscientist.pdf`; however, the supplied 2025 preprint includes **eight example prompts** in Appendix A.2, Figures A.1–A.8 (pp. 40–46), reproduced in §15. These examples are not a complete system prompt library or executable implementation.
 
 ### 1.1 Additional operational guidance from the 2025 preprint
 
-| Idea | Uruk use | Source in 2025 preprint |
+| Idea | Urukai use | Source in 2025 preprint |
 |---|---|---|
 | Explicit preferences, attributes, and constraints | Parse these separately into the plan; novelty is optional for tasks such as replication | §3.2; Fig. A.9 |
 | Track which generation strategies work | Record Generation/Evolution strategy, parent lineage, outcomes, and cost; use this feedback in allocation | §§3.2–3.3 |
@@ -78,9 +78,9 @@ Rust is Uruk's implementation requirement, not a requirement of either paper. Ne
 | Feasibility and analogical divergence | Improve practical implementability or propose one genuinely different mechanism, not a collage of existing ideas | Figs. A.6–A.7 |
 | Review synthesis without re-judging individuals | Produce actionable recurring critiques; apply them selectively to avoid narrowing every new idea to previous winners | §3.3.6; Fig. A.8 |
 | Research roadmap and expert-facing formats | Periodically update directions, discriminating experiments, and requested proposal formats; cite suggested experts without contacting them | §3.3.6; Figs. A.20–A.22 |
-| Evaluate ranking outside its own tournament | Compare to known outcomes and blinded expert judgments; Uruk additionally requires matched-cost baselines | §§4.1–4.3; Appendix A.5.2 |
+| Evaluate ranking outside its own tournament | Compare to known outcomes and blinded expert judgments; Urukai additionally requires matched-cost baselines | §§4.1–4.3; Appendix A.5.2 |
 
-The preprint explicitly limits its demonstrated multimodal/data integration and notes missing negative results, inaccessible literature, hallucinations, and biased auto-evaluation (§§5, 7). Accepting images, datasets, or specialized tools in Uruk does not establish that their interpretation is reliable; report modality/coverage gaps and validate each integration separately.
+The preprint explicitly limits its demonstrated multimodal/data integration and notes missing negative results, inaccessible literature, hallucinations, and biased auto-evaluation (§§5, 7). Accepting images, datasets, or specialized tools in Urukai does not establish that their interpretation is reliable; report modality/coverage gaps and validate each integration separately.
 
 ## 2. Research capabilities
 
@@ -113,7 +113,7 @@ A literature-only request must work without a repository or execution tool. An a
 
 | Layer | Owns | Does not own |
 |---|---|---|
-| Uruk research policy | Goals, plans, agent strategies, review criteria, evidence interpretation, tournament, next-work selection | Process supervision, generic retry machinery, provider transport |
+| Urukai research policy | Goals, plans, agent strategies, review criteria, evidence interpretation, tournament, next-work selection | Process supervision, generic retry machinery, provider transport |
 | Execution runtime | Durable tasks, concurrency, retries, waits, cancellation, execution history | Scientific validity, hypothesis quality, research priorities |
 | Domain profiles and tools | Domain terminology, methods, rubrics, source/tool adapters, specialized nested teams | Core lifecycle, global permissions, budget increases |
 | Research records | Versioned inputs, candidate lineage, evidence, reviews, decisions, artifacts | Hidden mutable agent memory |
@@ -121,7 +121,7 @@ A literature-only request must work without a repository or execution tool. An a
 
 Keep the research-policy code independent of runtime-specific types. This is an ownership boundary, not a requirement to implement multiple backends or a generic runtime plugin system.
 
-Start with one Rust Cargo package, a library and a server-launcher binary, and ordinary modules for research policy, agents, runtime, storage, tools, and reporting. Split crates only when an actual reuse or dependency boundary needs it. All Uruk-owned implementation code is Rust; do not introduce a Node, Python, or other application service to implement a subsystem.
+Start with one Rust Cargo package, a library and a server-launcher binary, and ordinary modules for research policy, agents, runtime, storage, tools, and reporting. Split crates only when an actual reuse or dependency boundary needs it. All Urukai-owned implementation code is Rust; do not introduce a Node, Python, or other application service to implement a subsystem.
 
 Researcher-supplied scripts, notebooks, existing scientific binaries, and remote model APIs may be external inputs/tools. Their adapters, permission enforcement, process supervision, and evidence ingestion remain Rust. Supporting an external research tool does not make it a second orchestration runtime.
 
@@ -188,7 +188,7 @@ Workflow disposition (`active`, `blocked`, `archived`, `duplicate`) is separate 
 Citation requirements:
 
 - Link each substantive sourced claim to a retrieved or supplied source and a page, section, figure, table, code location, or data slice when available.
-- Preserve the distinction between a source's reported result and Uruk's inference from it.
+- Preserve the distinction between a source's reported result and Urukai's inference from it.
 - Do not fabricate references or imply full-text verification when only an abstract is accessible.
 - Record search queries, dates, filters, and unavailable material. “Novel within searched sources” is not a universal novelty guarantee.
 - Preserve contradictions, negative results, retractions/corrections when known, and incomplete coverage. Do not silently select only supportive sources.
@@ -201,7 +201,7 @@ Retain the paper's Supervisor and six specialized roles. They are logical respon
 
 Translate the goal into a plan, choose the next useful work, allocate resources, handle human input, and stop. Consider unanswered questions, missing reviews, uncertainty, coverage, cost, and dependencies—not only the highest Elo.
 
-Scheduling is Uruk policy; launching, waiting, retrying, and cancellation belong to the runtime. Persist each selection and its rationale before dispatch. Persist sampled choices rather than drawing fresh randomness on resume.
+Scheduling is Urukai policy; launching, waiting, retrying, and cancellation belong to the runtime. Persist each selection and its rationale before dispatch. Persist sampled choices rather than drawing fresh randomness on resume.
 
 ### Generation
 
@@ -222,7 +222,7 @@ Critically assess an existing item or result using the appropriate strategy:
 | Simulation | Walk through the mechanism or proposed protocol; identify failure modes without claiming execution |
 | Recurrent/tournament | Revisit reviews using accumulated evidence and comparison patterns |
 
-Uruk additionally allows Reflection to request computational checks, replication, statistical diagnostics, and domain-specific experiments. It consumes the returned evidence rather than assuming a requested check succeeded.
+Urukai additionally allows Reflection to request computational checks, replication, statistical diagnostics, and domain-specific experiments. It consumes the returned evidence rather than assuming a requested check succeeded.
 
 A review returns the assessment, specific objections, supporting and contradicting evidence, unresolved issues, and bounded next actions. Researcher reviews are accepted with attribution; a researcher's assertion does not make an empirical claim true.
 
@@ -236,7 +236,7 @@ Compare competing candidates against the goal's rubric. Use a tournament only wh
 
 ### Evolution
 
-Create new versions or candidates through grounding, coherence/feasibility improvements, inspiration, combination, simplification, and out-of-box thinking. These are the paper's strategies. Uruk also explicitly preserves productive follow-ups from partial or negative results.
+Create new versions or candidates through grounding, coherence/feasibility improvements, inspiration, combination, simplification, and out-of-box thinking. These are the paper's strategies. Urukai also explicitly preserves productive follow-ups from partial or negative results.
 
 Never edit a ranked parent in place. Children state what changed, why, and which assumptions/evidence were inherited or rejected. They require their own review; they do not inherit a parent's support or rating.
 
@@ -262,7 +262,7 @@ A domain expert team is a tool/workflow below these roles, not another set of co
 
 ### 5.1 Prompt contracts
 
-§15 contains all eight prompt examples from the 2025 Appendix A.2, with source provenance and mandatory Uruk adaptations. They are strategies for the existing roles, not new agents. The preprint does not provide example prompts for every role/review strategy; do not label Uruk-authored Supervisor, Proximity, or other missing templates as published prompts.
+§15 contains all eight prompt examples from the 2025 Appendix A.2, with source provenance and mandatory Urukai adaptations. They are strategies for the existing roles, not new agents. The preprint does not provide example prompts for every role/review strategy; do not label Urukai-authored Supervisor, Proximity, or other missing templates as published prompts.
 
 Implement prompts as versioned text assets loaded by Rust, not a new scripting runtime. Persist the selected strategy, source figure (when applicable), template revision/hash, rendered-input reference, model settings, and feedback version on each task. Missing inputs, unresolved template variables, or invalid structured outputs fail validation before a scientific record is accepted. Prompt revisions create new tasks; resume must not reinterpret a completed output under a changed prompt.
 
@@ -289,11 +289,11 @@ Ground / generate → reflect → compare → evolve → meta-review → next re
 
 This is not a global stage barrier. Separate items can be generated, reviewed, tested, or ranked concurrently. Dependencies are local: review needs its target, analysis needs its data, comparison needs reviewed candidates, and an experiment needs its protocol.
 
-Supervisor selects eligible work using non-negative weights informed by missing reviews, new evidence, uncertain assumptions, tournament coverage, underexplored clusters, and estimated information gain per cost. Reserve some exploration capacity so low-ranked or new directions cannot starve. Numerical weights are Uruk configuration, not paper-prescribed constants.
+Supervisor selects eligible work using non-negative weights informed by missing reviews, new evidence, uncertain assumptions, tournament coverage, underexplored clusters, and estimated information gain per cost. Reserve some exploration capacity so low-ranked or new directions cannot starve. Numerical weights are Urukai configuration, not paper-prescribed constants.
 
 Following 2025 §§3.2–3.3, persist periodic summary snapshots: candidates generated/awaiting review, review and match coverage, cluster coverage, task failures, resource use, and outcomes by Generation/Evolution strategy. Track novelty/feasibility objections and external-evidence results separately from debate wins. Use these summaries to adjust work weights and identify diminishing returns; do not optimize the scheduler solely for increasing Elo.
 
-The published Generation and Ranking debate prompts (Figs. A.2, A.5) target 3–5 conversational turns, capped at 10. Uruk counts a turn as one model contribution and enforces the cap in Rust, with stricter model-call and iteration limits taking precedence. Tool calls are reported but not capped. A debate can finish earlier or return partial/insufficient-basis output at the cap.
+The published Generation and Ranking debate prompts (Figs. A.2, A.5) target 3–5 conversational turns, capped at 10. Urukai counts a turn as one model contribution and enforces the cap in Rust, with stricter model-call and iteration limits taking precedence. Tool calls are reported but not capped. A debate can finish earlier or return partial/insufficient-basis output at the cap.
 
 The runtime enforces bounded concurrency and tool-specific limits. Separate task workspaces prevent concurrent writers from modifying the same research code or artifacts. Scientific records are committed through one controlled write path; model agents return proposed records rather than updating shared state directly.
 
@@ -330,7 +330,7 @@ For a tournament:
 5. Return a winner, draw, or insufficient-basis outcome, with explicit evidence and tradeoffs. Insufficient basis triggers more work or remains unresolved; it is not a fabricated win.
 6. Persist the comparison and apply its rating update once, in a recorded order.
 
-Use classic Elo with initial rating **1,200** from the paper. `K = 32` is a Uruk starting choice, not a paper attribution. Wins score 1, draws 0.5, losses 0; insufficient-basis comparisons do not update ratings. Display match counts and relevant evidence status beside ratings.
+Use classic Elo with initial rating **1,200** from the paper. `K = 32` is a Urukai starting choice, not a paper attribution. Wins score 1, draws 0.5, losses 0; insufficient-basis comparisons do not update ratings. Display match counts and relevant evidence status beside ratings.
 
 Elo is relative prioritization within a comparison cohort. It is not probability, empirical confidence, severity, or proof of discovery. It must not change because money was spent or receive arbitrary “evidence bonuses”; evidence affects the reviewed assessment and comparison itself.
 
@@ -340,7 +340,7 @@ New evidence makes dependent assessments/comparisons candidates for re-review. R
 
 ### 7.1 Optional later add-on: research market
 
-**Post-v1, opt-in, implemented in Rust, disabled by default.** The baseline tournament and Supervisor must work without it. Do not scaffold a market service or ledger until this add-on is implemented. It is a Uruk experiment in resource allocation, not a mechanism attributed to the paper.
+**Post-v1, opt-in, implemented in Rust, disabled by default.** The baseline tournament and Supervisor must work without it. Do not scaffold a market service or ledger until this add-on is implemented. It is a Urukai experiment in resource allocation, not a mechanism attributed to the paper.
 
 The market allocates scarce research effort among competing candidates, clusters, and proposed tests. It can later support virtual stakes on explicit, verifiable outcomes.
 
@@ -388,7 +388,7 @@ An external experimental result records its contributor, protocol version, colle
 
 ## 9. Rust-native runtime
 
-**Decision: implement Uruk entirely in Rust, using Tokio for async execution and SQLite for durable state.** Build the minimum application-specific runtime required by §6, not a general workflow engine. Tokio supplies concurrency, not durability; Uruk must implement and test the persistence/recovery guarantees below.
+**Decision: implement Urukai entirely in Rust, using Tokio for async execution and SQLite for durable state.** Build the minimum application-specific runtime required by §6, not a general workflow engine. Tokio supplies concurrency, not durability; Urukai must implement and test the persistence/recovery guarantees below.
 
 ### 9.1 Implementation boundaries
 
@@ -485,7 +485,7 @@ Campaigns additionally export a research overview and tournament history. Market
 Every report distinguishes:
 
 1. The question, scope, constraints, and what work actually ran.
-2. Established/source-reported results, Uruk's interpretations, and untested proposals.
+2. Established/source-reported results, Urukai's interpretations, and untested proposals.
 3. Supporting and contradicting evidence with resolvable references.
 4. Methods, uncertainty, unavailable information, and incomplete validation.
 5. Reproduction instructions where applicable and next actions requiring human judgment.
@@ -541,7 +541,7 @@ Use Rust unit/integration tests with small deterministic fixtures, temporary SQL
 
 These establish product behavior, not scientific usefulness. Evaluate usefulness separately on researcher-selected tasks using blinded expert review, citation correctness, method checks, held-out reproduction results where available, and time/cost to a useful deliverable. Include failures and negative results. Improvement in self-judged Elo alone is insufficient.
 
-The 2025 §§4.1–4.3 evaluations motivate checking whether rankings agree with known outcomes and expert preferences, not interpreting Elo as a calibrated probability. Compare on the same goals with a matched-cost single-agent or non-evolving baseline; report task difficulty, judge identity, and uncertainty. Track strategy contribution and quality versus compute without treating later time buckets as independently validated discoveries. The paper's results are not Uruk acceptance thresholds.
+The 2025 §§4.1–4.3 evaluations motivate checking whether rankings agree with known outcomes and expert preferences, not interpreting Elo as a calibrated probability. Compare on the same goals with a matched-cost single-agent or non-evolving baseline; report task difficulty, judge identity, and uncertainty. Track strategy contribution and quality versus compute without treating later time buckets as independently validated discoveries. The paper's results are not Urukai acceptance thresholds.
 
 For proposal outputs, adapt the pilot rubric in 2025 Appendix A.5.2 to the field: significance/unmet need, evidence-grounded rationale, no over-extrapolation, clear aims and methods, measurable endpoints, feasibility, factual accuracy, explicit assumptions, specificity, and clarity. Retain criterion-level findings and supporting citations rather than only a total score. The source rubric is exploratory, not a validated universal measurement instrument.
 
@@ -553,13 +553,13 @@ For proposal outputs, adapt the pilot rubric in 2025 Appendix A.5.2 to the field
 - 2025 PDF SHA-256: `80730ea110ad450411aa8352a785e996cfcda06afd6e1c60277cb64a65cb676a`.
 - **2026:** Gottweis et al., [*Accelerating scientific discovery with Co-Scientist*](https://doi.org/10.1038/s41586-026-10644-y), Nature 655, 487–496 (2026), including Methods; local source: [`coscientist.pdf`](coscientist.pdf).
 - 2026 PDF SHA-256: `351f49d89d2f4f4ed84eed4225c09cc95470c41aa3becd0aa3e06b3bd8ba54c3`.
-- Both papers identify literature-access gaps, missing negative results, hallucination, bias, preliminary validation, and the need for stronger evaluations. Uruk must not erase these limitations or count related reports as independent confirmation.
+- Both papers identify literature-access gaps, missing negative results, hallucination, bias, preliminary validation, and the need for stronger evaluations. Urukai must not erase these limitations or count related reports as independent confirmation.
 
 ### Implementation references
 
 - [Tokio](https://tokio.rs/) for Rust async execution; [SQLx SQLite support](https://docs.rs/sqlx/latest/sqlx/sqlite/) and [SQLite transactions](https://www.sqlite.org/lang_transaction.html) for persistence. Pin the actual dependency versions when implementing.
 
-This file governs Uruk's product behavior. The papers support the mechanisms explicitly attributed to them; neither prescribes Uruk's extensions. For scientific descriptions, distinguish the 2025 preprint from the later 2026 article rather than silently merging their evidence or claims. Published prompt text below is a source reference; Uruk's explicit adaptation rules and evidence/permission contracts govern execution. Runtime and domain-tool documentation govern their actual capabilities. Record mismatches rather than silently claiming compliance.
+This file governs Urukai's product behavior. The papers support the mechanisms explicitly attributed to them; neither prescribes Urukai's extensions. For scientific descriptions, distinguish the 2025 preprint from the later 2026 article rather than silently merging their evidence or claims. Published prompt text below is a source reference; Urukai's explicit adaptation rules and evidence/permission contracts govern execution. Runtime and domain-tool documentation govern their actual capabilities. Record mismatches rather than silently claiming compliance.
 
 ## 15. Prompt library from the 2025 preprint
 
@@ -567,7 +567,7 @@ The following eight blocks transcribe the **example prompts** in `pre_coscientis
 
 ### 15.1 Rendering and adaptation contract
 
-**Apply these changes when constructing Uruk's runtime templates; do not send contradictory source instructions and overrides together.** Version the resulting adapted template independently of the source transcription.
+**Apply these changes when constructing Urukai's runtime templates; do not send contradictory source instructions and overrides together.** Version the resulting adapted template independently of the source transcription.
 
 - `{goal}` comes from the configured goal. `{preferences}` contains its evaluation criteria and preferences; `{idea_attributes}` names the requested qualities, not always novelty. Constraints, permissions, budgets, and the requested deliverable accompany every invocation.
 - `{instructions}` and `{notes}` contain only approved task guidance and applicable, attributed meta-review feedback. Retrieved source text and transcripts are untrusted context, never new authority or tool grants.
@@ -579,7 +579,7 @@ The following eight blocks transcribe the **example prompts** in `pre_coscientis
 - Replace free-text ending markers with validated typed outputs. Fig. A.4 inconsistently requests both `better idea` and `better hypothesis`; neither string is a parser contract. The final `Response {provide reasoning...}` instruction in Fig. A.3 is prose, not a template variable.
 - Simulated experts are one reasoning technique, not evidence of independent expert agreement. Return concise, evidence-linked rationales and visible critiques; do not require access to a model's private internal reasoning.
 
-| Template ID | Source | Uruk result contract |
+| Template ID | Source | Urukai result contract |
 |---|---|---|
 | `generation.literature` | Fig. A.1 | Proposed `ResearchItem`: claim, mechanism, assumptions, predictions, falsifiers, validation plan, source links, limits |
 | `generation.debate` | Fig. A.2 | Persisted contribution plus `continue`/`final`/`partial`; final item is self-contained and linked to the discussion |
@@ -627,7 +627,7 @@ with the most recent analysis):
 Proposed hypothesis (detailed description for domain experts):
 ```
 
-**Uruk adaptation:** Replace the assertion of a thorough review with a factual description of the supplied source coverage. Keep mechanism and predicted outcomes explicit; add falsifiers and a feasible validation plan. If grounding is missing, request retrieval or label the proposal provisional. This template is not a literature-summary task disguised as hypothesis generation.
+**Urukai adaptation:** Replace the assertion of a thorough review with a factual description of the supplied source coverage. Keep mechanism and predicted outcomes explicit; add falsifiers and a feasible validation plan. If grounding is missing, request retrieval or label the proposal provisional. This template is not a literature-summary task disguised as hypothesis generation.
 
 ### 15.3 Generation through simulated scientific debate
 
@@ -683,7 +683,7 @@ Termination condition:
 Your Turn:
 ```
 
-**Uruk adaptation:** Use three initial alternatives when the approved candidate/budget limits permit; otherwise record the smaller bound. Persist each contribution and enforce the §6 turn limit in Rust. Replace `HYPOTHESIS` with the typed final/partial result. Once a candidate is stored as an item, refinements create linked children rather than rewriting it. A confident fictional panel is not independent validation.
+**Urukai adaptation:** Use three initial alternatives when the approved candidate/budget limits permit; otherwise record the smaller bound. Persist each contribution and enforce the §6 turn limit in Rust. Replace `HYPOTHESIS` with the typed final/partial result. Once a candidate is stored as an item, refinements create linked children rather than rewriting it. A confident fictional panel is not independent validation.
 
 ### 15.4 Reflection through observations
 
@@ -732,7 +732,7 @@ Response {provide reasoning. end with: "hypothesis: <already explained, other ex
 more likely, missing piece, neutral, or disproved>".)
 ```
 
-**Uruk adaptation:** Require a source locator per extracted observation. Check alternative explanations and whether the observation would occur without the hypothesis; `hypothesis => observation` does not establish the converse. Record the explanatory label separately from scientific support. Replace the fixed prose starters/ending with typed fields and a concise rationale. Contradiction must match the claim's actual scope and necessary assumptions; an empty set or weak evidence must not be forced into disproof.
+**Urukai adaptation:** Require a source locator per extracted observation. Check alternative explanations and whether the observation would occur without the hypothesis; `hypothesis => observation` does not establish the converse. Record the explanatory label separately from scientific support. Replace the fixed prose starters/ending with typed fields and a concise rationale. Contradiction must match the claim's actual scope and necessary assumptions; an empty set or weak evidence must not be forced into disproof.
 
 ### 15.5 Ranking by pairwise comparison
 
@@ -770,7 +770,7 @@ Review of hypothesis 2:
 Reasoning and conclusion (end with "better hypothesis: <1 or 2>"):
 ```
 
-**Uruk adaptation:** Judge actual evidence and substantive reviews under the shared rubric, not numerical reviewer scores. Do not claim reviews are independent unless their provenance warrants it. Randomize presentation and map positions back to stable item IDs. Replace the two inconsistent ending phrases with the §7 typed outcome, including draw and insufficient basis. No forced winner when the candidates are incomparable or evidence is inadequate.
+**Urukai adaptation:** Judge actual evidence and substantive reviews under the shared rubric, not numerical reviewer scores. Do not claim reviews are independent unless their provenance warrants it. Randomize presentation and map positions back to stable item IDs. Replace the two inconsistent ending phrases with the §7 typed outcome, including draw and insufficient basis. No forced winner when the candidates are incomparable or evidence is inadequate.
 
 ### 15.6 Ranking through simulated scientific debate
 
@@ -831,7 +831,7 @@ Then, indicate the superior hypothesis by writing the phrase "better idea: ",
 followed by "1" (for hypothesis 1) or "2" (for hypothesis 2).
 ```
 
-**Uruk adaptation:** Replace the assertion of unbiased experts with an instruction to apply the common rubric; test positional bias rather than assuming it is absent. “Only one can be implemented” applies only if the plan actually has that constraint. Pass the persisted transcript and turn budget, keep both item versions fixed, and return a draw/insufficient-basis result when justified. Improvements suggested during comparison are follow-up Evolution requests, not mutations that change the contestants mid-match.
+**Urukai adaptation:** Replace the assertion of unbiased experts with an instruction to apply the common rubric; test positional bias rather than assuming it is absent. “Only one can be implemented” applies only if the plan actually has that constraint. Pass the persisted transcript and turn budget, keep both item versions fixed, and return a draw/insufficient-basis result when justified. Improvements suggested during comparison are follow-up Evolution requests, not mutations that change the contestants mid-match.
 
 ### 15.7 Evolution for feasibility
 
@@ -863,7 +863,7 @@ Original Conceptualization:
 Response:
 ```
 
-**Uruk adaptation:** Supply current reviews, actual resource constraints, and retrieved method evidence. State which capability or assumption makes the alternative more feasible, along with remaining limitations. “Contemporary” is not a license to invent available technology. Insert a new child with a discriminating test; do not inherit the parent's support, Elo, or market settlement.
+**Urukai adaptation:** Supply current reviews, actual resource constraints, and retrieved method evidence. State which capability or assumption makes the alternative more feasible, along with remaining limitations. “Contemporary” is not a license to invent available technology. Insert a new child with a discriminating test; do not inherit the parent's support, Elo, or market settlement.
 
 ### 15.8 Evolution through analogy and divergence
 
@@ -893,7 +893,7 @@ not direct replication):
 Response:
 ```
 
-**Uruk adaptation:** Name the transferable principle, where the analogy could fail, and a prediction that distinguishes the child from its inspirations. Preserve all parent IDs and distinguish borrowed evidence from evidence for the new mechanism. Produce one coherent candidate, not an inflated list or arbitrary combination.
+**Urukai adaptation:** Name the transferable principle, where the analogy could fail, and a prediction that distinguishes the child from its inspirations. Preserve all parent IDs and distinguish borrowed evidence from evidence for the new mechanism. Produce one coherent candidate, not an inflated list or arbitrary combination.
 
 ### 15.9 Meta-review of recurring critiques
 
@@ -926,4 +926,4 @@ Instructions:
 Response:
 ```
 
-**Uruk adaptation:** This is qualitative review synthesis, not a statistical meta-analysis of experiments. Include relevant match critiques and failed-check summaries with provenance. For each recurring issue, cite supporting records, note counterexamples/limited scope, recommend a check, and identify which roles should receive it. Do not create new findings or change rankings here. Keep this strategy separate from Meta-review's research-overview/report strategy, which may summarize individual candidates under §5.
+**Urukai adaptation:** This is qualitative review synthesis, not a statistical meta-analysis of experiments. Include relevant match critiques and failed-check summaries with provenance. For each recurring issue, cite supporting records, note counterexamples/limited scope, recommend a check, and identify which roles should receive it. Do not create new findings or change rankings here. Keep this strategy separate from Meta-review's research-overview/report strategy, which may summarize individual candidates under §5.

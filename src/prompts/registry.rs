@@ -7,8 +7,8 @@ use std::collections::BTreeMap;
 
 /// The published figure a template was adapted from (2025 Appendix A.2).
 ///
-/// `None` marks a Uruk-authored template. SPEC §5.1: "do not label
-/// Uruk-authored Supervisor, Proximity, or other missing templates as
+/// `None` marks a Urukai-authored template. SPEC §5.1: "do not label
+/// Urukai-authored Supervisor, Proximity, or other missing templates as
 /// published prompts."
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SourceFigure {
@@ -45,7 +45,7 @@ impl PromptTemplate {
                 figure,
                 page
             ),
-            None => format!("{}@{} (Uruk-authored)", self.id, self.hash.short()),
+            None => format!("{}@{} (Urukai-authored)", self.id, self.hash.short()),
         }
     }
 }
@@ -76,7 +76,7 @@ const TEMPLATES: &[TemplateDef] = templates![
         Some(SourceFigure { figure: "Fig. A.7", page: 45 })),
     ids::META_REVIEW => ("meta.review.md",
         Some(SourceFigure { figure: "Fig. A.8", page: 46 })),
-    // Uruk-authored: the preprint publishes no example for these.
+    // Urukai-authored: the preprint publishes no example for these.
     ids::REFLECTION_INITIAL => ("reflection.initial.md", None),
     ids::REFLECTION_FULL => ("reflection.full.md", None),
     ids::REFLECTION_DEEP => ("reflection.deep.md", None),
@@ -184,7 +184,7 @@ mod tests {
                 !t.is_published_adaptation(),
                 "{id} must not claim a source figure"
             );
-            assert!(t.provenance().contains("Uruk-authored"));
+            assert!(t.provenance().contains("Urukai-authored"));
         }
     }
 

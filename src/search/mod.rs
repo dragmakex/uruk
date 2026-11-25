@@ -1,7 +1,7 @@
 //! Literature search: local passage retrieval and federated discovery over
 //! freely accessible public scholarly APIs (OpenAlex, Crossref, arXiv).
 //!
-//! Uruk runs none of these operators' code: the connectors consume hosted
+//! Urukai runs none of these operators' code: the connectors consume hosted
 //! APIs. Search is an explicit opt-in (the `search:*` allowlist grants,
 //! which require the network permission); the network permission alone
 //! retains URL-fetch-only behavior and sends zero connector traffic. With search enabled, query

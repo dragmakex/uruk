@@ -3,11 +3,11 @@ import Link from "next/link";
 import { Button } from "./Button";
 import { ThemeToggle } from "./ThemeToggle";
 
-/** The persistent URUK top bar and its primary navigation. */
+/** The persistent URUKAI top bar and its primary navigation. */
 export function SiteNav() {
   return (
     <header className="site-nav">
-      <Link href="/" className="wordmark" aria-label="URUK home">
+      <Link href="/" className="wordmark" aria-label="URUKAI home">
         <Image
           src="/favicon.svg"
           alt=""
@@ -16,7 +16,7 @@ export function SiteNav() {
           height={28}
           unoptimized
         />
-        <span className="wordmark-name">URUK</span>
+        <span className="wordmark-name">URUKAI</span>
       </Link>
       <nav className="nav-links" aria-label="Primary">
         <Link href="/runs">Runs</Link>

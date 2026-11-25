@@ -7,7 +7,7 @@ use time::OffsetDateTime;
 /// Initial rating from the paper (SPEC §7, 2026 Methods "Ranking agent").
 pub const INITIAL_ELO: f64 = 1200.0;
 
-/// K-factor. A Uruk starting choice, explicitly **not** attributed to the
+/// K-factor. A Urukai starting choice, explicitly **not** attributed to the
 /// paper (SPEC §7).
 pub const DEFAULT_K: f64 = 32.0;
 

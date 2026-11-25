@@ -4,7 +4,7 @@ use super::ids::*;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
-/// How much of a source Uruk could actually read.
+/// How much of a source Urukai could actually read.
 ///
 /// SPEC §4.3 forbids implying full-text verification when only an abstract was
 /// accessible, so this is recorded per source and surfaced in reports.

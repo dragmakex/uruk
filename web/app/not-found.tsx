@@ -7,7 +7,7 @@ export default function NotFound() {
         <h1>Page not found</h1>
         <p>Nothing lives at this address.</p>
         <Button href="/" variant="outline" size="sm">
-          Back to URUK
+          Back to URUKAI
         </Button>
       </div>
     </div>
