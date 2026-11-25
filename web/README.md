@@ -1,6 +1,6 @@
 # uruk-web
 
-The Next.js frontend for Uruk's local web console. Architecture, API
+The Next.js frontend for Urukai's local web console. Architecture, API
 contract, security posture, and reverse-proxy setup live in
 [`../docs/WEB.md`](../docs/WEB.md); this file covers the frontend itself.
 

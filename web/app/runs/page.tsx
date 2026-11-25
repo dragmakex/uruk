@@ -80,7 +80,7 @@ export default async function RunsPage() {
         <div className="empty-state">
           <h2>No runs in this browser yet</h2>
           <p>
-            Specify a research goal and Uruk plans, drafts, reviews, and
+            Specify a research goal and Urukai plans, drafts, reviews, and
             ranks candidate answers against it. Runs stay available to this
             browser through an anonymous cookie; clearing site data loses
             access to them.

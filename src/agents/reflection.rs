@@ -226,7 +226,7 @@ pub async fn review_observations(
 
 /// Turn a reviewer's citations into evidence records and claim links.
 ///
-/// A citation to a source that does not exist, or that Uruk could not read,
+/// A citation to a source that does not exist, or that Urukai could not read,
 /// is dropped rather than recorded: SPEC §4.3 forbids fabricated references
 /// and implied full-text verification. A citation to the same source and
 /// locator as an existing record reuses that record: several reviews

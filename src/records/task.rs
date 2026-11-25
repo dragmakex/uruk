@@ -398,7 +398,7 @@ pub struct Experiment {
     pub id: ExperimentId,
     pub schema_version: u32,
     pub run_id: RunId,
-    /// Whether Uruk executed it or it was supplied from outside.
+    /// Whether Urukai executed it or it was supplied from outside.
     pub external: bool,
     pub protocol: String,
     /// Claims this experiment bears on.

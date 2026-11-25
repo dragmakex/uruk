@@ -1,6 +1,6 @@
 # SQLite request diagnostics
 
-Uruk records incoming **API** requests and every outgoing **model HTTP attempt**
+Urukai records incoming **API** requests and every outgoing **model HTTP attempt**
 in `request_logs` inside the project's `.uruk/state.sqlite`. This includes health,
 unknown routes, method errors, validation failures, provider errors, and retries.
 Frontend HTML/assets and source-retrieval/search HTTP traffic are not covered by

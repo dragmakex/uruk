@@ -2,7 +2,7 @@
 //!
 //! Key files are deliberately boring: one `*.key` file per account, one key
 //! per file. The directory is re-read for every logical completion cycle, so
-//! operators can add a key without changing configuration or restarting Uruk.
+//! operators can add a key without changing configuration or restarting Urukai.
 
 use crate::{Error, Result};
 use std::fmt;

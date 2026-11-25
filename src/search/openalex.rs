@@ -1,7 +1,7 @@
 //! OpenAlex: primary discovery (§5.1).
 //!
 //! Freely accessible public API operated by OurResearch. The data is CC0 and
-//! the backend is open-source, but Uruk consumes only the hosted API. No
+//! the backend is open-source, but Urukai consumes only the hosted API. No
 //! credential; `mailto` joins the polite pool.
 
 use super::connector::{ApiAccess, Connector, ConnectorCx, urlencode};
@@ -36,7 +36,7 @@ impl Connector for OpenAlex {
         ApiAccess::OpenWithEmail { required: false }
     }
 
-    /// Operator limits are 100,000 calls/day and 10 req/s; Uruk's floor is
+    /// Operator limits are 100,000 calls/day and 10 req/s; Urukai's floor is
     /// far more conservative.
     fn min_interval(&self) -> Duration {
         Duration::from_millis(250)

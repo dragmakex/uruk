@@ -1,4 +1,4 @@
-# Uruk
+# Urukai
 
 An autonomous research engine, implemented entirely in Rust. It generates,
 reviews, ranks, and tests hypotheses, and reports a finding as supported only
@@ -6,15 +6,15 @@ when evidence beyond agent opinion backs it. Researchers set the goal and
 permissions before a run starts, and can stop it; they are not needed to do
 the work.
 
-Uruk is the system specified in [`docs/SPEC.md`](docs/SPEC.md): a Supervisor plus six
+Urukai is the system specified in [`docs/SPEC.md`](docs/SPEC.md): a Supervisor plus six
 specialized roles (Generation, Reflection, Ranking, Evolution, Proximity,
 Meta-review) over durable, immutable research records. The research
 architecture follows Gottweis et al., *Towards an AI co-scientist* (2025) and
 *Accelerating scientific discovery with Co-Scientist* (2026); the Rust-native
-runtime, evidence provenance model, and task mode are Uruk extensions.
+runtime, evidence provenance model, and task mode are Urukai extensions.
 
-The name is the city of Gilgamesh: where writing and record-keeping began, and
-where, the epic says, the Seven Sages laid the foundations.
+The name joins Uruk, the city of Gilgamesh — where writing and record-keeping
+began, and where, the epic says, the Seven Sages laid the foundations — with AI.
 
 ## Status
 
@@ -66,7 +66,7 @@ URUK_PROVIDER_TIMEOUT_SECS=1800               # optional; overall completion tim
 A variable exported in the shell overrides the file.
 
 Set `URUK_API_KEY_DIR` to a private directory containing one `<account>.key`
-file per account. Uruk sorts the filenames, starts each logical
+file per account. Urukai sorts the filenames, starts each logical
 completion at the next account in round-robin order, and tries each remaining
 key once when an account is rejected, rate-limited, or temporarily unavailable.
 Only after every key fails does the normal provider wait/queue path begin;
@@ -89,7 +89,7 @@ binds them all.
 completion request and defaults to 1,800 seconds (30 minutes). The separate
 connection timeout remains 20 seconds, so the configured overall timeout must
 be greater than 20 seconds. The timeout bounds each send, not the logical
-completion: if it expires, Uruk enters a visible provider wait and retries
+completion: if it expires, Urukai enters a visible provider wait and retries
 with exponential backoff (1, 2, 4, 8, 16, then 30 seconds, honoring a longer
 `Retry-After`). The research clock pauses during recovery. A retry can
 repeat provider-side computation and incur unknown cost. Raise the setting
@@ -115,7 +115,7 @@ cd web && bun run dev       # the web app on localhost:3000 (proxies /api)
 Open `http://localhost:3000`: specify a goal, deliverables, preferences,
 attributes, constraints, and budgets; watch the agent topology live; read
 the report; search the run's passages. The same operations are plain JSON
-if an outer agent should drive Uruk as a tool (full surface and the cookie
+if an outer agent should drive Urukai as a tool (full surface and the cookie
 contract in [docs/WEB.md](docs/WEB.md)):
 
 ```sh
@@ -258,7 +258,7 @@ indexed in SQLite FTS5 inside `.uruk/state.sqlite`; prompts ground in ranked
 passages, and `GET /api/runs/{id}/passages` queries the index offline —
 this needs no network at all. With the network and search permissions
 granted, discovery federates
-OpenAlex, Crossref, and arXiv (freely accessible public APIs — Uruk runs
+OpenAlex, Crossref, and arXiv (freely accessible public APIs — Urukai runs
 none of their code), deduplicates by DOI/arXiv/PMID/title fingerprint, fuses
 rankings with Reciprocal Rank Fusion, and acquires open-access full text
 through the ordinary ingestion pipeline. Resolution is local, from the

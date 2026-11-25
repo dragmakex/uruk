@@ -76,7 +76,7 @@ impl Rubric {
     }
 }
 
-/// What Uruk is permitted to do (SPEC §12).
+/// What Urukai is permitted to do (SPEC §12).
 ///
 /// Enforced at execution boundaries, never by prompt text alone.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

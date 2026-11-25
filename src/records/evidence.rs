@@ -15,9 +15,9 @@ pub enum EvidenceKind {
     RetrievedLiterature,
     /// Supplied by the researcher as an observation.
     SuppliedObservation,
-    /// Produced by a computation Uruk actually executed.
+    /// Produced by a computation Urukai actually executed.
     ComputationalResult,
-    /// An experimental result performed outside Uruk and imported.
+    /// An experimental result performed outside Urukai and imported.
     ExternalExperiment,
     /// Output of a formal checker or proof tool.
     FormalVerification,

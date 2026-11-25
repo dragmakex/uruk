@@ -251,7 +251,7 @@ pub async fn execute_analysis(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         // A clean environment: nothing from the parent process leaks in, so a
-        // credential in Uruk's environment cannot reach the subprocess.
+        // credential in Urukai's environment cannot reach the subprocess.
         .env_clear()
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         .env("HOME", workspace.to_string_lossy().to_string())

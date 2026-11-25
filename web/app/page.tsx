@@ -7,7 +7,7 @@ import { Button } from "@/components/Button";
 export default function LandingPage() {
   return (
     <div className="canvas landing">
-      <h1>URUK</h1>
+      <h1>URUKAI</h1>
       <p className="lede">
         An autonomous research engine. Specify a research goal, watch a
         supervised team of agents draft, review, and rank hypotheses in a

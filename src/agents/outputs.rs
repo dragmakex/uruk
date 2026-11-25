@@ -792,7 +792,7 @@ pub struct SynthesisClaim {
     pub citations: Vec<Grounding>,
 }
 
-/// SPEC §11: reports must distinguish source-reported results, Uruk's
+/// SPEC §11: reports must distinguish source-reported results, Urukai's
 /// interpretations, and untested proposals.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -806,7 +806,7 @@ impl ClaimBasis {
     pub fn label(self) -> &'static str {
         match self {
             Self::SourceReported => "source-reported",
-            Self::UrukInference => "Uruk inference",
+            Self::UrukInference => "Urukai inference",
             Self::UntestedProposal => "untested proposal",
         }
     }

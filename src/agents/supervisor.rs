@@ -1,6 +1,6 @@
 //! Supervisor: plan, select the next useful work, and stop (SPEC §5, §6).
 //!
-//! Scheduling is Uruk policy; launching, waiting, retrying, and cancellation
+//! Scheduling is Urukai policy; launching, waiting, retrying, and cancellation
 //! belong to the runtime. Every selection and its rationale is persisted
 //! before dispatch.
 
@@ -14,7 +14,7 @@ use time::OffsetDateTime;
 
 /// Weights for campaign work selection (SPEC §6).
 ///
-/// "Numerical weights are Uruk configuration, not paper-prescribed
+/// "Numerical weights are Urukai configuration, not paper-prescribed
 /// constants." All must be non-negative.
 #[derive(Debug, Clone)]
 pub struct Weights {
@@ -113,7 +113,7 @@ impl WorkItem {
 }
 
 /// Ceiling on the candidate pool, so a campaign converges rather than
-/// generating indefinitely. A Uruk configuration choice, not a paper value.
+/// generating indefinitely. A Urukai configuration choice, not a paper value.
 pub const MAX_CANDIDATES: usize = 12;
 
 /// Agent-generated candidates a bounded task may produce (SPEC §6: task mode

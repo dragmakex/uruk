@@ -105,7 +105,7 @@ async fn ungrounded_generation_is_marked_provisional() {
     assert!(prompt.contains("must be labelled provisional"));
 }
 
-/// A review that cites a source Uruk never retrieved has that citation
+/// A review that cites a source Urukai never retrieved has that citation
 /// dropped rather than recorded (SPEC §4.3: do not fabricate references);
 /// a citation to a real, readable source becomes literature evidence.
 #[tokio::test]
