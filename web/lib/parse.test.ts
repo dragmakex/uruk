@@ -107,6 +107,16 @@ describe("parseDecisionLedger", () => {
 });
 
 describe("parseRunSnapshot", () => {
+  it("requires a truthful round baseline and validates each rating", () => {
+    const fixture = snapshotFixture() as Record<string, unknown>;
+    delete fixture.ranking_baseline;
+    expect(() => parseRunSnapshot(fixture)).toThrow(/ranking_baseline/);
+    fixture.ranking_baseline = { iteration: 1, ratings: { item_h7: "1412" } };
+    expect(() => parseRunSnapshot(fixture)).toThrow(/ratings.item_h7/);
+    fixture.ranking_baseline = null;
+    expect(parseRunSnapshot(fixture).ranking_baseline).toBeNull();
+  });
+
   it("accepts a complete snapshot and keeps every fact", () => {
     const snap = parseRunSnapshot(snapshotFixture());
     expect(snap.run.id).toBe("run_0412aa");

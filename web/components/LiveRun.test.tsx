@@ -69,6 +69,15 @@ afterEach(async () => {
 });
 
 describe("LiveRun", () => {
+  it("puts the top-five result before the topology", () => {
+    render(<LiveRun runId="run_0412aa" initial={initial} />);
+    const overview = screen.getByRole("region", { name: "Top five candidates" });
+    const topology = screen.getByRole("heading", { name: "Supervisor" });
+    expect(overview.compareDocumentPosition(topology) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(overview).toHaveTextContent("1,412");
+    expect(overview).toHaveTextContent("+16");
+  });
+
   it("renders the header facts and topology from the initial snapshot", () => {
     render(<LiveRun runId="run_0412aa" initial={initial} />);
 

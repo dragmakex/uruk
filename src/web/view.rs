@@ -23,6 +23,14 @@ pub struct RunSnapshot {
     pub usage: BudgetUsage,
     /// Ranking cards: best rating first, unrated last, ties by ID.
     pub items: Vec<ItemSummary>,
+    pub ranking_baseline: Option<RankingBaseline>,
+}
+
+/// The previous completed round's board in the current rubric cohort.
+#[derive(Debug, Serialize)]
+pub struct RankingBaseline {
+    pub iteration: u32,
+    pub ratings: BTreeMap<String, f64>,
 }
 
 /// Run lifecycle facts.
@@ -534,6 +542,27 @@ pub async fn run_snapshot(store: &Store, run_id: &RunId) -> Result<RunSnapshot> 
         .await?;
     sort_items(&mut items);
 
+    let ranking_baseline = store
+        .list_snapshots(run_id)
+        .await?
+        .into_iter()
+        .find(|snapshot| snapshot.iteration.checked_add(1) == Some(run.iterations))
+        .and_then(|snapshot| {
+            let plan = plan.as_ref()?;
+            let ratings = snapshot.ratings?;
+            if !ratings.iter().any(|rating| rating.rubric_id == plan.id) {
+                return None;
+            }
+            Some(RankingBaseline {
+                iteration: snapshot.iteration,
+                ratings: ratings
+                    .into_iter()
+                    .filter(|rating| rating.rubric_id == plan.id)
+                    .map(|rating| (rating.item_id.to_string(), rating.rating))
+                    .collect(),
+            })
+        });
+
     let matches = store.list_matches(run_id).await?.len() as u32;
     let decisions = store.count_decisions(run_id).await?;
     let clusters = store.list_clusters(run_id).await?.len() as u32;
@@ -667,6 +696,7 @@ pub async fn run_snapshot(store: &Store, run_id: &RunId) -> Result<RunSnapshot> 
         },
         usage,
         items,
+        ranking_baseline,
     })
 }
 
