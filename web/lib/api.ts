@@ -88,7 +88,7 @@ async function request(
     });
   } catch {
     throw new ApiFailure(
-      "the uruk API is unreachable; is `uruk serve` running?",
+      "the Urukai API is unreachable; is `uruk serve` running?",
       "unreachable",
       null,
     );

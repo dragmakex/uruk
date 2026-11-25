@@ -737,7 +737,7 @@ export function RunForm() {
         <div className="panel-section" role="alert">
           <p className="field-error">
             {apiError.kind === "unreachable"
-              ? "The uruk API is unreachable. Start it with: uruk serve"
+              ? "The Urukai API is unreachable. Start it with: uruk serve"
               : apiError.error}
           </p>
           <p className="error-kind">kind: {apiError.kind}</p>
