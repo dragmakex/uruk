@@ -446,7 +446,7 @@ pub async fn serve(opts: ServeOptions) -> Result<()> {
     }
 
     let listener = tokio::net::TcpListener::bind(opts.bind).await?;
-    tracing::info!(addr = %opts.bind, "uruk web API listening");
+    tracing::info!(addr = %opts.bind, "urukai web API listening");
     let served = axum::serve(listener, router(state.clone()))
         .with_graceful_shutdown(shutdown_signal())
         .await

@@ -166,7 +166,7 @@ export function LiveRun({
           <div className="error-box" role="alert">
             <h1>Unavailable</h1>
             <p>
-              The uruk API did not answer for run {runId}. Check that
+              The Urukai API did not answer for run {runId}. Check that
               `uruk serve` is running, then reload.
             </p>
             <p className="error-kind">Closed</p>
