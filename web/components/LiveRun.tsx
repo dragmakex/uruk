@@ -20,6 +20,7 @@ import { moveSentence } from "@/lib/handoff";
 import { roleLabel } from "@/lib/roles";
 import { DecisionLedger } from "./DecisionLedger";
 import { RankingList } from "./RankingList";
+import { RunCommandStrip } from "./RunCommandStrip";
 import { Topology } from "./Topology";
 import { TournamentFeed } from "./TournamentFeed";
 
@@ -228,6 +229,7 @@ export function LiveRun({
             </Button>
           )}
         </div>
+        <RunCommandStrip snapshot={snapshot} />
       </div>
 
       <div className="canvas">
