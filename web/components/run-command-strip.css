@@ -1,0 +1,46 @@
+.run-head {
+  flex-wrap: wrap;
+  min-height: 0;
+}
+
+.run-command-strip {
+  flex-basis: 100%;
+  min-width: 0;
+}
+
+.run-command-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 24px;
+  padding-bottom: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.run-command-facts > span {
+  overflow-wrap: anywhere;
+}
+
+.run-budget-bar {
+  height: 5px;
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+
+.run-budget-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--ink);
+  transform-origin: left;
+}
+
+.run-budget-bar[data-exhausted="true"] {
+  border-style: dashed;
+}
+
+.run-budget-bar[data-exhausted="true"] > span {
+  background: repeating-linear-gradient(90deg, var(--ink) 0 5px, transparent 5px 9px);
+}
+
+@media (max-width: 767px) {
+  .run-command-facts { gap: 4px 16px; }
+}
