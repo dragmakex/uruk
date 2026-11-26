@@ -1,19 +1,8 @@
-/**
- * Static role metadata for the topology and the agent legend. The
- * descriptions state what each engine role actually does (SPEC §5); the
- * `feeds` field is the pipeline context shown when connection wires are
- * hidden on narrow viewports.
- */
-
+/** Stable role labels and responsibilities, not a mandatory execution order. */
 export interface RoleMeta {
-  /** Role name as the API reports it. */
   id: string;
-  /** Display label as the design writes it. */
   label: string;
-  /** What the role does, factually. */
   description: string;
-  /** Downstream role in the work pipeline, for wire-less viewports. */
-  feeds: string | null;
 }
 
 export const ROLE_ORDER: readonly string[] = [
@@ -30,56 +19,48 @@ export const ROLES: Record<string, RoleMeta> = {
   supervisor: {
     id: "supervisor",
     label: "Supervisor",
-    description: "splits the goal, assigns work",
-    feeds: "generation",
+    description:
+      "Plans research, allocates work and checks stopping conditions",
   },
   generation: {
     id: "generation",
     label: "Generation",
-    description: "reads, drafts hypotheses",
-    feeds: "reflection",
+    description: "Literature-grounded ideas and simulated debate",
   },
   reflection: {
     id: "reflection",
     label: "Reflection",
-    description: "reviews novelty and soundness",
-    feeds: "ranking",
+    description: "Peer review and deep verification",
   },
   ranking: {
     id: "ranking",
     label: "Ranking",
-    description: "runs the matches, keeps Elo",
-    feeds: "meta_review",
+    description: "Pairwise comparisons, scientific debate and Elo ranking",
   },
   proximity: {
     id: "proximity",
     label: "Proximity",
-    description: "clusters similar ideas",
-    feeds: "evolution",
+    description: "Groups related ideas and identifies overlap",
   },
   evolution: {
     id: "evolution",
     label: "Evolution",
-    description: "rewrites the strongest ideas",
-    feeds: "meta_review",
+    description: "Refines ideas and combines promising directions",
   },
   meta_review: {
     id: "meta_review",
     label: "Meta-review",
-    description: "summarises each round",
-    feeds: null,
+    description: "Synthesizes feedback and research overviews",
   },
   search: {
     id: "search",
     label: "Search",
-    description: "finds and acquires literature",
-    feeds: "generation",
+    description: "Finds and acquires literature",
   },
   tool: {
     id: "tool",
     label: "Tool",
-    description: "runs approved executions",
-    feeds: "reflection",
+    description: "Runs permitted computational checks",
   },
 };
 
@@ -90,14 +71,3 @@ export function roleLabel(role: string): string {
 export function roleDescription(role: string): string {
   return ROLES[role]?.description ?? "";
 }
-
-/** Wires of the topology figure: solid data-flow edges between roles. */
-export const WIRES: ReadonlyArray<readonly [string, string]> = [
-  ["supervisor", "generation"],
-  ["supervisor", "proximity"],
-  ["generation", "reflection"],
-  ["reflection", "ranking"],
-  ["proximity", "evolution"],
-  ["evolution", "meta_review"],
-  ["ranking", "meta_review"],
-];

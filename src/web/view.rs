@@ -79,7 +79,17 @@ pub struct GoalView {
     pub mode: String,
     pub revision: u32,
     pub deliverables: Vec<String>,
+    pub rubric: Rubric,
+    pub permissions: PermissionsView,
     pub budget: BudgetView,
+}
+
+/// Run permissions, not connection health; private host paths stay server-side.
+#[derive(Debug, Serialize)]
+pub struct PermissionsView {
+    pub network: bool,
+    pub execute: bool,
+    pub allowed_tools: Vec<String>,
 }
 
 /// Real limits from the goal's budget; the UI shows these instead of
@@ -97,6 +107,7 @@ pub struct PlanView {
     pub roles: Vec<String>,
     pub methods: Vec<String>,
     pub rationale: String,
+    pub stopping_conditions: Vec<String>,
 }
 
 /// Task counts for one role, straight from the persisted task set.
@@ -674,6 +685,12 @@ pub async fn run_snapshot(store: &Store, run_id: &RunId) -> Result<RunSnapshot> 
             mode: goal.mode.as_str().to_string(),
             revision: goal.revision,
             deliverables: goal.deliverables,
+            rubric: goal.rubric,
+            permissions: PermissionsView {
+                network: goal.permissions.network,
+                execute: goal.permissions.execute,
+                allowed_tools: goal.permissions.allowed_tools,
+            },
             budget: BudgetView {
                 max_model_calls: goal.budget.max_model_calls,
                 max_iterations: goal.budget.max_iterations,
@@ -685,6 +702,11 @@ pub async fn run_snapshot(store: &Store, run_id: &RunId) -> Result<RunSnapshot> 
             roles: p.roles,
             methods: p.methods,
             rationale: p.rationale,
+            stopping_conditions: p
+                .stopping_conditions
+                .iter()
+                .map(|condition| condition.as_str().to_string())
+                .collect(),
         }),
         agents,
         stats: Stats {

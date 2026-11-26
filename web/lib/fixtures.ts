@@ -19,6 +19,8 @@ export function snapshotFixture(): unknown {
       mode: "campaign",
       revision: 0,
       deliverables: ["research report"],
+      rubric: { preferences: [], attributes: [], constraints: [], acceptance: [] },
+      permissions: { network: false, execute: false, allowed_tools: [] },
       budget: {
         max_model_calls: 200,
         max_iterations: 4,
@@ -30,6 +32,7 @@ export function snapshotFixture(): unknown {
       roles: ["generation", "reflection", "ranking"],
       methods: ["grounded generation"],
       rationale: "campaign plan",
+      stopping_conditions: ["rounds_completed", "budget_exhausted"],
     },
     agents: [
       {

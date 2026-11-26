@@ -22,7 +22,7 @@ import { DecisionLedger } from "./DecisionLedger";
 import { RankingList } from "./RankingList";
 import { RankedOverview } from "./RankedOverview";
 import { RunCommandStrip } from "./RunCommandStrip";
-import { Topology } from "./Topology";
+import { ResearchArchitecture } from "./ResearchArchitecture";
 import { TournamentFeed } from "./TournamentFeed";
 
 function connectionNote(status: StreamStatus): string | null {
@@ -196,7 +196,7 @@ export function LiveRun({
     );
   }
 
-  const { run, goal, stats, agents, usage } = snapshot;
+  const { run, goal, stats, usage } = snapshot;
   const terminal = isTerminal(run.state);
   // A queue place, not the lifecycle state, says the run is waiting:
   // durable recovery can put a `running` run back on the queue, and it waits
@@ -345,7 +345,7 @@ export function LiveRun({
             that is not there. */}
         {!onQueue && (
           <>
-            <RankedOverview snapshot={snapshot} />
+            <div id="run-overview"><RankedOverview snapshot={snapshot} /></div>
             <div className="fig-row">
               <span className="micro">
                 Fig. run {shortRunId(run.id)}, {roundLabel(run.state, run.iterations, goal.budget.max_iterations)}
@@ -358,23 +358,12 @@ export function LiveRun({
               </span>
             </div>
 
-            <Topology
-              runId={run.id}
-              agents={agents}
-              stats={stats}
+            <ResearchArchitecture
+              snapshot={snapshot}
               onMove={(move) => setAnnouncement(moveSentence(move, roleLabel))}
             />
 
-            <details className="legend-fold" open>
-              <summary>Key</summary>
-              <div className="legend-line">
-                <span className="micro">Filled header: thinking</span>
-                <span className="micro">Dashed wire: carrying work now</span>
-                <span className="micro">Dashed box: idle</span>
-              </div>
-            </details>
-
-            <section className="items-section" aria-label="Match log">
+            <section id="run-matches" className="items-section" aria-label="Match log">
               <div className="items-head">
                 <h2>Match log</h2>
                 <span className="micro">
@@ -385,7 +374,7 @@ export function LiveRun({
               <TournamentFeed key={run.id} runId={run.id} matchCount={stats.matches} />
             </section>
 
-            <section className="items-section" aria-label="Ranked candidates">
+            <section id="run-candidates" className="items-section" aria-label="Ranked candidates">
               <div className="items-head">
                 <h2>Candidates</h2>
                 <span className="micro">
@@ -401,7 +390,7 @@ export function LiveRun({
               />
             </section>
 
-            <section className="items-section" aria-label="Decisions">
+            <section id="run-decisions" className="items-section" aria-label="Decisions">
               <div className="items-head">
                 <h2>Decisions</h2>
                 <span className="micro">
