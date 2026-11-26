@@ -599,6 +599,37 @@ pub async fn select_work(
         }
     }
 
+    // --- Verification: one closed-loop replay after an experiment earns support ---
+    if goal.permissions.execute {
+        let experiments = store.list_experiments(run_id).await?;
+        for experiment in &experiments {
+            let inputs = vec![experiment.id.to_string()];
+            let already_verified = experiments.iter().any(|e| {
+                e.reproduction
+                    .as_ref()
+                    .is_some_and(|r| r.original_experiment_id == experiment.id)
+            });
+            if already_verified
+                || !ledger.allows(Role::Tool, "verify", &inputs)
+                || super::verification::supported_targets(store, run_id, experiment)
+                    .await?
+                    .is_empty()
+            {
+                continue;
+            }
+            work.push(WorkItem::new(
+                Role::Tool,
+                "verify",
+                inputs,
+                weights.requested_check + 3.0,
+                format!(
+                    "re-execute supported experiment {} and record a measured reproduction verdict",
+                    experiment.id
+                ),
+            ));
+        }
+    }
+
     // --- Ranking: stale ratings first, then coverage, cross-cluster on odd rounds ---
     if enabled(Role::Ranking) && candidates.len() >= 2 {
         let mut pool: Vec<(&ResearchItem, Option<Rating>)> = Vec::new();

@@ -270,6 +270,32 @@ section; each work's per-connector ranks and raw-response hashes ride in its
 own record, and `works.jsonl` lists everything found, not just everything
 read.
 
+## Verification runs
+
+After a review cites an original computation as support for an active
+`Supported` claim, the Supervisor schedules one contained replay within the
+run's existing budget and limits. The replay uses the stored typed program,
+argv, input paths, seed, timeout, and capture limit; it never parses the
+human-readable command. It records a new experiment and fresh output artifacts
+linked to the original experiment, leaving the original and assessment intact.
+
+The persisted `reproduction.verdict` is:
+
+- `reproduced`: complete, successful stdout has the same content hash with
+  matching recorded recipe, input hashes, platform, and top-level program hash;
+- `not_reproduced`: complete, successful stdout differs with those recorded
+  fingerprints unchanged;
+- `inconclusive`: inputs/environment changed, execution failed, output is
+  incomplete, containment is unavailable, or a legacy record lacks the recipe
+  or baseline artifacts required for a comparison.
+
+The verdict is included in the report and `research.jsonl`. It measures
+byte-exact replay, not scientific equivalence or independent replication. It
+neither promotes nor refutes a claim automatically. Program fingerprints cover
+the top-level binary, not every library or helper program; the sandbox blocks
+network and outside writes but does not isolate all host reads. Analyses must
+supply their code and data as declared inputs for meaningful replay.
+
 ## Not implemented
 
 - Unpaywall open-access resolution; resolution currently uses only the OA

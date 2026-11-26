@@ -4,6 +4,7 @@
 //! are separate records, so new evidence never rewrites what was proposed.
 
 pub mod evidence;
+pub mod execution;
 pub mod goal;
 pub mod ids;
 pub mod item;
@@ -17,6 +18,7 @@ pub use evidence::{
     Assessment, AssessmentError, AssessmentRecord, Disposition, Evidence, EvidenceKind,
     EvidenceLink, EvidenceRelation, validate_assessment,
 };
+pub use execution::{ExecutionRequest, Reproduction, ReproductionVerdict};
 pub use goal::{Budget, Goal, InputRef, Mode, Permissions, Plan, Rubric, StopCondition};
 pub use ids::*;
 pub use item::{Author, HypothesisFields, ItemKind, ItemState, ResearchItem};

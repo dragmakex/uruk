@@ -15,21 +15,7 @@ use time::OffsetDateTime;
 use tokio::io::AsyncReadExt;
 use tokio_util::sync::CancellationToken;
 
-/// A request to execute an approved analysis.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ExecRequest {
-    /// Program to run, which must be on the allowed-tools list.
-    pub program: String,
-    pub args: Vec<String>,
-    /// Input files copied read-only into the workspace.
-    pub inputs: Vec<String>,
-    /// Seconds before the process tree is terminated.
-    pub timeout_secs: u64,
-    /// Maximum bytes captured from each of stdout and stderr.
-    pub max_output_bytes: usize,
-    /// Deterministic seed passed through to the analysis, where applicable.
-    pub seed: Option<u64>,
-}
+pub use crate::records::ExecutionRequest as ExecRequest;
 
 impl ExecRequest {
     pub fn new(program: impl Into<String>, args: Vec<String>) -> Self {
@@ -50,6 +36,7 @@ impl ExecRequest {
             "args": self.args,
             "inputs": self.inputs,
             "timeout_secs": self.timeout_secs,
+            "max_output_bytes": self.max_output_bytes,
             "seed": self.seed,
         })
     }
@@ -243,6 +230,10 @@ pub async fn execute_analysis(
     }
 
     let started_at = OffsetDateTime::now_utc();
+    let program_hash = match find_on_path(&request.program) {
+        Some(path) => Some(ContentHash::of_bytes(&tokio::fs::read(path).await?)),
+        None => None,
+    };
 
     let mut command = contained_command(&containment, &workspace, &request.program, &request.args)?;
     command
@@ -357,9 +348,16 @@ pub async fn execute_analysis(
 
     let command_line = request.command_line();
     let record = ExecutionRecord {
+        request: Some(request.clone()),
+        program_hash,
         command: command_line.clone(),
         environment: vec![
             format!("program={}", request.program),
+            format!(
+                "platform={}/{}",
+                std::env::consts::OS,
+                std::env::consts::ARCH
+            ),
             format!("workspace={}", workspace.display()),
             format!("timeout_secs={}", request.timeout_secs),
             format!("containment={}", containment.describe()),

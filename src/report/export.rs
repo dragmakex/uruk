@@ -158,7 +158,7 @@ enum ResearchLine {
     },
     Match(Match),
     Decision(Decision),
-    Experiment(Experiment),
+    Experiment(Box<Experiment>),
     Cluster(Cluster),
     Feedback(Feedback),
 }
@@ -239,7 +239,7 @@ pub async fn export_run(store: &Store, run_id: &RunId) -> Result<Export> {
         lines.push(ResearchLine::Decision(d.clone()));
     }
     for e in &experiments {
-        lines.push(ResearchLine::Experiment(e.clone()));
+        lines.push(ResearchLine::Experiment(Box::new(e.clone())));
     }
     for c in &clusters {
         lines.push(ResearchLine::Cluster(c.clone()));
@@ -940,6 +940,24 @@ async fn build_report(
     s.push_str("\n\n");
 
     let experiments = store.list_experiments(run_id).await?;
+    let verifications: Vec<_> = experiments
+        .iter()
+        .filter_map(|e| e.reproduction.as_ref().map(|r| (e, r)))
+        .collect();
+    if !verifications.is_empty() {
+        s.push_str("### Verification verdicts\n\n");
+        s.push_str("A replay compares complete stdout under the recorded recipe and fingerprints. It is not independent corroboration and does not automatically change claim support.\n\n");
+        for (experiment, reproduction) in verifications {
+            s.push_str(&format!(
+                "- `{}` replays `{}`: **{}**. {}\n",
+                experiment.id,
+                reproduction.original_experiment_id,
+                reproduction.verdict.as_str(),
+                reproduction.reason,
+            ));
+        }
+        s.push('\n');
+    }
     let executed: Vec<_> = experiments
         .iter()
         .filter(|e| e.execution.is_some())
