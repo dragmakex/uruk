@@ -171,12 +171,27 @@ export interface BudgetUsage {
   cost_partially_unknown: boolean;
 }
 
+export interface AssessmentBasis {
+  rationale: string;
+  review_id: string | null;
+  decision_id: string | null;
+  evidence: Array<{
+    id: string;
+    label: string;
+    kind: string;
+    relation: string;
+    claim: string;
+    limits: string | null;
+  }>;
+}
+
 export interface ItemCard {
   id: string;
   kind: string;
   title: string;
   disposition: string;
   assessment: string;
+  assessment_basis: AssessmentBasis | null;
   rating: number | null;
   matches_played: number;
   stale_rating: boolean;
@@ -191,6 +206,7 @@ export interface RunSnapshot {
   stats: Stats;
   usage: BudgetUsage;
   items: ItemCard[];
+  ranking_baseline: { iteration: number; ratings: Record<string, number> } | null;
 }
 
 export interface RunOverview {

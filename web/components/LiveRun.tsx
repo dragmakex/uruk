@@ -20,6 +20,7 @@ import { moveSentence } from "@/lib/handoff";
 import { roleLabel } from "@/lib/roles";
 import { DecisionLedger } from "./DecisionLedger";
 import { RankingList } from "./RankingList";
+import { RankedOverview } from "./RankedOverview";
 import { RunCommandStrip } from "./RunCommandStrip";
 import { Topology } from "./Topology";
 import { TournamentFeed } from "./TournamentFeed";
@@ -261,14 +262,14 @@ export function LiveRun({
                 variant="primary"
                 size="cta"
               >
-                Read the report
+                Human report
               </Button>
               <Button
-                href={`/runs/${encodeURIComponent(run.id)}/citations`}
+                href={`/api/runs/${encodeURIComponent(run.id)}/report.json`}
                 variant="outline"
                 size="cta"
               >
-                Inspect citations
+                Agent report
               </Button>
             </ButtonGroup>
           </div>
@@ -344,6 +345,7 @@ export function LiveRun({
             that is not there. */}
         {!onQueue && (
           <>
+            <RankedOverview snapshot={snapshot} />
             <div className="fig-row">
               <span className="micro">
                 Fig. run {shortRunId(run.id)}, {roundLabel(run.state, run.iterations, goal.budget.max_iterations)}

@@ -272,6 +272,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/runs/{run_id}/report", get(routes::report))
         .route("/api/runs/{run_id}/report.pdf", get(routes::report_pdf))
         .route("/api/runs/{run_id}/report.md", get(routes::report_markdown))
+        .route("/api/runs/{run_id}/report.json", get(routes::report_agent))
         .route("/api/runs/{run_id}/sources", get(routes::sources))
         .route("/api/runs/{run_id}/tournament", get(routes::tournament))
         .route("/api/runs/{run_id}/decisions", get(routes::decisions))

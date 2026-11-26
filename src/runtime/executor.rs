@@ -510,6 +510,12 @@ async fn run_meta_review(ctx: &AgentContext, task: &Task, batch: &mut RecordBatc
 /// experiment plus evidence linked as `context` to the target claim: its
 /// bearing on the claim is for a later review to judge, never assumed.
 async fn run_tool(ctx: &AgentContext, task: &Task, batch: &mut RecordBatch) -> Result<()> {
+    if task.strategy == "verify" {
+        return super::verification::run(ctx, task, batch).await;
+    }
+    if task.strategy != "exec" {
+        return Err(Error::validation("unknown tool strategy"));
+    }
     let payload = task
         .payload
         .as_ref()
@@ -557,6 +563,7 @@ async fn run_tool(ctx: &AgentContext, task: &Task, batch: &mut RecordBatch) -> R
         analysis_method: request.command_line(),
         required_permissions: vec!["execute".into(), format!("tool:{}", request.program)],
         execution: Some(outcome.record.clone()),
+        reproduction: None,
         evidence_ids,
         contributor: None,
         collection_context: Some(outcome.containment.clone()),

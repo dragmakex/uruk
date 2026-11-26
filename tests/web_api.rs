@@ -1095,6 +1095,43 @@ async fn report_markdown_download_of_an_unexported_run_is_not_found() {
 }
 
 #[tokio::test]
+async fn agent_report_download_serves_the_exact_export_with_private_headers() {
+    let (app, fixture) = seeded_app(Mode::Task).await;
+    uruk::report::export_run(&fixture.store, &fixture.run_id)
+        .await
+        .unwrap();
+    let canonical = tokio::fs::read(
+        fixture
+            .store
+            .run_dir(&fixture.run_id)
+            .join("AGENT_REPORT.json"),
+    )
+    .await
+    .unwrap();
+    let response = app
+        .oneshot(get(&format!("/api/runs/{}/report.json", fixture.run_id)))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(header(&response, "content-type"), "application/json");
+    assert_eq!(header(&response, "cache-control"), "private, no-store");
+    assert_eq!(header(&response, "x-content-type-options"), "nosniff");
+    assert!(header(&response, "content-disposition").contains("attachment;"));
+    assert_eq!(body_bytes(response).await, canonical);
+}
+
+#[tokio::test]
+async fn agent_report_of_an_unexported_run_is_not_found() {
+    let (app, fixture) = seeded_app(Mode::Task).await;
+    let response = app
+        .oneshot(get(&format!("/api/runs/{}/report.json", fixture.run_id)))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(body_json(response).await["kind"], "not_found");
+}
+
+#[tokio::test]
 async fn report_download_ids_cannot_traverse_outside_the_runs_directory() {
     // A traversal-shaped id must be answered exactly like a missing run,
     // before any filesystem path is formed from it.
@@ -1102,6 +1139,7 @@ async fn report_download_ids_cannot_traverse_outside_the_runs_directory() {
     for uri in [
         "/api/runs/..%2F..%2F..%2Fetc%2Fpasswd/report.pdf",
         "/api/runs/..%2F..%2F..%2Fetc%2Fpasswd/report.md",
+        "/api/runs/..%2F..%2F..%2Fetc%2Fpasswd/report.json",
     ] {
         let response = app.clone().oneshot(get(uri)).await.unwrap();
         assert_eq!(

@@ -177,6 +177,12 @@ async fn campaign_runs_the_discovery_loop() {
     // Snapshots were recorded for scheduler feedback (SPEC §6).
     let snapshots = f.store.list_snapshots(&f.run_id).await.unwrap();
     assert!(snapshots.len() >= 2);
+    assert!(snapshots.iter().all(|snapshot| snapshot.ratings.is_some()));
+    assert!(
+        snapshots
+            .iter()
+            .any(|snapshot| !snapshot.ratings.as_ref().unwrap().is_empty())
+    );
     assert!(snapshots.iter().any(|s| !s.outcomes_by_strategy.is_empty()));
 
     // The export is complete and honest.

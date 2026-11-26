@@ -105,8 +105,20 @@ export default async function ReportPage({
   return (
     <div className="canvas canvas-narrow">
       <div className="page-head">
-        <h1>Report, run {shortRunId(report.run_id)}</h1>
+        <h1>Human report, run {shortRunId(report.run_id)}</h1>
         <div className="report-actions">
+          <Button
+            href={`/runs/${encodeURIComponent(report.run_id)}/report`}
+            variant="primary" size="sm" aria-current="page"
+          >
+            Human report
+          </Button>
+          <Button
+            href={`/api/runs/${encodeURIComponent(report.run_id)}/report.json`}
+            variant="outline" size="sm"
+          >
+            Agent report
+          </Button>
           <Button
             href={`/runs/${encodeURIComponent(report.run_id)}/citations`}
             variant="outline" size="sm"

@@ -107,6 +107,26 @@ describe("parseDecisionLedger", () => {
 });
 
 describe("parseRunSnapshot", () => {
+  it("requires the assessment basis and validates named evidence", () => {
+    const fixture = snapshotFixture() as { items: Array<Record<string, unknown>> };
+    delete fixture.items[0]!.assessment_basis;
+    expect(() => parseRunSnapshot(fixture)).toThrow(/assessment_basis/);
+    fixture.items[0]!.assessment_basis = { rationale: "Measured", review_id: "rev_1", decision_id: null,
+      evidence: [{ id: "ev_1", kind: "computational_result", label: 7, relation: "supports", claim: "The mean is positive", limits: null }] };
+    expect(() => parseRunSnapshot(fixture)).toThrow(/evidence\[0\].label/);
+    fixture.items[0]!.assessment_basis = null;
+    expect(parseRunSnapshot(fixture).items[0]!.assessment_basis).toBeNull();
+  });
+  it("requires a truthful round baseline and validates each rating", () => {
+    const fixture = snapshotFixture() as Record<string, unknown>;
+    delete fixture.ranking_baseline;
+    expect(() => parseRunSnapshot(fixture)).toThrow(/ranking_baseline/);
+    fixture.ranking_baseline = { iteration: 1, ratings: { item_h7: "1412" } };
+    expect(() => parseRunSnapshot(fixture)).toThrow(/ratings.item_h7/);
+    fixture.ranking_baseline = null;
+    expect(parseRunSnapshot(fixture).ranking_baseline).toBeNull();
+  });
+
   it("accepts a complete snapshot and keeps every fact", () => {
     const snap = parseRunSnapshot(snapshotFixture());
     expect(snap.run.id).toBe("run_0412aa");

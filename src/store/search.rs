@@ -83,7 +83,8 @@ impl Store {
         stored_work(row)
     }
 
-    /// Works for a run, best fused score first, ties by work_key.
+    /// Works for a run, best recorded retrieval score first, ties by work_key.
+    /// Legacy works without reranking retain their original RRF order.
     pub async fn list_works(&self, run_id: &RunId) -> Result<Vec<StoredWork>> {
         let rows = sqlx::query(
             "SELECT body, rrf_score, source_id, created_at FROM works
@@ -92,7 +93,24 @@ impl Store {
         .bind(run_id.as_str())
         .fetch_all(self.pool())
         .await?;
-        rows.into_iter().map(stored_work).collect()
+        let mut works = rows
+            .into_iter()
+            .map(stored_work)
+            .collect::<Result<Vec<_>>>()?;
+        works.sort_by(|a, b| {
+            let score = |w: &StoredWork| {
+                w.work
+                    .retrieval
+                    .as_ref()
+                    .map(|r| r.score)
+                    .or(w.rrf_score)
+                    .unwrap_or(0.0)
+            };
+            score(b)
+                .total_cmp(&score(a))
+                .then_with(|| a.work.work_key.cmp(&b.work.work_key))
+        });
+        Ok(works)
     }
 
     /// Update a search record in place, addressed by the `id` inside its

@@ -69,6 +69,15 @@ afterEach(async () => {
 });
 
 describe("LiveRun", () => {
+  it("puts the top-five result before the topology", () => {
+    render(<LiveRun runId="run_0412aa" initial={initial} />);
+    const overview = screen.getByRole("region", { name: "Top five candidates" });
+    const topology = screen.getByRole("heading", { name: "Supervisor" });
+    expect(overview.compareDocumentPosition(topology) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(overview).toHaveTextContent("1,412");
+    expect(overview).toHaveTextContent("+16");
+  });
+
   it("renders the header facts and topology from the initial snapshot", () => {
     render(<LiveRun runId="run_0412aa" initial={initial} />);
 
@@ -116,7 +125,7 @@ describe("LiveRun", () => {
     expect(screen.queryByText(/deliverable satisfied/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: "Read the report" }),
+      screen.getByRole("link", { name: "Human report" }),
     ).toBeInTheDocument();
     expect(source!.closed).toBe(true);
   });
@@ -147,8 +156,13 @@ describe("LiveRun", () => {
       source.emit("end", "{}");
     });
 
-    const report = screen.getByRole("link", { name: "Read the report" });
-    const citations = screen.getByRole("link", { name: "Inspect citations" });
+    const report = screen.getByRole("link", { name: "Human report" });
+    const citations = screen.getByRole("link", { name: "Agent report" });
+    expect(report.textContent).toBe("Human report");
+    expect(citations.textContent).toBe("Agent report");
+    expect(report).toHaveAttribute("href", "/runs/run_0412aa/report");
+    expect(citations).toHaveAttribute("href", "/api/runs/run_0412aa/report.json");
+    expect(screen.queryByRole("link", { name: "Read the report" })).not.toBeInTheDocument();
     const sizeOf = (el: HTMLElement) =>
       [...el.classList].find((c) => /^btn--(xs|sm|md|cta)$/.test(c));
     expect(sizeOf(report)).toBe("btn--cta");
@@ -232,7 +246,8 @@ describe("LiveRun queue and provider-wait states", () => {
     expect(banner).toHaveTextContent(/2 runs ahead/);
     expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
     expect(screen.queryByText(/failed/i)).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Read the report" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Human report" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Agent report" })).not.toBeInTheDocument();
   });
 
   it("shows the provider wait on a running head and keeps Stop", async () => {
