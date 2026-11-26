@@ -14,10 +14,30 @@ pub struct ItemSummary {
     pub title: String,
     pub disposition: String,
     pub assessment: Assessment,
+    pub assessment_basis: Option<AssessmentBasis>,
     pub rating: Option<f64>,
     pub matches_played: u32,
     pub stale_rating: bool,
     pub review_count: u32,
+}
+
+/// Provenance of the assessment, not every evidence link ever attached to an item.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AssessmentBasis {
+    pub rationale: String,
+    pub review_id: Option<ReviewId>,
+    pub decision_id: Option<DecisionId>,
+    pub evidence: Vec<AssessmentEvidence>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AssessmentEvidence {
+    pub id: EvidenceId,
+    pub label: String,
+    pub kind: EvidenceKind,
+    pub relation: EvidenceRelation,
+    pub claim: String,
+    pub limits: Option<String>,
 }
 
 /// One row of the run listing: run lifecycle facts plus the current goal.
@@ -347,6 +367,21 @@ impl Store {
             .collect())
     }
 
+    /// The latest committed assessment and the exact evidence it considered.
+    pub async fn current_assessment_record(
+        &self,
+        item_id: &ItemId,
+    ) -> Result<Option<AssessmentRecord>> {
+        let body: Option<String> = sqlx::query_scalar(
+            "SELECT body FROM assessments WHERE item_id = ? ORDER BY id DESC LIMIT 1",
+        )
+        .bind(item_id.as_str())
+        .fetch_optional(self.pool())
+        .await?;
+        body.map(|body| Ok(serde_json::from_str(&body)?))
+            .transpose()
+    }
+
     /// Current assessment of an item: the most recent recorded one.
     pub async fn current_assessment(&self, item_id: &ItemId) -> Result<Assessment> {
         let s: Option<String> = sqlx::query_scalar(
@@ -621,11 +656,62 @@ impl Store {
     ) -> Result<Vec<ItemSummary>> {
         let items = self.list_items(run_id).await?;
         let counts = self.review_counts(run_id).await?;
+        let evidence: BTreeMap<_, _> = self
+            .list_evidence(run_id)
+            .await?
+            .into_iter()
+            .map(|e| (e.id.clone(), e))
+            .collect();
+        let sources: BTreeMap<_, _> = self
+            .list_sources(run_id)
+            .await?
+            .into_iter()
+            .map(|s| (s.id.clone(), s.title.unwrap_or_else(|| s.id.to_string())))
+            .collect();
         let mut out = Vec::with_capacity(items.len());
 
         for item in items {
             let disposition = self.get_disposition(&item.id).await?;
-            let assessment = self.current_assessment(&item.id).await?;
+            let record = self.current_assessment_record(&item.id).await?;
+            let assessment = record
+                .as_ref()
+                .map_or(Assessment::Untested, |r| r.assessment);
+            let assessment_basis = record
+                .map(|record| -> Result<AssessmentBasis> {
+                    let named = record
+                        .evidence
+                        .iter()
+                        .map(|link| -> Result<AssessmentEvidence> {
+                            let e = evidence.get(&link.evidence_id).ok_or_else(|| {
+                                Error::validation("assessment evidence is not recorded by this run")
+                            })?;
+                            let titles: Vec<_> = e
+                                .source_ids
+                                .iter()
+                                .filter_map(|id| sources.get(id).cloned())
+                                .collect();
+                            Ok(AssessmentEvidence {
+                                id: e.id.clone(),
+                                label: if titles.is_empty() {
+                                    e.method.clone()
+                                } else {
+                                    titles.join("; ")
+                                },
+                                kind: e.kind,
+                                relation: link.relation,
+                                claim: link.claim.clone(),
+                                limits: link.limits.clone(),
+                            })
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    Ok(AssessmentBasis {
+                        rationale: record.rationale,
+                        review_id: record.basis_review,
+                        decision_id: record.basis_decision,
+                        evidence: named,
+                    })
+                })
+                .transpose()?;
             let rating = match rubric_id {
                 Some(rid) => self.get_rating(&item.id, rid).await?,
                 None => None,
@@ -638,6 +724,7 @@ impl Store {
                 title: item.title.clone(),
                 disposition: disposition.as_str().to_string(),
                 assessment,
+                assessment_basis,
                 rating: rating.as_ref().map(|r| r.rating),
                 matches_played: rating.as_ref().map(|r| r.matches_played).unwrap_or(0),
                 stale_rating: rating.as_ref().map(|r| r.stale).unwrap_or(false),

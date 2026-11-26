@@ -1,6 +1,7 @@
 import type { RunSnapshot } from "@/lib/types";
 import { formatDelta } from "@/lib/format";
 import "./ranked-overview.css";
+import { EvidenceBadge } from "./EvidenceBadge";
 
 /** A bounded view of the service's ranking, never a second client-side sort. */
 export function RankedOverview({ snapshot }: { snapshot: RunSnapshot }) {
@@ -26,11 +27,7 @@ export function RankedOverview({ snapshot }: { snapshot: RunSnapshot }) {
                   : item.rating.toLocaleString("en-US", { maximumFractionDigits: 0 })}</span>
                 <h3>{item.title}</h3>
                 <span className="micro">{delta === null ? "Δ unavailable" : `Δ ${formatDelta(delta)}`}{item.stale_rating ? " (stale)" : ""}</span>
-                <span className="overview-assessment" title={item.assessment === "supported"
-                  ? "The recorded assessment passed the claim-relevant evidence gate; Elo cannot promote a claim."
-                  : "This is the recorded scientific assessment, independent of Elo."}>
-                  {item.assessment === "supported" ? "supported / evidence-backed" : item.assessment}
-                </span>
+                <EvidenceBadge item={item} />
               </li>
             );
           })}

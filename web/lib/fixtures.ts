@@ -110,6 +110,7 @@ export function snapshotFixture(): unknown {
         title: "XBP1 splicing escape",
         disposition: "active",
         assessment: "plausible",
+        assessment_basis: { rationale: "The proposed mechanism survived initial review but has no direct validation.", review_id: "rev_fixture", decision_id: null, evidence: [] },
         rating: 1412.2,
         matches_played: 9,
         stale_rating: false,

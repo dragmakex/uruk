@@ -749,6 +749,7 @@ mod tests {
             title: id.to_string(),
             disposition: "active".into(),
             assessment: Assessment::Untested,
+            assessment_basis: None,
             rating,
             matches_played: 0,
             stale_rating: false,

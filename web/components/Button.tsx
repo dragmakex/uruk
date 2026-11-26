@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { AnchorHTMLAttributes, ButtonHTMLAttributes, ReactNode } from "react";
+import type { AnchorHTMLAttributes, ButtonHTMLAttributes, ReactNode, Ref } from "react";
 
 /** Colour treatment. A variant never changes a control's box. */
 export type ButtonVariant = "primary" | "outline";
@@ -24,7 +24,7 @@ type Owned = "className" | "style" | "children";
 
 /** A native `<button>`; defaults to `type="button"` so forms are opted into. */
 export type NativeButtonProps = Appearance &
-  Omit<ButtonHTMLAttributes<HTMLButtonElement>, Owned>;
+  Omit<ButtonHTMLAttributes<HTMLButtonElement>, Owned> & { ref?: Ref<HTMLButtonElement> };
 
 /**
  * A link styled as a button. App routes navigate through the client router;
