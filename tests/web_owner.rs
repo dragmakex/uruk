@@ -382,6 +382,7 @@ mod owner_isolation {
             format!("/api/runs/{run_id}/report"),
             format!("/api/runs/{run_id}/report.pdf"),
             format!("/api/runs/{run_id}/report.md"),
+            format!("/api/runs/{run_id}/report.json"),
             format!("/api/runs/{run_id}/sources"),
             format!("/api/runs/{run_id}/passages?q=drift"),
             format!("/api/runs/{run_id}/events"),

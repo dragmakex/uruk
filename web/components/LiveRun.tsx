@@ -262,14 +262,14 @@ export function LiveRun({
                 variant="primary"
                 size="cta"
               >
-                Read the report
+                Human report
               </Button>
               <Button
-                href={`/runs/${encodeURIComponent(run.id)}/citations`}
+                href={`/api/runs/${encodeURIComponent(run.id)}/report.json`}
                 variant="outline"
                 size="cta"
               >
-                Inspect citations
+                Agent report
               </Button>
             </ButtonGroup>
           </div>

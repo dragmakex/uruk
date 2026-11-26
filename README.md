@@ -142,6 +142,7 @@ to branch on without parsing prose.
   manifest.json     identity, versions, providers, permissions, usage, artifact hashes
   REPORT.md         the deliverable with claim provenance, or a labelled partial result
   REPORT.pdf        the same report rendered deterministically to PDF, no model call
+  AGENT_REPORT.json machine-readable audit snapshot, top candidate IDs, exact human report
   research.jsonl    items, evidence, reviews, decisions, experiments, lineage
   sources.jsonl     source provenance, citation locators, and search records
   works.jsonl       every work found by literature search, with RRF score and per-connector ranks
@@ -153,6 +154,15 @@ Reports are derived from persisted records and need no model call, so a stop
 request or crash still yields a labelled partial report. The final deliverable
 draws on a reserved slice of the model-call budget; when it cannot run, the
 report says why.
+
+The **Human report** button opens a readable explanation of up to five active
+ranked candidates: the recorded claim and mechanism, evidence and limitations,
+review objections, and next tests. Missing candidates or validation are stated,
+not invented. **Agent report** downloads format-v1 JSON with the manifest,
+research records and assessment bases, sources, discovered works and search
+records, and exact human Markdown. The human template is v2; the five required
+top-level sections remain unchanged. The JSON download is owner-scoped and
+requires a new export (legacy exports are not regenerated on GET).
 
 ## What the design protects
 

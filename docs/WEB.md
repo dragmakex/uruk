@@ -231,6 +231,7 @@ cannot quietly skip the check.
 | `GET /api/runs/{id}/report` | exported `REPORT.md` + `manifest.json` |
 | `GET /api/runs/{id}/report.pdf` | `REPORT.pdf` download (derived on demand for pre-PDF exports) |
 | `GET /api/runs/{id}/report.md` | `REPORT.md` download, canonical bytes verbatim |
+| `GET /api/runs/{id}/report.json` | `AGENT_REPORT.json` download, structured persisted audit snapshot |
 | `GET /api/runs/{id}/sources` | the run's recorded sources |
 | `GET /api/runs/{id}/sources/{sid}` | one source with its indexed passage count |
 | `GET /api/runs/{id}/sources/{sid}/passages` | browse (`offset`/`limit`) or search (`q`) one source's passages |
@@ -254,6 +255,25 @@ does not exist. Source-scoped routes additionally require the source to
 belong to that run — both constraints live in the SQL queries themselves
 (and in the `OwnedSource` extractor), never in a post-fetch check, so a
 foreign run, a foreign source, and a nonexistent one are indistinguishable.
+
+### Human and agent reports
+
+Finished runs offer **Human report** (the rendered canonical Markdown) and
+**Agent report** (a JSON download). The human report explains up to five active
+hypotheses/proposals in the live ranking order: current-rubric Elo descending,
+unrated last, ties by immutable item ID. Each includes its recorded claim,
+mechanism, scope, assumptions, predictions, falsifiers, evidence relations and
+limits, review objections/unknowns, and proposed validation or next actions.
+Fewer candidates, absent validation, unknown cost, stale Elo, and partial runs
+are stated explicitly. Ranking is not scientific confirmation.
+
+Agent format v1 contains `manifest`, `top_finding_ids`, `research_records`
+(including current assessment records), `sources`, `works`, `searches`, and
+the exact `human_report_markdown`. Exports are deterministic and make no model
+calls. Both downloads require ownership and use `private, no-store` and
+`nosniff` headers. The JSON route serves the saved file and returns `not_found`
+when it has not been exported; old exports need an explicit engine re-export
+to gain this file. GET never runs work or silently regenerates an export.
 
 ### The library explorer and honest citations
 

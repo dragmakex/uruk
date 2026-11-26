@@ -1,4 +1,4 @@
-//! Build `manifest.json`, `REPORT.md`, `research.jsonl`, and `sources.jsonl`.
+//! Build the human report and structured agent export from persisted records.
 
 use crate::Result;
 use crate::agents::outputs::{ClaimBasis, SynthesisOutput};
@@ -11,7 +11,7 @@ use std::path::PathBuf;
 /// Version of the fixed `REPORT.md` template contract. Bump it whenever
 /// the section skeleton below changes shape, so consumers of exported
 /// reports can detect which contract a file follows.
-pub const REPORT_TEMPLATE_VERSION: u32 = 1;
+pub const REPORT_TEMPLATE_VERSION: u32 = 2;
 
 /// The canonical section headings, in the fixed order every report uses.
 /// `build_report` emits exactly these, exactly once, exactly in this
@@ -143,8 +143,9 @@ struct PromptManifest {
 enum ResearchLine {
     Item {
         #[serde(flatten)]
-        item: ResearchItem,
+        item: Box<ResearchItem>,
         assessment: String,
+        assessment_record: Option<AssessmentRecord>,
         disposition: String,
         rating: Option<f64>,
         matches_played: u32,
@@ -211,6 +212,7 @@ pub async fn export_run(store: &Store, run_id: &RunId) -> Result<Export> {
             None => None,
         };
         lines.push(ResearchLine::Item {
+            assessment_record: store.current_assessment_record(&item.id).await?,
             assessment: store
                 .current_assessment(&item.id)
                 .await?
@@ -220,7 +222,7 @@ pub async fn export_run(store: &Store, run_id: &RunId) -> Result<Export> {
             rating: rating.as_ref().map(|r| r.rating),
             matches_played: rating.as_ref().map(|r| r.matches_played).unwrap_or(0),
             stale_rating: rating.as_ref().map(|r| r.stale).unwrap_or(false),
-            item: item.clone(),
+            item: Box::new(item.clone()),
         });
     }
     for r in &reviews {
@@ -440,7 +442,8 @@ pub async fn export_run(store: &Store, run_id: &RunId) -> Result<Export> {
     files.push("manifest.json".into());
 
     // --- REPORT.md ---
-    let report = build_report(store, run_id, &run, &goal, &plan, &manifest, &artifacts).await?;
+    let (report, top_finding_ids) =
+        build_report(store, run_id, &run, &goal, &plan, &manifest, &artifacts).await?;
     write_atomic(&dir.join("REPORT.md"), report.as_bytes()).await?;
     files.push("REPORT.md".into());
 
@@ -450,6 +453,25 @@ pub async fn export_run(store: &Store, run_id: &RunId) -> Result<Export> {
     let pdf = crate::report::render_report_pdf(&report);
     write_atomic(&dir.join("REPORT.pdf"), &pdf).await?;
     files.push("REPORT.pdf".into());
+
+    // One owner-scoped, self-contained machine-readable snapshot. The human
+    // prose is the exact canonical markdown, never a second model's rewrite.
+    let agent_report = serde_json::json!({
+        "format_version": 1,
+        "manifest": manifest,
+        "top_finding_ids": top_finding_ids,
+        "research_records": lines,
+        "sources": sources,
+        "works": works,
+        "searches": search_records,
+        "human_report_markdown": report,
+    });
+    write_atomic(
+        &dir.join("AGENT_REPORT.json"),
+        serde_json::to_vec_pretty(&agent_report)?.as_slice(),
+    )
+    .await?;
+    files.push("AGENT_REPORT.json".into());
 
     Ok(Export {
         dir,
@@ -482,7 +504,7 @@ async fn build_report(
     plan: &Option<Plan>,
     manifest: &Manifest,
     artifacts: &[Artifact],
-) -> Result<String> {
+) -> Result<(String, Vec<ItemId>)> {
     let tasks = store.list_tasks(run_id).await?;
     let tasks = tasks.as_slice();
     let mut s = String::new();
@@ -601,6 +623,10 @@ async fn build_report(
     // 2. Established results, Urukai's interpretations, and untested proposals.
     s.push_str(REPORT_SECTIONS[1]);
     s.push_str("\n\n");
+
+    let (count, findings) = super::findings::collect(store, run_id, plan.as_ref()).await?;
+    s.push_str(&super::findings::render(count, &findings));
+    let top_finding_ids = findings.iter().map(|f| f.id().clone()).collect();
 
     let items = store.list_items(run_id).await?;
     let syntheses: Vec<_> = items
@@ -1007,7 +1033,7 @@ async fn build_report(
         manifest.state_as_of
     ));
 
-    Ok(s)
+    Ok((s, top_finding_ids))
 }
 
 /// Connector names enabled by the permissions (network plus allowlist).

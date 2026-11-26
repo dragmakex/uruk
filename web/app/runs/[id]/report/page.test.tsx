@@ -37,6 +37,8 @@ describe("ReportPage", () => {
     expect(
       screen.getByRole("link", { name: "Download Markdown" }),
     ).toHaveAttribute("href", "/api/runs/run_abc/report.md");
+    expect(screen.getByRole("link", { name: "Human report" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "Agent report" })).toHaveAttribute("href", "/api/runs/run_abc/report.json");
     expect(
       screen.getByRole("heading", { level: 2, name: "2. Findings" }),
     ).toBeInTheDocument();
