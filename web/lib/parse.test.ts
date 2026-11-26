@@ -67,7 +67,7 @@ describe("parseDecisionLedger", () => {
 
   it("keeps the actor, reason and references of every decision", () => {
     const ledger = parseDecisionLedger({
-      run_id: "run_1",
+      run_id: "run_1", total: 2, offset: 0, limit: 5, through: 2,
       decisions: [one, { ...one, id: "decision_2", actor: "reflection", referenced: [] }],
     });
     expect(ledger.run_id).toBe("run_1");
@@ -79,7 +79,7 @@ describe("parseDecisionLedger", () => {
 
   it("keeps an unrecognised kind verbatim rather than dropping the row", () => {
     const ledger = parseDecisionLedger({
-      run_id: "run_1",
+      run_id: "run_1", total: 1, offset: 0, limit: 5, through: 1,
       decisions: [{ ...one, kind: "evidence_replan" }],
     });
     expect(ledger.decisions[0]?.kind).toBe("evidence_replan");
@@ -88,21 +88,21 @@ describe("parseDecisionLedger", () => {
   it("rejects a decision without a reason, because the reason is the point", () => {
     const { reason: _reason, ...withoutReason } = one;
     expect(() =>
-      parseDecisionLedger({ run_id: "run_1", decisions: [withoutReason] }),
+      parseDecisionLedger({ run_id: "run_1", total: 1, offset: 0, limit: 5, through: 1, decisions: [withoutReason] }),
     ).toThrow(ParseError);
   });
 
   it("rejects a non-string reference instead of stringifying it", () => {
     expect(() =>
       parseDecisionLedger({
-        run_id: "run_1",
+        run_id: "run_1", total: 1, offset: 0, limit: 5, through: 1,
         decisions: [{ ...one, referenced: [7] }],
       }),
     ).toThrow(ParseError);
   });
 
   it("accepts an empty ledger: a run can start without deciding anything", () => {
-    expect(parseDecisionLedger({ run_id: "run_1", decisions: [] }).decisions).toEqual([]);
+    expect(parseDecisionLedger({ run_id: "run_1", total: 0, offset: 0, limit: 5, through: 0, decisions: [] }).decisions).toEqual([]);
   });
 });
 
@@ -724,8 +724,8 @@ describe("parseTournamentFeed", () => {
     const feed = parseTournamentFeed(tournamentFixture());
     expect(feed.run_id).toBe("run_0412aa");
     expect(feed.matches).toHaveLength(2);
-    const decided = feed.matches[0]!;
-    const declined = feed.matches[1]!;
+    const decided = feed.matches[1]!;
+    const declined = feed.matches[0]!;
     expect(decided.outcome).toBe("win_a");
     expect(decided.first.rating_before).toBe(1200);
     expect(decided.first.rating_after).toBe(1216);
@@ -764,6 +764,6 @@ describe("parseTournamentFeed", () => {
 
   it("rejects a feed that is not an object with a matches array", () => {
     expect(() => parseTournamentFeed(null)).toThrow(ParseError);
-    expect(() => parseTournamentFeed({ run_id: "run_0412aa" })).toThrow(/matches/);
+    expect(() => parseTournamentFeed({ run_id: "run_0412aa", total: 0, offset: 0, limit: 5, through: 0 })).toThrow(/matches/);
   });
 });

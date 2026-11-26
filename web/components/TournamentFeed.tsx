@@ -1,17 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { fetchTournament } from "@/lib/api";
 import { formatDelta, formatElo, formatModelIdentity } from "@/lib/format";
-import {
-  RECORD_PAGE_SIZE,
-  RecordTableControls,
-  RecordTablePager,
-} from "./RecordTableControls";
+import { LazyRecordPanel } from "./LazyRecordPanel";
 import type {
   MatchMethod,
   MatchOutcome,
-  TournamentFeed as Feed,
   TournamentMatch,
   TournamentSide,
 } from "@/lib/types";
@@ -27,34 +21,6 @@ const METHOD_LABEL: Record<MatchMethod, string> = {
   pairwise: "one-turn comparison",
   debate: "multi-turn debate",
 };
-
-/**
- * The recorded match log, refetched whenever the snapshot's match count
- * changes. The stream carries facts, not judgements: the log is a second
- * read, so a failed read leaves the log absent rather than invented.
- */
-function useMatchLog(runId: string, knownMatches: number) {
-  const [feed, setFeed] = useState<Feed | null>(null);
-  const [unavailable, setUnavailable] = useState(false);
-
-  useEffect(() => {
-    let live = true;
-    fetchTournament(runId)
-      .then((next) => {
-        if (!live) return;
-        setFeed(next);
-        setUnavailable(false);
-      })
-      .catch(() => {
-        if (live) setUnavailable(true);
-      });
-    return () => {
-      live = false;
-    };
-  }, [runId, knownMatches]);
-
-  return { feed, unavailable };
-}
 
 /** Which side the verdict favoured, for marking the row. */
 function verdictSide(outcome: MatchOutcome): "first" | "second" | null {
@@ -117,18 +83,26 @@ function MatchCard({
       <div className="match-head">
         <span className="micro-ink">M{String(index).padStart(2, "0")}</span>
         <span className="micro">{METHOD_LABEL[match.method]}</span>
-        <span className="micro">judge {formatModelIdentity(match.judge_model)}</span>
+        <span className="micro">
+          judge {formatModelIdentity(match.judge_model)}
+        </span>
         {match.order_randomized && (
           <span className="micro" title="The pair was shuffled before judging.">
             order hidden
           </span>
         )}
-        <span className="micro match-verdict">{OUTCOME_LABEL[match.outcome]}</span>
+        <span className="micro match-verdict">
+          {OUTCOME_LABEL[match.outcome]}
+        </span>
       </div>
 
       <ol className="match-sides" aria-label="Sides">
         <SideRow side={match.first} mark={markFor("first")} position="first" />
-        <SideRow side={match.second} mark={markFor("second")} position="second" />
+        <SideRow
+          side={match.second}
+          mark={markFor("second")}
+          position="second"
+        />
       </ol>
 
       <p className="match-rationale">{match.rationale}</p>
@@ -160,71 +134,34 @@ export function TournamentFeed({
   runId: string;
   matchCount: number;
 }) {
-  const { feed, unavailable } = useMatchLog(runId, matchCount);
-  const [open, setOpen] = useState(false);
-  const [requestedPage, setRequestedPage] = useState(1);
-  const matches = feed?.matches ?? [];
-  const ordered = [...matches].reverse();
-  const totalPages = Math.max(1, Math.ceil(ordered.length / RECORD_PAGE_SIZE));
-  const page = Math.min(requestedPage, totalPages);
-  const pageStart = (page - 1) * RECORD_PAGE_SIZE;
-  const visibleMatches = ordered.slice(pageStart, pageStart + RECORD_PAGE_SIZE);
-
-  if (matches.length === 0) {
-    if (unavailable) {
-      return (
-        <p className="micro">
-          The match log could not be read. Matches are still being recorded;
-          this panel will fill in when the API answers.
-        </p>
-      );
-    }
-    if (feed === null) {
-      return (
-        <p className="micro" aria-busy="true">
-          Reading the match log.
-        </p>
-      );
-    }
-    return (
-      <p className="micro">
-        No matches yet. The ranking agent plays comparisons once two
-        candidates are ready to face each other.
-      </p>
-    );
-  }
-
-  // Newest first: the last match played is the one worth watching, and
-  // revision order (not the match id) is the honest order.
   return (
-    <div className="record-table-shell">
-      <RecordTableControls
-        label="match log"
-        summary={`${matches.length} ${matches.length === 1 ? "match" : "matches"} recorded`}
-        open={open}
-        controls="match-log-table"
-        onToggle={() => setOpen((visible) => !visible)}
-      />
-
-      <div id="match-log-table" hidden={!open}>
-        <ol id="match-log-list" className="match-log" aria-label="Match log">
-          {visibleMatches.map((match, index) => (
-            <MatchCard
-              key={match.id}
-              match={match}
-              index={matches.length - pageStart - index}
-              fresh={page === 1 && index === 0 && matchCount > 0}
-            />
-          ))}
-        </ol>
-
-        <RecordTablePager
-          label="Match log"
-          page={page}
-          totalPages={totalPages}
-          onPage={setRequestedPage}
-        />
-      </div>
-    </div>
+    <LazyRecordPanel
+      label="match log"
+      pagerLabel="Match log"
+      controls="match-log-table"
+      summary={`${matchCount} ${matchCount === 1 ? "match" : "matches"} recorded`}
+      revision={String(matchCount)}
+      fetchPage={(page, signal) => fetchTournament(runId, page, signal)}
+    >
+      {(feed) =>
+        feed.matches.length === 0 ? (
+          <p className="micro">
+            No matches yet. The ranking agent plays comparisons once two
+            candidates are ready to face each other.
+          </p>
+        ) : (
+          <ol id="match-log-list" className="match-log" aria-label="Match log">
+            {feed.matches.map((match, index) => (
+              <MatchCard
+                key={match.id}
+                match={match}
+                index={feed.total - feed.offset - index}
+                fresh={false}
+              />
+            ))}
+          </ol>
+        )
+      }
+    </LazyRecordPanel>
   );
 }

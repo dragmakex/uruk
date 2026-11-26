@@ -129,6 +129,7 @@ export function snapshotFixture(): unknown {
 export function tournamentFixture(): unknown {
   return {
     run_id: "run_0412aa",
+    total: 2, offset: 0, limit: 5, through: 2,
     matches: [
       {
         id: "match_01",
@@ -180,6 +181,6 @@ export function tournamentFixture(): unknown {
         created_at: "2026-10-04T14:06:40Z",
         produced_by: null,
       },
-    ],
+    ].reverse(),
   };
 }

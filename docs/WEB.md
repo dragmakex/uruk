@@ -225,9 +225,12 @@ cannot quietly skip the check.
 | `GET /api/health` | liveness and version; public, never sets a cookie |
 | `GET /api/runs` | this browser's runs, with goal, state, queue position, and provider wait |
 | `POST /api/runs` | start a run owned by this browser: `{goal, mode?, ranking?, …}`; it is enqueued, not executed at once |
-| `GET /api/runs/{id}` | complete run snapshot (view model) |
+| `GET /api/runs/{id}` | run metadata, counts, agents and bounded leading-five overview |
 | `POST /api/runs/{id}/stop` | durable stop request; works on queued and provider-waiting runs too |
 | `GET /api/runs/{id}/events` | SSE stream of snapshots |
+| `GET /api/runs/{id}/tournament` | requested match-log page, newest first |
+| `GET /api/runs/{id}/decisions` | requested decision page, oldest first |
+| `GET /api/runs/{id}/candidates` | requested candidate page, current-rubric Elo descending, unrated last, ties by ID |
 | `GET /api/runs/{id}/report` | exported `REPORT.md` + `manifest.json` |
 | `GET /api/runs/{id}/report.pdf` | `REPORT.pdf` download (derived on demand for pre-PDF exports) |
 | `GET /api/runs/{id}/report.md` | `REPORT.md` download, canonical bytes verbatim |
@@ -255,6 +258,39 @@ does not exist. Source-scoped routes additionally require the source to
 belong to that run — both constraints live in the SQL queries themselves
 (and in the `OwnedSource` extractor), never in a post-fetch check, so a
 foreign run, a foreign source, and a nonexistent one are indistinguishable.
+
+### On-demand run panels
+
+Match log, Candidates, and Decisions start closed and make no page request
+until **Open**. Each request returns at most five records by default; the
+next page is read only on **Next**, never prefetched. Counts still arrive in
+the live snapshot, but live changes only mark a loaded panel stale. **Refresh**
+explicitly reads a new first page. Closing cancels an unfinished read; an
+unchanged loaded page is retained on close/reopen, while a stale page is
+refetched on Open. Loading and errors never masquerade as an empty record.
+
+All three endpoints accept `offset` (default `0`) and `limit` (default `5`,
+valid `1..=100`). Their response envelopes (`tournament`, `ledger`, and
+`candidates`) include `run_id`, `total`, `offset`, `limit`, `through`, and
+the requested `matches`, `decisions`, or `items`. An out-of-range offset
+resolves to the last actual page, or zero for an empty collection. Unknown
+query fields, malformed numbers, and invalid limits return `validation`.
+Ownership is checked before any page is read.
+
+Histories return an insertion watermark in `through`. Send it unchanged on
+subsequent requests to exclude newly inserted records, including backdated
+ones, while reading older pages. Omit it to refresh. These histories are
+append-only; the watermark is not a persistent bookmark across database
+maintenance or record deletion. Candidates are a mutable ranking, return
+`through: null`, and reject a supplied watermark: each click reads the current
+ordering, not a frozen historical ranking. A live reorder can move candidates
+between pages; use Refresh to restart at the current leader.
+
+Pagination is applied by SQL before record bodies are decoded, with ordered
+history indexes supplied by additive migration 0012. Snapshots/SSE contain
+only the five leading active proposals for the overview and aggregate counts,
+not the full candidate board or either history. Previous-round comparison
+reads only the relevant checkpoint rather than every saved round.
 
 ### Human and agent reports
 

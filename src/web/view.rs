@@ -6,7 +6,7 @@
 
 use crate::Result;
 use crate::records::*;
-use crate::store::{BudgetUsage, ItemSummary, QueueState, Store};
+use crate::store::{BudgetUsage, ItemSummary, PageInfo, PageRequest, QueueState, Store};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
 
@@ -21,7 +21,7 @@ pub struct RunSnapshot {
     pub agents: Vec<AgentPanel>,
     pub stats: Stats,
     pub usage: BudgetUsage,
-    /// Ranking cards: best rating first, unrated last, ties by ID.
+    /// Only the leading five active proposals; the full board is paginated.
     pub items: Vec<ItemSummary>,
     pub ranking_baseline: Option<RankingBaseline>,
 }
@@ -221,16 +221,6 @@ fn supervisor_state(run_state: RunState, open_tasks: u32) -> &'static str {
     }
 }
 
-/// Best rating first, unrated last, ties by ID so the order is stable.
-fn sort_items(items: &mut [ItemSummary]) {
-    items.sort_by(|a, b| match (a.rating, b.rating) {
-        (Some(x), Some(y)) => y.total_cmp(&x).then_with(|| a.id.cmp(&b.id)),
-        (Some(_), None) => std::cmp::Ordering::Less,
-        (None, Some(_)) => std::cmp::Ordering::Greater,
-        (None, None) => a.id.cmp(&b.id),
-    });
-}
-
 fn rfc3339(t: time::OffsetDateTime) -> String {
     t.format(&time::format_description::well_known::Rfc3339)
         .unwrap_or_else(|_| t.unix_timestamp().to_string())
@@ -325,24 +315,30 @@ pub struct FeedMatch {
     pub produced_by: Option<String>,
 }
 
-/// Every match the engine recorded for one run, in recording order.
+/// One newest-first, SQL-bounded page of a run’s recorded matches.
 #[derive(Debug, Serialize)]
 pub struct TournamentFeed {
     pub run_id: String,
+    #[serde(flatten)]
+    pub page: PageInfo,
     pub matches: Vec<FeedMatch>,
 }
 
 /// Build the tournament feed from persisted matches. Titles come from the
 /// item records; a match whose candidate has since been removed keeps its
 /// ID as the label rather than inventing one.
-pub async fn tournament_feed(store: &Store, run_id: &RunId) -> Result<TournamentFeed> {
-    let matches = store.list_matches(run_id).await?;
-    let titles: HashMap<String, String> = store
-        .item_summaries(run_id, None)
-        .await?
-        .into_iter()
-        .map(|item| (item.id.as_str().to_string(), item.title))
+pub async fn tournament_feed(
+    store: &Store,
+    run_id: &RunId,
+    request: PageRequest,
+) -> Result<TournamentFeed> {
+    let slice = store.match_page(run_id, request).await?;
+    let matches = slice.records;
+    let ids: Vec<_> = matches
+        .iter()
+        .flat_map(|m| [m.item_a.clone(), m.item_b.clone()])
         .collect();
+    let titles = store.item_titles(run_id, &ids).await?;
 
     let side = |item_id: &ItemId, before: f64, after: f64| FeedSide {
         item_id: item_id.as_str().to_string(),
@@ -373,6 +369,7 @@ pub async fn tournament_feed(store: &Store, run_id: &RunId) -> Result<Tournament
 
     Ok(TournamentFeed {
         run_id: run_id.as_str().to_string(),
+        page: slice.page,
         matches: entries,
     })
 }
@@ -397,6 +394,8 @@ pub struct DecisionView {
 #[derive(Debug, Serialize)]
 pub struct DecisionLedger {
     pub run_id: String,
+    #[serde(flatten)]
+    pub page: PageInfo,
     pub decisions: Vec<DecisionView>,
 }
 
@@ -411,10 +410,16 @@ fn actor_label(actor: &Actor) -> String {
 
 /// The run's decisions, oldest first: a ledger reads as the sequence of
 /// choices the run actually made.
-pub async fn decision_ledger(store: &Store, run_id: &RunId) -> Result<DecisionLedger> {
-    let decisions = store.list_decisions(run_id).await?;
+pub async fn decision_ledger(
+    store: &Store,
+    run_id: &RunId,
+    request: PageRequest,
+) -> Result<DecisionLedger> {
+    let slice = store.decision_page(run_id, request).await?;
+    let decisions = slice.records;
     Ok(DecisionLedger {
         run_id: run_id.as_str().to_string(),
+        page: slice.page,
         decisions: decisions
             .iter()
             .map(|d| DecisionView {
@@ -537,38 +542,25 @@ pub async fn run_snapshot(store: &Store, run_id: &RunId) -> Result<RunSnapshot> 
     let queue = store.queue_context(run_id).await?;
     let tasks = store.list_tasks(run_id).await?;
     let usage = store.budget_usage(run_id).await?;
-    let mut items = store
-        .item_summaries(run_id, plan.as_ref().map(|p| &p.id))
-        .await?;
-    sort_items(&mut items);
-
-    let ranking_baseline = store
-        .list_snapshots(run_id)
+    let rubric = plan.as_ref().map(|p| &p.id);
+    let items = store
+        .candidate_page(run_id, rubric, PageRequest::default(), true)
         .await?
-        .into_iter()
-        .find(|snapshot| snapshot.iteration.checked_add(1) == Some(run.iterations))
-        .and_then(|snapshot| {
-            let plan = plan.as_ref()?;
-            let ratings = snapshot.ratings?;
-            if !ratings.iter().any(|rating| rating.rubric_id == plan.id) {
-                return None;
-            }
-            Some(RankingBaseline {
-                iteration: snapshot.iteration,
-                ratings: ratings
-                    .into_iter()
-                    .filter(|rating| rating.rubric_id == plan.id)
-                    .map(|rating| (rating.item_id.to_string(), rating.rating))
-                    .collect(),
-            })
-        });
+        .records;
+    let counts = store.run_record_counts(run_id).await?;
 
-    let matches = store.list_matches(run_id).await?.len() as u32;
+    let ranking_baseline =
+        if let (Some(iteration), Some(rubric)) = (run.iterations.checked_sub(1), rubric) {
+            let ids: Vec<_> = items.iter().map(|item| item.id.clone()).collect();
+            store
+                .overview_baseline(run_id, iteration, rubric, &ids)
+                .await?
+                .map(|ratings| RankingBaseline { iteration, ratings })
+        } else {
+            None
+        };
+
     let decisions = store.count_decisions(run_id).await?;
-    let clusters = store.list_clusters(run_id).await?.len() as u32;
-    let sources = store.list_sources(run_id).await?.len() as u32;
-    let works = store.list_works(run_id).await?.len() as u32;
-    let searches = store.list_search_records(run_id).await?.len() as u32;
     // Worker roles come from the plan; roles that already have tasks but
     // fell out of a revised plan still get a panel so no work is hidden.
     let by_role = tasks_by_role(&tasks);
@@ -635,13 +627,27 @@ pub async fn run_snapshot(store: &Store, run_id: &RunId) -> Result<RunSnapshot> 
     agents.push(supervisor);
     agents.extend(worker_panels);
 
-    let reviews = items.iter().map(|i| i.review_count).sum();
-    let leader = items.iter().find(|i| i.rating.is_some()).map(|i| Leader {
-        item_id: i.id.as_str().to_string(),
-        title: i.title.clone(),
-        rating: i.rating.unwrap_or(INITIAL_ELO),
-        matches_played: i.matches_played,
-    });
+    let leader_items = store
+        .candidate_page(
+            run_id,
+            rubric,
+            PageRequest {
+                limit: 1,
+                ..PageRequest::default()
+            },
+            false,
+        )
+        .await?
+        .records;
+    let leader = leader_items
+        .iter()
+        .find(|i| i.rating.is_some())
+        .map(|i| Leader {
+            item_id: i.id.as_str().to_string(),
+            title: i.title.clone(),
+            rating: i.rating.unwrap_or(INITIAL_ELO),
+            matches_played: i.matches_played,
+        });
 
     Ok(RunSnapshot {
         run: RunMeta {
@@ -682,14 +688,14 @@ pub async fn run_snapshot(store: &Store, run_id: &RunId) -> Result<RunSnapshot> 
         }),
         agents,
         stats: Stats {
-            items: items.len() as u32,
-            reviews,
-            matches,
+            items: counts.items,
+            reviews: counts.reviews,
+            matches: counts.matches,
             decisions,
-            clusters,
-            sources,
-            works,
-            searches,
+            clusters: counts.clusters,
+            sources: counts.sources,
+            works: counts.works,
+            searches: counts.searches,
             workers_busy,
             workers_total: roles.len() as u32,
             leader,
@@ -740,34 +746,5 @@ mod tests {
         assert_eq!(supervisor_state(RunState::Running, 0), "waiting");
         assert_eq!(supervisor_state(RunState::Completed, 3), "idle");
         assert_eq!(supervisor_state(RunState::Cancelled, 0), "idle");
-    }
-
-    fn summary(id: &str, rating: Option<f64>) -> ItemSummary {
-        ItemSummary {
-            id: ItemId::from_raw(id),
-            kind: ItemKind::Hypothesis,
-            title: id.to_string(),
-            disposition: "active".into(),
-            assessment: Assessment::Untested,
-            assessment_basis: None,
-            rating,
-            matches_played: 0,
-            stale_rating: false,
-            review_count: 0,
-        }
-    }
-
-    #[test]
-    fn items_sort_by_rating_desc_with_unrated_last_and_stable_ties() {
-        let mut items = vec![
-            summary("item_c", None),
-            summary("item_b", Some(1210.0)),
-            summary("item_a", Some(1190.0)),
-            summary("item_d", Some(1210.0)),
-            summary("item_e", None),
-        ];
-        sort_items(&mut items);
-        let order: Vec<&str> = items.iter().map(|i| i.id.as_str()).collect();
-        assert_eq!(order, ["item_b", "item_d", "item_a", "item_c", "item_e"]);
     }
 }

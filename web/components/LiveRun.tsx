@@ -196,7 +196,7 @@ export function LiveRun({
     );
   }
 
-  const { run, goal, stats, agents, items, usage } = snapshot;
+  const { run, goal, stats, agents, usage } = snapshot;
   const terminal = isTerminal(run.state);
   // A queue place, not the lifecycle state, says the run is waiting:
   // durable recovery can put a `running` run back on the queue, and it waits
@@ -393,7 +393,12 @@ export function LiveRun({
                   used
                 </span>
               </div>
-              <RankingList key={runId} runId={runId} items={items} />
+              <RankingList
+                key={runId}
+                runId={runId}
+                itemCount={stats.items}
+                revision={`${run.updated_at}:${snapshot.plan?.revision ?? "none"}:${stats.items}:${stats.matches}:${stats.reviews}:${stats.decisions}`}
+              />
             </section>
 
             <section className="items-section" aria-label="Decisions">

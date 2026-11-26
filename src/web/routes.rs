@@ -6,7 +6,7 @@ use super::owner::{OwnedItem, OwnedRun, OwnedSource, OwnedTask, Owner};
 use super::{AppState, start, view};
 use crate::records::{AccessLevel, Origin, RunId};
 use crate::runtime;
-use crate::store::SourceFilter;
+use crate::store::{PageRequest, SourceFilter};
 use crate::{Error, Result};
 use axum::Json;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
@@ -235,8 +235,10 @@ pub async fn sources(
 pub async fn tournament(
     State(state): State<AppState>,
     OwnedRun(run_id): OwnedRun,
+    query: std::result::Result<Query<PageRequest>, QueryRejection>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let feed = view::tournament_feed(state.store(), &run_id).await?;
+    let Query(query) = query.map_err(|r| Error::validation(r.body_text()))?;
+    let feed = view::tournament_feed(state.store(), &run_id, query).await?;
     Ok(Json(serde_json::json!({"ok": true, "tournament": feed})))
 }
 
@@ -244,9 +246,29 @@ pub async fn tournament(
 pub async fn decisions(
     State(state): State<AppState>,
     OwnedRun(run_id): OwnedRun,
+    query: std::result::Result<Query<PageRequest>, QueryRejection>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let ledger = view::decision_ledger(state.store(), &run_id).await?;
+    let Query(query) = query.map_err(|r| Error::validation(r.body_text()))?;
+    let ledger = view::decision_ledger(state.store(), &run_id, query).await?;
     Ok(Json(serde_json::json!({ "ok": true, "ledger": ledger })))
+}
+
+/// The current ranking, read only for the requested page.
+pub async fn candidates(
+    State(state): State<AppState>,
+    OwnedRun(run_id): OwnedRun,
+    query: std::result::Result<Query<PageRequest>, QueryRejection>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let Query(query) = query.map_err(|r| Error::validation(r.body_text()))?;
+    let plan = state.store().current_plan(&run_id).await?;
+    let slice = state
+        .store()
+        .candidate_page(&run_id, plan.as_ref().map(|p| &p.id), query, false)
+        .await?;
+    Ok(Json(serde_json::json!({"ok": true, "candidates": {
+        "run_id": run_id.as_str(), "total": slice.page.total, "offset": slice.page.offset,
+        "limit": slice.page.limit, "through": null, "items": slice.records,
+    }})))
 }
 
 /// One candidate's recorded matches, newest first, each with the rating

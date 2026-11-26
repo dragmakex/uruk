@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DecisionLedger as Ledger } from "@/lib/types";
 
@@ -25,6 +25,7 @@ function decision(overrides: Partial<Ledger["decisions"][number]> = {}) {
 function ledger(overrides: Partial<Ledger> = {}): Ledger {
   return {
     run_id: "run_test",
+    total: overrides.decisions?.length ?? 1, offset: 0, limit: 5, through: 7,
     decisions: [decision()],
     ...overrides,
   };
@@ -33,7 +34,7 @@ function ledger(overrides: Partial<Ledger> = {}): Ledger {
 async function openDecisions() {
   const toggle = await screen.findByRole("button", { name: "Open decisions" });
   expect(toggle.textContent).toBe("Open");
-  fireEvent.click(toggle);
+  await act(async () => { fireEvent.click(toggle); });
 }
 
 afterEach(() => {
@@ -48,7 +49,7 @@ describe("DecisionLedger", () => {
       <DecisionLedger runId="run_test" decisionCount={1} />,
     );
 
-    expect(screen.getByText("reading decisions…")).toBeDefined();
+    expect(fetchDecisions).not.toHaveBeenCalled();
     await openDecisions();
     await waitFor(() => {
       expect(screen.getByText("supervisor")).toBeDefined();
@@ -60,7 +61,7 @@ describe("DecisionLedger", () => {
       screen.getByText("Generation has the thinnest coverage of the mechanism."),
     ).toBeDefined();
     expect(screen.getByText(/refers to task_generation_01/)).toBeDefined();
-    expect(fetchDecisions).toHaveBeenCalledWith("run_test");
+    expect(fetchDecisions).toHaveBeenCalledWith("run_test", { offset: 0, limit: 5 }, expect.any(AbortSignal));
   });
 
   it("keeps an actor's own name when the actor is an agent", async () => {
@@ -125,6 +126,7 @@ describe("DecisionLedger", () => {
   it("says a run has decided nothing yet, in terms of what it would record", async () => {
     fetchDecisions.mockResolvedValue(ledger({ decisions: [] }));
     render(<DecisionLedger runId="run_test" decisionCount={0} />);
+    await openDecisions();
     await waitFor(() => {
       expect(screen.getByText(/No decisions on record yet/)).toBeDefined();
     });
@@ -133,49 +135,40 @@ describe("DecisionLedger", () => {
   it("says the read failed instead of showing an empty ledger", async () => {
     fetchDecisions.mockRejectedValue(new Error("boom"));
     render(<DecisionLedger runId="run_test" decisionCount={0} />);
+    await openDecisions();
     await waitFor(() => {
-      expect(screen.getByText("decisions could not be read")).toBeDefined();
+      expect(screen.getByText("The decisions could not be read.")).toBeDefined();
     });
     expect(screen.queryByText(/No decisions on record yet/)).toBeNull();
   });
 
-  it("re-reads the ledger when the snapshot's decision count moves", async () => {
+  it("marks a changed ledger stale and reads it only on explicit Refresh", async () => {
     fetchDecisions.mockResolvedValue(ledger());
-    const { rerender } = render(
-      <DecisionLedger runId="run_test" decisionCount={1} />,
-    );
-    await waitFor(() => {
-      expect(fetchDecisions).toHaveBeenCalledTimes(1);
-    });
+    const { rerender } = render(<DecisionLedger runId="run_test" decisionCount={1} />);
     await openDecisions();
-
-    // A snapshot that adds no decision must not re-read anything.
+    expect(fetchDecisions).toHaveBeenCalledTimes(1);
     rerender(<DecisionLedger runId="run_test" decisionCount={1} />);
     expect(fetchDecisions).toHaveBeenCalledTimes(1);
-
-    fetchDecisions.mockResolvedValue(
-      ledger({ decisions: [decision(), decision({ id: "d2", reason: "later" })] }),
-    );
+    fetchDecisions.mockResolvedValue(ledger({ decisions: [decision(), decision({ id: "d2", reason: "later" })] }));
     rerender(<DecisionLedger runId="run_test" decisionCount={2} />);
-    await waitFor(() => {
-      expect(fetchDecisions).toHaveBeenCalledTimes(2);
-    });
+    expect(screen.getByRole("status")).toHaveTextContent(/record has changed/);
+    expect(fetchDecisions).toHaveBeenCalledTimes(1);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Refresh decisions" })); });
+    expect(fetchDecisions).toHaveBeenCalledTimes(2);
     expect(screen.getByText("later")).toBeDefined();
   });
 
   it("is closed by default and pages five decisions at a time", async () => {
-    fetchDecisions.mockResolvedValue(
-      ledger({
-        decisions: Array.from({ length: 7 }, (_, index) =>
-          decision({ id: `d${index + 1}`, reason: `choice ${index + 1}` }),
-        ),
-      }),
-    );
+    const decisions = Array.from({ length: 7 }, (_, index) =>
+      decision({ id: `d${index + 1}`, reason: `choice ${index + 1}` }));
+    fetchDecisions.mockImplementation((_runId, request) => Promise.resolve(ledger({
+      total: 7, offset: request.offset, decisions: decisions.slice(request.offset, request.offset + request.limit),
+    })));
     render(<DecisionLedger runId="run_test" decisionCount={7} />);
 
     const toggle = await screen.findByRole("button", { name: "Open decisions" });
     expect(screen.queryByRole("list", { name: "Decisions, oldest first" })).toBeNull();
-    fireEvent.click(toggle);
+    await act(async () => { fireEvent.click(toggle); });
     expect(screen.getByRole("button", { name: "Close decisions" }).textContent).toBe("Close");
     expect(screen.getByRole("list", { name: "Decisions, oldest first" }).children).toHaveLength(5);
     expect(screen.getByText("choice 1")).toBeDefined();
@@ -184,7 +177,7 @@ describe("DecisionLedger", () => {
 
     const next = screen.getByRole("button", { name: "Next Decisions page" });
     expect(next.textContent).toBe("→");
-    fireEvent.click(next);
+    await act(async () => { fireEvent.click(next); });
     expect(screen.getByText("choice 6")).toBeDefined();
     expect(screen.getByText("D06")).toBeDefined();
     expect(screen.getByText("Page 2 of 2")).toBeDefined();
