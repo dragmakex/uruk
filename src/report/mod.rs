@@ -6,6 +6,7 @@
 
 mod citations;
 mod export;
+mod findings;
 mod pdf;
 
 pub use citations::{CitationOrigin, CitationRecord, CitationResolution, collect_citations};
