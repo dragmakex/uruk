@@ -131,6 +131,10 @@ pub struct Cluster {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CampaignSnapshot {
     pub iteration: u32,
+    /// Ratings at this completed round's boundary. Absent on legacy records;
+    /// absence is not an empty board or zero movement.
+    #[serde(default)]
+    pub ratings: Option<Vec<super::tournament::Rating>>,
     pub items_generated: u32,
     pub items_awaiting_review: u32,
     pub reviews_completed: u32,

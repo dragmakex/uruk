@@ -331,6 +331,19 @@ function parseItem(value: unknown, path: string): ItemCard {
 }
 
 /** Validate a complete run snapshot (SSE payload and run detail). */
+function parseRankingBaseline(value: unknown): RunSnapshot["ranking_baseline"] {
+  if (value === null) return null;
+  const baseline = record(value, "snapshot.ranking_baseline");
+  const ratings = record(baseline.ratings, "snapshot.ranking_baseline.ratings");
+  return {
+    iteration: num(baseline.iteration, "snapshot.ranking_baseline.iteration"),
+    ratings: Object.fromEntries(Object.entries(ratings).map(([id, rating]) => [
+      id, num(rating, `snapshot.ranking_baseline.ratings.${id}`),
+    ])),
+  };
+}
+
+/** Validate a complete run snapshot (SSE payload and run detail). */
 export function parseRunSnapshot(value: unknown): RunSnapshot {
   const r = record(value, "snapshot");
   return {
@@ -342,6 +355,7 @@ export function parseRunSnapshot(value: unknown): RunSnapshot {
     ),
     stats: parseStats(r.stats, "snapshot.stats"),
     usage: parseUsage(r.usage, "snapshot.usage"),
+    ranking_baseline: parseRankingBaseline(r.ranking_baseline),
     items: array(r.items, "snapshot.items").map((it, i) =>
       parseItem(it, `snapshot.items[${i}]`),
     ),

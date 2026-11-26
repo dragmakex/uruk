@@ -20,6 +20,7 @@ import { moveSentence } from "@/lib/handoff";
 import { roleLabel } from "@/lib/roles";
 import { DecisionLedger } from "./DecisionLedger";
 import { RankingList } from "./RankingList";
+import { RankedOverview } from "./RankedOverview";
 import { RunCommandStrip } from "./RunCommandStrip";
 import { Topology } from "./Topology";
 import { TournamentFeed } from "./TournamentFeed";
@@ -344,6 +345,7 @@ export function LiveRun({
             that is not there. */}
         {!onQueue && (
           <>
+            <RankedOverview snapshot={snapshot} />
             <div className="fig-row">
               <span className="micro">
                 Fig. run {shortRunId(run.id)}, {roundLabel(run.state, run.iterations, goal.budget.max_iterations)}

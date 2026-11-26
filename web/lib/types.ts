@@ -191,6 +191,7 @@ export interface RunSnapshot {
   stats: Stats;
   usage: BudgetUsage;
   items: ItemCard[];
+  ranking_baseline: { iteration: number; ratings: Record<string, number> } | null;
 }
 
 export interface RunOverview {

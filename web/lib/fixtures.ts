@@ -116,6 +116,7 @@ export function snapshotFixture(): unknown {
         review_count: 3,
       },
     ],
+    ranking_baseline: { iteration: 0, ratings: { item_h7: 1396.2 } },
   };
 }
 
