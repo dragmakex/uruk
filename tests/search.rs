@@ -175,6 +175,88 @@ async fn spawn_connector_server() -> FixtureServer {
     FixtureServer { base, hits }
 }
 
+#[tokio::test(flavor = "multi_thread")]
+#[expect(clippy::await_holding_lock)]
+async fn subquestions_fan_out_and_persist_source_selection_reasons() {
+    let server = spawn_connector_server().await;
+    let _env = search_env(&server.base);
+    let provider = MockProvider::new().rule(
+        anchor::SEARCH_PLAN_QUERIES,
+        serde_json::json!({
+            "subquestions": [
+                { "question": "How does plasma change coating adhesion?", "queries": [
+                    { "text": "coating adhesion", "rationale": "direct mechanism" },
+                    { "text": "plasma coating", "rationale": "independent formulation" }
+                ]},
+                { "question": "What causes electrode fouling?", "queries": [
+                    { "text": "electrode fouling", "rationale": "failure mechanism" },
+                    { "text": "electrode surfaces", "rationale": "alternative mechanism" }
+                ]}
+            ]
+        })
+        .to_string(),
+    );
+    let f = fixture_with(Mode::Task, provider, |g| {
+        g.permissions = search_permissions();
+        g.budget.max_acquisitions = 0;
+    })
+    .await;
+    let mut task = acquire_task(&f, "discovery");
+    task.strategy = "discover".into();
+    let mut batch = uruk::store::RecordBatch::default();
+    uruk::agents::search::run_search(
+        &context(&f, tokio_util::sync::CancellationToken::new()),
+        &task,
+        &mut batch,
+    )
+    .await
+    .unwrap();
+    let records = f.store.list_search_records(&f.run_id).await.unwrap();
+    assert_eq!(
+        records.len(),
+        12,
+        "two queries per subquestion across three connectors"
+    );
+    for record in &records {
+        let filters: serde_json::Value =
+            serde_json::from_str(record.filters.as_deref().unwrap()).unwrap();
+        assert!(filters["subquestion"].as_str().unwrap().ends_with('?'));
+    }
+    let works = f.store.list_works(&f.run_id).await.unwrap();
+    assert_eq!(works.len(), 5);
+    for stored in &works {
+        let body = serde_json::to_value(&stored.work).unwrap();
+        assert_eq!(body["retrieval"]["method"], "lexical_rrf_v1");
+        assert!(body["retrieval"]["score"].is_number());
+        assert!(
+            !body["retrieval"]["why_this_source"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(body["retrieval"]["subquestions"].is_array());
+        if body["retrieval"]["matched_terms"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+        {
+            assert!(
+                body["retrieval"]["subquestions"]
+                    .as_array()
+                    .unwrap()
+                    .is_empty(),
+                "irrelevant hits cannot be presented as covering a subquestion"
+            );
+        }
+    }
+    assert_ne!(
+        works[0].work.work_key.as_str(),
+        "doi:10.1234/catalyst.2024.001",
+        "query relevance must be capable of outranking cross-connector popularity"
+    );
+    assert_eq!(server.connector_hits().len(), 12);
+}
+
 const PLANNED_QUERY: &str = "catalyst degradation thermal cycling";
 
 fn query_plan_json() -> String {

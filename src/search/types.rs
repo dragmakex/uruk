@@ -36,6 +36,9 @@ pub struct SearchQuery {
     pub year_to: Option<i32>,
     /// Default 25, hard cap 50 (§22.12: polite traffic, meaningful RRF lists).
     pub max_results: usize,
+    /// Local planning provenance, never sent as a connector parameter.
+    #[serde(default)]
+    pub subquestion: Option<String>,
 }
 
 /// Per-connector result cap defaults.
@@ -49,6 +52,7 @@ impl SearchQuery {
             year_from: None,
             year_to: None,
             max_results: DEFAULT_RESULTS_PER_QUERY,
+            subquestion: None,
         }
     }
 
@@ -59,13 +63,14 @@ impl SearchQuery {
 
     /// Year filters as JSON, for `SearchRecord.filters`.
     pub fn filters_json(&self) -> Option<String> {
-        if self.year_from.is_none() && self.year_to.is_none() {
+        if self.year_from.is_none() && self.year_to.is_none() && self.subquestion.is_none() {
             return None;
         }
         Some(
             serde_json::json!({
                 "year_from": self.year_from,
                 "year_to": self.year_to,
+                "subquestion": self.subquestion,
             })
             .to_string(),
         )
@@ -138,6 +143,19 @@ pub struct WorkRecord {
     /// Per-connector ranks and raw-item hashes, filled at fusion time.
     #[serde(default)]
     pub hits: Vec<WorkHit>,
+    /// Retrieval relevance, not evidence of a scientific claim. None for legacy works.
+    #[serde(default)]
+    pub retrieval: Option<RetrievalRanking>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetrievalRanking {
+    pub method: String,
+    pub score: f64,
+    pub lexical_score: f64,
+    pub matched_terms: Vec<String>,
+    pub subquestions: Vec<String>,
+    pub why_this_source: Vec<String>,
 }
 
 impl WorkRecord {
