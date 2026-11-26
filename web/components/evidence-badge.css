@@ -1,0 +1,26 @@
+.evidence-badge {
+  margin-top: 4px;
+  justify-self: start;
+  overflow-wrap: anywhere;
+  cursor: help;
+}
+.evidence-badge[data-tier="supported"], .evidence-badge[data-tier="refuted"] { border-color: var(--ink); }
+.evidence-badge[data-tier="untested"] { border-style: dashed; }
+.evidence-badge:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+/* Above sticky headers (20-40), below modal dialogs. */
+.evidence-tooltip {
+  position: fixed;
+  z-index: 50;
+  width: min(340px, calc(100vw - 24px));
+  overflow: auto;
+  overflow-wrap: anywhere;
+  padding: 12px;
+  border: 1px solid var(--ink);
+  background: var(--surface);
+  color: var(--ink);
+  font: 13px/1.5 var(--font-sans);
+  text-align: left;
+}
+.evidence-tooltip p { margin: 6px 0; }
+.evidence-tooltip ul { margin: 8px 0 0; padding-left: 18px; }
+.evidence-tooltip li + li { margin-top: 10px; }

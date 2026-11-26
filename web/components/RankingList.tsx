@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { CandidateHistory } from "./CandidateHistory";
+import { EvidenceBadge } from "./EvidenceBadge";
 import type { ItemCard } from "@/lib/types";
 import { formatElo } from "@/lib/format";
 import { moveGlyph, orderOf, rankMovement, type RankMove } from "@/lib/ranking";
@@ -150,12 +151,13 @@ export function RankingList({
                             {pageStart + index + 1}. {item.title}
                           </span>
                           <p className="item-meta micro">
-                            {item.kind}, {item.assessment}
+                            {item.kind}
                             {item.disposition !== "active" ? `, ${item.disposition}` : ""}
                             {item.review_count > 0
                               ? `, ${item.review_count} review${item.review_count === 1 ? "" : "s"}`
                               : ", unreviewed"}
                           </p>
+                          <EvidenceBadge item={item} />
                         </div>
                         <div className="item-rating">
                           {item.rating !== null ? (
