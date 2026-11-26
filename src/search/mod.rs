@@ -18,6 +18,7 @@ pub mod crossref;
 pub mod dedup;
 pub mod fuse;
 pub mod openalex;
+pub mod rerank;
 pub mod types;
 
 pub use connector::{ApiAccess, Connector, ConnectorCx, RawResponse};
@@ -220,20 +221,24 @@ pub fn fuse_outcomes(
         "one SearchRecord per outcome"
     );
 
-    // Ranked lists per (connector × query), in outcome order.
-    let lists: Vec<fuse::RankedList> = outcomes
+    let works: Vec<&WorkRecord> = outcomes
         .iter()
-        .map(|o| o.hits.iter().map(|h| h.work.work_key.clone()).collect())
+        .flat_map(|o| o.hits.iter().map(|h| &h.work))
         .collect();
-    let fused = fuse::rrf_fuse(&lists);
-
-    // Group hits by key for merge and audit.
-    let mut by_key: BTreeMap<&WorkKey, Vec<(usize, &ConnectorHit)>> = BTreeMap::new();
+    let canonical = dedup::canonical_keys(&works);
+    let mut keys = canonical.into_iter();
+    let mut lists = Vec::new();
+    let mut by_key: BTreeMap<WorkKey, Vec<(usize, &ConnectorHit)>> = BTreeMap::new();
     for (i, outcome) in outcomes.iter().enumerate() {
+        let mut list = Vec::new();
         for hit in &outcome.hits {
-            by_key.entry(&hit.work.work_key).or_default().push((i, hit));
+            let key = keys.next().expect("one canonical key per hit");
+            list.push(key.clone());
+            by_key.entry(key).or_default().push((i, hit));
         }
+        lists.push(list);
     }
+    let fused = fuse::rrf_fuse(&lists);
 
     fused
         .into_iter()

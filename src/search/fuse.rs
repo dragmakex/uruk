@@ -15,14 +15,24 @@ pub type RankedList = Vec<WorkKey>;
 
 /// Fuse ranked lists into `(work_key, rrf_score)` sorted best-first.
 pub fn rrf_fuse(lists: &[RankedList]) -> Vec<(WorkKey, f64)> {
-    let mut scores: BTreeMap<&WorkKey, f64> = BTreeMap::new();
+    let mut scores: BTreeMap<&WorkKey, Vec<f64>> = BTreeMap::new();
     for list in lists {
+        let mut seen = std::collections::BTreeSet::new();
         for (i, key) in list.iter().enumerate() {
+            if !seen.insert(key) {
+                continue;
+            }
             let rank = (i + 1) as f64;
-            *scores.entry(key).or_insert(0.0) += 1.0 / (RRF_K + rank);
+            scores.entry(key).or_default().push(1.0 / (RRF_K + rank));
         }
     }
-    let mut out: Vec<(WorkKey, f64)> = scores.into_iter().map(|(k, s)| (k.clone(), s)).collect();
+    let mut out: Vec<(WorkKey, f64)> = scores
+        .into_iter()
+        .map(|(k, mut terms)| {
+            terms.sort_by(f64::total_cmp);
+            (k.clone(), terms.into_iter().sum())
+        })
+        .collect();
     // Descending score; ascending work_key on ties.
     out.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     out
