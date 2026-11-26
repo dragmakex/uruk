@@ -9,6 +9,7 @@
  */
 
 import type {
+  AssessmentBasis,
   AgentPanel,
   AgentState,
   ApiErrorBody,
@@ -315,6 +316,23 @@ function parseUsage(value: unknown, path: string): BudgetUsage {
   };
 }
 
+function parseAssessmentBasis(value: unknown, path: string): AssessmentBasis | null {
+  if (value === null) return null;
+  const r = record(value, path);
+  return {
+    rationale: str(r.rationale, `${path}.rationale`),
+    review_id: strOrNull(r.review_id, `${path}.review_id`),
+    decision_id: strOrNull(r.decision_id, `${path}.decision_id`),
+    evidence: array(r.evidence, `${path}.evidence`).map((value, i) => {
+      const p = `${path}.evidence[${i}]`;
+      const e = record(value, p);
+      return { id: str(e.id, `${p}.id`), label: str(e.label, `${p}.label`),
+        kind: str(e.kind, `${p}.kind`), relation: str(e.relation, `${p}.relation`),
+        claim: str(e.claim, `${p}.claim`), limits: strOrNull(e.limits, `${p}.limits`) };
+    }),
+  };
+}
+
 function parseItem(value: unknown, path: string): ItemCard {
   const r = record(value, path);
   return {
@@ -323,10 +341,24 @@ function parseItem(value: unknown, path: string): ItemCard {
     title: str(r.title, `${path}.title`),
     disposition: str(r.disposition, `${path}.disposition`),
     assessment: str(r.assessment, `${path}.assessment`),
+    assessment_basis: parseAssessmentBasis(r.assessment_basis, `${path}.assessment_basis`),
     rating: numOrNull(r.rating, `${path}.rating`),
     matches_played: num(r.matches_played, `${path}.matches_played`),
     stale_rating: bool(r.stale_rating, `${path}.stale_rating`),
     review_count: num(r.review_count, `${path}.review_count`),
+  };
+}
+
+/** Validate a complete run snapshot (SSE payload and run detail). */
+function parseRankingBaseline(value: unknown): RunSnapshot["ranking_baseline"] {
+  if (value === null) return null;
+  const baseline = record(value, "snapshot.ranking_baseline");
+  const ratings = record(baseline.ratings, "snapshot.ranking_baseline.ratings");
+  return {
+    iteration: num(baseline.iteration, "snapshot.ranking_baseline.iteration"),
+    ratings: Object.fromEntries(Object.entries(ratings).map(([id, rating]) => [
+      id, num(rating, `snapshot.ranking_baseline.ratings.${id}`),
+    ])),
   };
 }
 
@@ -342,6 +374,7 @@ export function parseRunSnapshot(value: unknown): RunSnapshot {
     ),
     stats: parseStats(r.stats, "snapshot.stats"),
     usage: parseUsage(r.usage, "snapshot.usage"),
+    ranking_baseline: parseRankingBaseline(r.ranking_baseline),
     items: array(r.items, "snapshot.items").map((it, i) =>
       parseItem(it, `snapshot.items[${i}]`),
     ),

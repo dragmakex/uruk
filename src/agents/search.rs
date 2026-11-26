@@ -5,7 +5,8 @@
 //! deterministic offline fallback), executes them against the enabled
 //! connectors, persists the audit trail (SearchRecords, raw responses,
 //! per-connector ranks inside each work's body), fuses rankings with RRF,
-//! and enqueues one `search.acquire` task per top-ranked work.
+//! reranks by explainable title/abstract relevance, and enqueues one
+//! `search.acquire` task per top-ranked work. See docs/LITERATURE.md.
 //! `search.acquire` resolves a legal open-access location locally from the
 //! discovery data, routes it through the existing ingestion pipeline, and
 //! falls back to an abstract-only source or a recorded unavailable entry.
@@ -39,6 +40,16 @@ pub async fn run_search(ctx: &AgentContext, task: &Task, batch: &mut RecordBatch
 /// The typed output of `search.plan_queries`.
 #[derive(Debug, Deserialize)]
 struct QueryPlan {
+    #[serde(default)]
+    queries: Vec<PlannedQuery>,
+    #[serde(default)]
+    subquestions: Vec<SubquestionPlan>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SubquestionPlan {
+    question: String,
+    #[serde(default)]
     queries: Vec<PlannedQuery>,
 }
 
@@ -57,6 +68,8 @@ struct PlannedQuery {
 
 /// At most this many queries per discovery (§3).
 const MAX_QUERIES: usize = 4;
+const MAX_SUBQUESTIONS: usize = 4;
+const QUERIES_PER_SUBQUESTION: usize = 2;
 
 /// Longest query text sent to a connector, in characters. Model output is
 /// untrusted input; anything longer is truncated before it reaches a URL.
@@ -91,11 +104,12 @@ fn sanitize_planned_query(q: PlannedQuery) -> Option<SearchQuery> {
         year_from,
         year_to,
         max_results: crate::search::types::DEFAULT_RESULTS_PER_QUERY,
+        subquestion: None,
     })
 }
 
-/// Plan queries with one seeded model call; fall back to a single
-/// deterministic stopword-stripped query so search works offline and with
+/// Plan queries with one seeded model call; fall back to two bounded
+/// deterministic keyword formulations so search works offline and with
 /// the stand-in provider (§11).
 async fn plan_queries(ctx: &AgentContext) -> Result<Vec<SearchQuery>> {
     let template = ids::SEARCH_PLAN_QUERIES;
@@ -125,12 +139,7 @@ async fn plan_queries(ctx: &AgentContext) -> Result<Vec<SearchQuery>> {
 
     let planned = match ctx.call(template, bindings).await {
         Ok(completion) => match outputs::parse::<QueryPlan>(&completion.text) {
-            Ok(plan) => plan
-                .queries
-                .into_iter()
-                .filter_map(sanitize_planned_query)
-                .take(MAX_QUERIES)
-                .collect::<Vec<_>>(),
+            Ok(plan) => normalize_query_plan(plan, &ctx.goal.question),
             Err(e) => {
                 tracing::warn!(error = %e, "query plan did not parse; using the fallback query");
                 vec![]
@@ -144,9 +153,86 @@ async fn plan_queries(ctx: &AgentContext) -> Result<Vec<SearchQuery>> {
     };
 
     if planned.is_empty() {
-        return Ok(vec![SearchQuery::new(fallback_query(&ctx.goal.question))]);
+        return Ok(fallback_queries(&ctx.goal.question));
     }
     Ok(planned)
+}
+
+/// Normalize the planner's topical subquestions without changing the goal.
+/// Legacy flat plans remain bounded; a new plan fans out at most 4 × 2 queries.
+fn normalize_query_plan(plan: QueryPlan, goal: &str) -> Vec<SearchQuery> {
+    if plan.subquestions.is_empty() {
+        return plan
+            .queries
+            .into_iter()
+            .filter_map(sanitize_planned_query)
+            .take(MAX_QUERIES)
+            .map(|mut q| {
+                q.subquestion = Some(goal.chars().take(MAX_QUERY_CHARS).collect());
+                q
+            })
+            .collect();
+    }
+    let mut out = Vec::new();
+    let mut seen_questions = std::collections::BTreeSet::new();
+    for group in plan.subquestions {
+        let question = group
+            .question
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .chars()
+            .take(MAX_QUERY_CHARS)
+            .collect::<String>();
+        if question.is_empty() || !seen_questions.insert(question.to_lowercase()) {
+            continue;
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        let mut queries = Vec::new();
+        for mut q in group.queries.into_iter().filter_map(sanitize_planned_query) {
+            if seen.insert((q.text.to_lowercase(), q.year_from, q.year_to)) {
+                q.subquestion = Some(question.clone());
+                queries.push(q);
+            }
+            if queries.len() == QUERIES_PER_SUBQUESTION {
+                break;
+            }
+        }
+        for q in fallback_queries(&question) {
+            if queries.len() == QUERIES_PER_SUBQUESTION {
+                break;
+            }
+            if seen.insert((q.text.to_lowercase(), q.year_from, q.year_to)) {
+                queries.push(q);
+            }
+        }
+        out.extend(queries);
+        if seen_questions.len() == MAX_SUBQUESTIONS {
+            break;
+        }
+    }
+    out
+}
+
+fn fallback_queries(question: &str) -> Vec<SearchQuery> {
+    [
+        fallback_query(question),
+        format!("replication limitations {}", fallback_query(question)),
+    ]
+    .into_iter()
+    .filter_map(|text| {
+        sanitize_planned_query(PlannedQuery {
+            text,
+            rationale: String::new(),
+            year_from: None,
+            year_to: None,
+        })
+    })
+    .map(|mut q| {
+        q.subquestion = Some(question.chars().take(MAX_QUERY_CHARS).collect());
+        q
+    })
+    .collect()
 }
 
 /// The deterministic fallback: the goal question stripped of stopwords.
@@ -214,7 +300,8 @@ async fn discover(ctx: &AgentContext, task: &Task, batch: &mut RecordBatch) -> R
 
     // Dedup, merge, fuse; persist works. The pre-dedup per-connector ranks
     // and raw-item hashes travel inside each work's body (`body.hits`).
-    let fused = search::fuse_outcomes(&outcomes, &search_ids);
+    let mut fused = search::fuse_outcomes(&outcomes, &search_ids);
+    search::rerank::rerank(&mut fused, &queries);
     for work in &fused {
         ctx.store
             .insert_work(&ctx.run_id, &work.record, work.rrf_score)
@@ -331,11 +418,21 @@ async fn enqueue_acquisitions(
             payload: Some(serde_json::json!({ "work_key": key })),
             feedback_id: None,
             depends_on: vec![task.id.clone()],
-            priority: 4.0 + work.rrf_score,
+            priority: 4.0
+                + work
+                    .record
+                    .retrieval
+                    .as_ref()
+                    .map_or(work.rrf_score, |r| r.score),
             priority_rationale: format!(
-                "acquire fused rank {} (rrf {:.5})",
+                "acquire relevance rank {} (rrf {:.5}); {}",
                 index + 1,
-                work.rrf_score
+                work.rrf_score,
+                work.record
+                    .retrieval
+                    .as_ref()
+                    .map(|r| r.why_this_source.join("; "))
+                    .unwrap_or_default()
             ),
             permissions: ctx.permissions.clone(),
             reservation: CostReservation { model_calls: 0 },
@@ -741,6 +838,46 @@ mod tests {
     fn planned_query_inverted_year_bounds_are_dropped_not_guessed() {
         let q = sanitize_planned_query(planned("x", Some(2024), Some(2019))).unwrap();
         assert_eq!((q.year_from, q.year_to), (None, None));
+    }
+
+    #[test]
+    fn subquestion_plans_are_bounded_and_fill_missing_distinct_formulations() {
+        let plan: QueryPlan = serde_json::from_value(serde_json::json!({
+            "subquestions": (0..20).map(|i| serde_json::json!({
+                "question": format!("Mechanism {i}?"),
+                "queries": (0..8).map(|_| serde_json::json!({"text": "repeated"})).collect::<Vec<_>>()
+            })).collect::<Vec<_>>()
+        })).unwrap();
+        let queries = normalize_query_plan(plan, "goal");
+        assert_eq!(queries.len(), MAX_SUBQUESTIONS * QUERIES_PER_SUBQUESTION);
+        for pair in queries.chunks(2) {
+            assert_eq!(pair[0].subquestion, pair[1].subquestion);
+            assert_ne!(
+                pair[0].text, pair[1].text,
+                "duplicate planner text cannot consume the fan-out"
+            );
+            assert!(
+                pair.iter()
+                    .all(|q| q.text.chars().count() <= MAX_QUERY_CHARS)
+            );
+        }
+    }
+
+    #[test]
+    fn fallback_queries_are_distinct_bounded_and_labelled() {
+        let queries = fallback_queries(&"é ".repeat(500));
+        assert_eq!(queries.len(), 2);
+        assert_ne!(queries[0].text, queries[1].text);
+        assert!(
+            queries
+                .iter()
+                .all(|q| q.text.chars().count() <= MAX_QUERY_CHARS)
+        );
+        assert!(
+            queries
+                .iter()
+                .all(|q| q.subquestion.as_ref().unwrap().chars().count() <= MAX_QUERY_CHARS)
+        );
     }
 
     #[test]

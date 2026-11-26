@@ -804,6 +804,10 @@ impl Scheduler {
 
         let snapshot = CampaignSnapshot {
             iteration,
+            ratings: match self.store.current_plan(run_id).await? {
+                Some(plan) => Some(self.store.leaderboard(run_id, &plan.id).await?),
+                None => None,
+            },
             items_generated: items.len() as u32,
             items_awaiting_review: awaiting,
             reviews_completed: reviews.len() as u32,

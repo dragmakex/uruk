@@ -142,6 +142,7 @@ to branch on without parsing prose.
   manifest.json     identity, versions, providers, permissions, usage, artifact hashes
   REPORT.md         the deliverable with claim provenance, or a labelled partial result
   REPORT.pdf        the same report rendered deterministically to PDF, no model call
+  AGENT_REPORT.json machine-readable audit snapshot, top candidate IDs, exact human report
   research.jsonl    items, evidence, reviews, decisions, experiments, lineage
   sources.jsonl     source provenance, citation locators, and search records
   works.jsonl       every work found by literature search, with RRF score and per-connector ranks
@@ -153,6 +154,15 @@ Reports are derived from persisted records and need no model call, so a stop
 request or crash still yields a labelled partial report. The final deliverable
 draws on a reserved slice of the model-call budget; when it cannot run, the
 report says why.
+
+The **Human report** button opens a readable explanation of up to five active
+ranked candidates: the recorded claim and mechanism, evidence and limitations,
+review objections, and next tests. Missing candidates or validation are stated,
+not invented. **Agent report** downloads format-v1 JSON with the manifest,
+research records and assessment bases, sources, discovered works and search
+records, and exact human Markdown. The human template is v2; the five required
+top-level sections remain unchanged. The JSON download is owner-scoped and
+requires a new export (legacy exports are not regenerated on GET).
 
 ## What the design protects
 
@@ -269,6 +279,32 @@ count, acquisition, and failure lands in the report's "Search coverage"
 section; each work's per-connector ranks and raw-response hashes ride in its
 own record, and `works.jsonl` lists everything found, not just everything
 read.
+
+## Verification runs
+
+After a review cites an original computation as support for an active
+`Supported` claim, the Supervisor schedules one contained replay within the
+run's existing budget and limits. The replay uses the stored typed program,
+argv, input paths, seed, timeout, and capture limit; it never parses the
+human-readable command. It records a new experiment and fresh output artifacts
+linked to the original experiment, leaving the original and assessment intact.
+
+The persisted `reproduction.verdict` is:
+
+- `reproduced`: complete, successful stdout has the same content hash with
+  matching recorded recipe, input hashes, platform, and top-level program hash;
+- `not_reproduced`: complete, successful stdout differs with those recorded
+  fingerprints unchanged;
+- `inconclusive`: inputs/environment changed, execution failed, output is
+  incomplete, containment is unavailable, or a legacy record lacks the recipe
+  or baseline artifacts required for a comparison.
+
+The verdict is included in the report and `research.jsonl`. It measures
+byte-exact replay, not scientific equivalence or independent replication. It
+neither promotes nor refutes a claim automatically. Program fingerprints cover
+the top-level binary, not every library or helper program; the sandbox blocks
+network and outside writes but does not isolate all host reads. Analyses must
+supply their code and data as declared inputs for meaningful replay.
 
 ## Not implemented
 

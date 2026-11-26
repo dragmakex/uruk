@@ -10,6 +10,7 @@ function item(id: string, title: string, rating: number | null): ItemCard {
     kind: "hypothesis",
     disposition: "active",
     assessment: "plausible",
+    assessment_basis: null,
     rating,
     matches_played: rating === null ? 0 : 3,
     stale_rating: false,
@@ -83,6 +84,17 @@ afterEach(() => {
 });
 
 describe("RankingList", () => {
+  it("gives every candidate an evidence chip with a keyboard-readable basis", () => {
+    render(<RankingList runId="run_test" items={first} />);
+    openCandidates();
+    const chips = screen.getAllByRole("button", { name: /Evidence for/ });
+    expect(chips).toHaveLength(first.length);
+    expect(chips[0]).toHaveTextContent("plausible");
+    fireEvent.focus(chips[0]!);
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/No assessment basis is recorded/);
+    fireEvent.keyDown(chips[0]!, { key: "Escape" });
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+  });
   it("says nothing about movement before it has seen a second board", () => {
     const { container } = render(<RankingList runId="run_test" items={first} />);
     openCandidates();

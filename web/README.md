@@ -69,7 +69,12 @@ Honesty notes:
   record stays available unmodified: Download Markdown serves the exact
   exported `REPORT.md` bytes and Download PDF serves its deterministic
   PDF twin, both straight from the engine. Raw HTML inside the
-  model-generated markdown is never rendered.
+  model-generated markdown is never rendered. **Human report** opens this
+  readable report, including the leading five recorded candidates and their
+  evidence, objections, limits, and next tests. **Agent report** downloads the
+  self-contained `AGENT_REPORT.json` audit snapshot from the same export.
+  Older runs without the new artifact return `not_found` until explicitly
+  re-exported; clicking the link never spends budget or starts research.
 
 ## Responsive topology
 

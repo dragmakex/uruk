@@ -8,6 +8,7 @@ mod control;
 mod executor;
 mod limits;
 pub mod scheduler;
+mod verification;
 
 pub use control::{StopOutcome, request_stop};
 pub use executor::{TaskOutcome, execute_task};

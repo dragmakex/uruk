@@ -169,23 +169,103 @@ pub fn work_key(record: &WorkRecord) -> WorkKey {
     WorkKey(format!("fp:{}", &hash.as_str()[..16]))
 }
 
+/// Resolve transitive identifier crosswalks before grouping connector hits.
+/// No fuzzy title merges: shared DOI/arXiv/PMID (or the exact fallback key)
+/// is required. The strongest key wins, independently of connector order.
+pub fn canonical_keys(works: &[&WorkRecord]) -> Vec<WorkKey> {
+    fn root(parents: &mut [usize], i: usize) -> usize {
+        if parents[i] != i {
+            parents[i] = root(parents, parents[i]);
+        }
+        parents[i]
+    }
+    fn priority(key: &WorkKey) -> (usize, &str) {
+        let order = ["doi:", "arxiv:", "pmid:", "fp:"];
+        (
+            order
+                .iter()
+                .position(|p| key.as_str().starts_with(p))
+                .unwrap_or(order.len()),
+            key.as_str(),
+        )
+    }
+    let aliases: Vec<Vec<WorkKey>> = works
+        .iter()
+        .map(|w| {
+            let mut keys = vec![if w.work_key.0.is_empty() {
+                work_key(w)
+            } else {
+                w.work_key.clone()
+            }];
+            if let Some(doi) = w.doi.as_deref().and_then(normalize_doi) {
+                keys.push(WorkKey(format!("doi:{doi}")));
+            }
+            if let Some(id) = w.arxiv_id.as_deref().and_then(normalize_arxiv_id) {
+                keys.push(WorkKey(format!("arxiv:{id}")));
+            }
+            if let Some(id) = w.pmid.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                keys.push(WorkKey(format!("pmid:{id}")));
+            }
+            keys
+        })
+        .collect();
+    let mut parents: Vec<usize> = (0..works.len()).collect();
+    let mut owner = BTreeMap::new();
+    for (i, keys) in aliases.iter().enumerate() {
+        for key in keys {
+            if let Some(&previous) = owner.get(key) {
+                let a = root(&mut parents, i);
+                let b = root(&mut parents, previous);
+                parents[a.max(b)] = a.min(b);
+            } else {
+                owner.insert(key.clone(), i);
+            }
+        }
+    }
+    let mut canonical: BTreeMap<usize, WorkKey> = BTreeMap::new();
+    for (i, keys) in aliases.iter().enumerate() {
+        let group = root(&mut parents, i);
+        for key in keys {
+            let best = canonical.entry(group).or_insert_with(|| key.clone());
+            if priority(key) < priority(best) {
+                *best = key.clone();
+            }
+        }
+    }
+    (0..works.len())
+        .map(|i| canonical[&root(&mut parents, i)].clone())
+        .collect()
+}
+
 /// Merge hits sharing a WorkKey field-wise.
 ///
 /// Preference order: OpenAlex for abstracts/OA/crosswalk IDs, Crossref for
 /// venue/authors/DOI metadata, arXiv for `oa_url`; first non-null wins
 /// within each field's preference order.
 pub fn merge_works(hits: &[(&str, &ConnectorHit)]) -> WorkRecord {
-    let by: BTreeMap<&str, &WorkRecord> = hits.iter().map(|(c, h)| (*c, &h.work)).collect();
+    // Best rank then raw hash breaks same-connector ties; do not let a later
+    // sparse duplicate erase richer metadata from an earlier query.
+    let mut by: BTreeMap<&str, Vec<&ConnectorHit>> = BTreeMap::new();
+    for (connector, hit) in hits {
+        by.entry(connector).or_default().push(hit);
+    }
+    for group in by.values_mut() {
+        group.sort_by(|a, b| {
+            a.rank
+                .cmp(&b.rank)
+                .then_with(|| a.raw_hash.as_str().cmp(b.raw_hash.as_str()))
+        });
+    }
     let pick = |order: &[&str], f: &dyn Fn(&WorkRecord) -> Option<String>| -> Option<String> {
         for name in order {
-            if let Some(w) = by.get(name)
-                && let Some(v) = f(w)
+            if let Some(group) = by.get(name)
+                && let Some(v) = group.iter().find_map(|h| f(&h.work))
             {
                 return Some(v);
             }
         }
         // Any remaining connector, in deterministic (BTreeMap) order.
-        by.values().find_map(|w| f(w))
+        by.values().flatten().find_map(|h| f(&h.work))
     };
 
     let openalex_first = ["openalex", "crossref", "arxiv"];
@@ -217,29 +297,28 @@ pub fn merge_works(hits: &[(&str, &ConnectorHit)]) -> WorkRecord {
         landing_url: pick(&openalex_first, &|w| w.landing_url.clone()),
         cited_by_count: None,
         hits: vec![],
+        retrieval: None,
     };
     for name in openalex_first {
-        if let Some(w) = by.get(name) {
-            if merged.is_oa.is_none() {
-                merged.is_oa = w.is_oa;
-            }
-            if merged.cited_by_count.is_none() {
-                merged.cited_by_count = w.cited_by_count;
-            }
-            if merged.year.is_none() {
-                merged.year = w.year;
+        if let Some(group) = by.get(name) {
+            for hit in group {
+                let w = &hit.work;
+                merged.is_oa = merged.is_oa.or(w.is_oa);
+                merged.cited_by_count = merged.cited_by_count.or(w.cited_by_count);
+                merged.year = merged.year.or(w.year);
             }
         }
     }
     for name in crossref_first {
         if merged.authors.is_empty()
-            && let Some(w) = by.get(name)
+            && let Some(group) = by.get(name)
+            && let Some(hit) = group.iter().find(|h| !h.work.authors.is_empty())
         {
-            merged.authors = w.authors.clone();
+            merged.authors = hit.work.authors.clone();
         }
     }
     if merged.year.is_none() {
-        merged.year = by.values().find_map(|w| w.year);
+        merged.year = by.values().flatten().find_map(|h| h.work.year);
     }
     merged
 }
