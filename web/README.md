@@ -113,4 +113,7 @@ before shipping UI changes; add `--run-id <id>` (and `--cookie <value>`
 when the run belongs to an existing browser identity) to cover the live
 run, report, and citations pages, plus `--task-id <id>` for a reasoning
 trace page. Add `--color-scheme dark` to run the same gate against the
-dark tokens.
+dark tokens. The gate sends a normal browser user agent by default and
+fails with an explicit message if Cloudflare replaces a page with a
+challenge, rather than reporting it as a layout bug; pass
+`--user-agent` to override it.
