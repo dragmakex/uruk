@@ -44,6 +44,22 @@ describe("ReportPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("puts run bookkeeping after the report in a closed disclosure", async () => {
+    fetchReportMock.mockResolvedValue({
+      run_id: "run_abc",
+      markdown: "# Ideas\n\n## 1. Findings\n\nHow the leading ideas work.\n",
+      manifest: { usage: { model_calls: 25, tokens: 1234 }, counts: { items: 8 } },
+    });
+    const { container } = render(await ReportPage({ params: Promise.resolve({ id: "run_abc" }) }));
+    const article = container.querySelector("article");
+    const summary = screen.getByText("Run details", { selector: "summary" });
+    const disclosure = summary.closest("details");
+    expect(disclosure).not.toHaveAttribute("open");
+    expect(article!.compareDocumentPosition(disclosure!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(disclosure).toHaveTextContent("model calls25");
+    expect(disclosure).toHaveTextContent("tokens1,234");
+  });
+
   it("renders the budget status as plain UI copy", async () => {
     fetchReportMock.mockResolvedValue({
       run_id: "run_4b7b",

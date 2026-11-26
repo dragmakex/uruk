@@ -1,8 +1,10 @@
-//! A readable explanation of the same active candidates shown on the live run.
+//! Explain the leading ideas without exposing the agent's record schema.
 
+use super::reading;
 use crate::Result;
 use crate::records::*;
 use crate::store::{ItemSummary, Store};
+use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) struct Finding {
     summary: ItemSummary,
@@ -10,6 +12,7 @@ pub(super) struct Finding {
     assessment_record: Option<AssessmentRecord>,
     evidence: Vec<(Evidence, EvidenceLink)>,
     reviews: Vec<Review>,
+    sources: Vec<Source>,
 }
 
 impl Finding {
@@ -37,12 +40,17 @@ pub(super) async fn collect(
         (None, Some(_)) => std::cmp::Ordering::Greater,
         (None, None) => a.id.cmp(&b.id),
     });
+    let sources: BTreeMap<_, _> = store
+        .list_sources(run_id)
+        .await?
+        .into_iter()
+        .map(|s| (s.id.clone(), s))
+        .collect();
     let count = summaries.len();
     let mut findings = Vec::new();
     for summary in summaries.into_iter().take(5) {
         let assessment_record = store.current_assessment_record(&summary.id).await?;
-        // An assessment may interpret an original context link without
-        // mutating that link. Explain its actual recorded basis first.
+        // The assessment's interpretation can differ from the historical link.
         let mut evidence = Vec::new();
         if let Some(record) = &assessment_record {
             for link in &record.evidence {
@@ -57,155 +65,279 @@ pub(super) async fn collect(
                 evidence.push((record, link));
             }
         }
-        findings.push(Finding {
+        let mut finding = Finding {
             item: store.get_item(&summary.id).await?,
             assessment_record,
             evidence,
             reviews: store.list_reviews_for_item(&summary.id).await?,
             summary,
-        });
+            sources: Vec::new(),
+        };
+        finding.sources = linked_sources(&finding, &sources);
+        findings.push(finding);
     }
     Ok((count, findings))
 }
 
+fn linked_sources(finding: &Finding, sources: &BTreeMap<SourceId, Source>) -> Vec<Source> {
+    let evidence_sources = finding.evidence.iter().flat_map(|(e, _)| &e.source_ids);
+    let reading_sources = finding
+        .item
+        .hypothesis
+        .iter()
+        .flat_map(|h| &h.reading)
+        .map(|n| &n.source_id);
+    let observation_sources = finding
+        .reviews
+        .iter()
+        .flat_map(|r| &r.observations)
+        .map(|o| &o.source_id);
+    let mut seen = BTreeSet::new();
+    let mut linked: Vec<_> = evidence_sources
+        .chain(reading_sources)
+        .chain(&finding.item.source_ids)
+        .chain(observation_sources)
+        .filter(|id| seen.insert((*id).clone()))
+        .filter_map(|id| sources.get(id).cloned())
+        .collect();
+    // Give the reader something readable first, preserving relevance order
+    // within each access level. Never attach unrelated run-wide sources.
+    linked.sort_by_key(reading::access_priority);
+    linked
+}
+
 pub(super) fn render(count: usize, findings: &[Finding]) -> String {
-    let mut out = String::from("### Top 5 findings\n\n");
-    out.push_str("These are the leading active candidates, not five confirmed discoveries. Order follows current-rubric Elo, with unrated candidates last and ties broken by item ID. Elo is relative prioritisation, not a probability or scientific confidence. An unrated position implies no measured advantage.\n\n");
+    let mut out = String::from("### Top 5 ideas by Elo\n\n");
+    out.push_str("The highest-ranked active ideas come first. Elo is their comparison score in this run, not a probability that an idea is correct. These are ideas to explore, not five confirmed discoveries.\n\n");
     if count < 5 {
         out.push_str(&format!("Only {count} active candidate(s) were recorded; no additional findings have been invented.\n\n"));
     }
     for (index, finding) in findings.iter().enumerate() {
-        let item = &finding.item;
-        let summary = &finding.summary;
-        out.push_str(&format!("#### {}. {}\n\n", index + 1, item.title));
-        out.push_str(&format!(
-            "Record `{}`. **Current status: {}.**\n\n",
-            item.id,
-            summary.assessment.as_str()
-        ));
-        match summary.rating {
-            Some(rating) => out.push_str(&format!("**Why this position:** Elo {rating:.0} across {} recorded comparison(s){}. This is not an evidence tier.\n\n", summary.matches_played, if summary.stale_rating { " (stale: newer evidence has not been reflected)" } else { "" })),
-            None => out.push_str("**Why this position:** no rating was recorded; this candidate follows rated items in stable ID order.\n\n"),
-        }
-        out.push_str(&format!("**Recorded explanation**\n\n{}\n\n", item.content));
-        if let Some(h) = &item.hypothesis {
-            for (label, value) in [
-                ("Claim", &h.claim),
-                ("Proposed mechanism", &h.mechanism),
-                ("Scope", &h.scope),
-            ] {
-                if !value.trim().is_empty() {
-                    out.push_str(&format!("- **{label}:** {value}\n"));
+        out.push_str(&format!("#### {}. {}\n\n", index + 1, finding.item.title));
+        match finding.summary.rating {
+            Some(rating) => {
+                out.push_str(&format!("**Elo {rating:.0}** · {} recorded comparison(s).\n\n", finding.summary.matches_played));
+                if finding.summary.stale_rating {
+                    out.push_str("**STALE ranking:** newer evidence has not yet been reflected in this score.\n\n");
                 }
             }
-            for (label, values) in [
-                ("Assumptions", &h.assumptions),
-                ("Predictions", &h.predictions),
-                ("Falsifiers", &h.falsifiers),
-            ] {
-                if !values.is_empty() {
-                    out.push_str(&format!("- **{label}:** {}\n", values.join("; ")));
-                }
-            }
-            out.push('\n');
+            None => out.push_str("**Not rated yet.** Shown after rated ideas; its position is not a measured advantage.\n\n"),
         }
-        render_evidence(&mut out, finding);
-        render_reviews(&mut out, finding);
-        out.push_str("**Next test**\n\n");
-        if let Some(h) = &item.hypothesis
-            && !h.validation_plan.trim().is_empty()
-        {
-            out.push_str(&format!(
-                "Recorded validation plan (not an executed result): {}\n\n",
-                h.validation_plan
-            ));
-        } else {
-            out.push_str("No validation plan was recorded for this candidate.\n\n");
-        }
-        let actions: Vec<_> = finding
-            .reviews
-            .iter()
-            .flat_map(|r| &r.next_actions)
-            .collect();
-        if actions.is_empty() {
-            out.push_str("No review follow-up was recorded.\n\n");
-        } else {
-            for action in actions {
-                out.push_str(&format!("- {action}\n"));
-            }
-            out.push('\n');
-        }
+        render_idea(&mut out, finding);
+        render_practical_steps(&mut out, finding);
+        render_reading(&mut out, finding);
+        render_known_and_unknown(&mut out, finding);
     }
     out
 }
 
-fn render_evidence(out: &mut String, finding: &Finding) {
-    out.push_str("**Evidence and limits**\n\n");
-    if let Some(record) = &finding.assessment_record {
-        out.push_str(&format!(
-            "Current assessment rationale: {}\n\n",
-            record.rationale
-        ));
-        if let Some(id) = &record.basis_review {
-            out.push_str(&format!("Basis review: `{id}`.\n\n"));
+fn render_idea(out: &mut String, finding: &Finding) {
+    out.push_str("**What the idea is**\n\n");
+    match &finding.item.hypothesis {
+        Some(h) => {
+            out.push_str(&format!("{}\n\n**How it works**\n\n{}\n\n", h.claim, h.mechanism));
+            if !h.scope.trim().is_empty() {
+                out.push_str(&format!("**Where it would apply:** {}\n\n", h.scope));
+            }
+            if !h.predictions.is_empty() {
+                out.push_str("**What you would expect to see** (proposed, not observed here)\n\n");
+                for prediction in &h.predictions {
+                    out.push_str(&format!("- {prediction}\n"));
+                }
+                out.push('\n');
+            }
+            // Generated content repeats these fields with technical headings.
+            // Keep independently authored prose, but never dump that duplicate.
+            if !finding.item.content.contains("\n## Claim\n") {
+                out.push_str(&format!("**More about the idea**\n\n{}\n\n", finding.item.content));
+            }
         }
-        if let Some(id) = &record.basis_decision {
-            out.push_str(&format!("Basis decision: `{id}`.\n\n"));
+        None => out.push_str(&format!("{}\n\n**How it works**\n\nNo separate explanation of how this idea works was recorded.\n\n", finding.item.content)),
+    }
+}
+
+fn render_practical_steps(out: &mut String, finding: &Finding) {
+    out.push_str("**What trying it would involve**\n\n");
+    if let Some(h) = &finding.item.hypothesis {
+        if h.validation_plan.trim().is_empty() {
+            out.push_str("No practical plan was recorded for this idea.\n\n");
+        } else {
+            out.push_str(&format!(
+                "Proposed approach, not a completed experiment:\n\n{}\n\n",
+                h.validation_plan
+            ));
         }
-        if record.evidence.is_empty() {
-            out.push_str("The current assessment cites no evidence links. Agent reasoning alone does not establish support.\n\n");
+        if !h.assumptions.is_empty() {
+            out.push_str("For this to work, the following would need to hold:\n\n");
+            for assumption in &h.assumptions {
+                out.push_str(&format!("- {assumption}\n"));
+            }
+            out.push('\n');
         }
     } else {
-        out.push_str("No assessment has been recorded; the candidate remains untested.\n\n");
+        out.push_str("No practical plan was recorded for this idea.\n\n");
     }
-    if finding.evidence.is_empty() {
-        out.push_str("No evidence is linked to this candidate.\n\n");
+    let mut seen = BTreeSet::new();
+    let actions = finding.reviews.iter().flat_map(|r| {
+        r.next_actions.iter().chain(
+            r.objections
+                .iter()
+                .filter_map(|o| o.suggested_check.as_ref()),
+        )
+    });
+    for action in actions.filter(|a| !a.trim().is_empty() && seen.insert(a.as_str())) {
+        out.push_str(&format!("- Suggested follow-up: {action}\n"));
+    }
+    if !seen.is_empty() {
+        out.push('\n');
+    }
+}
+
+fn render_reading(out: &mut String, finding: &Finding) {
+    out.push_str("**What to read**\n\n");
+    if finding.sources.is_empty() {
+        out.push_str("No readable source reference was recorded for this idea. No reading list has been invented.\n\n");
+        return;
+    }
+    for (index, source) in finding.sources.iter().enumerate() {
+        let start = if index == 0 && reading::access_priority(source) < 2 {
+            "Start here: "
+        } else {
+            ""
+        };
+        out.push_str(&format!(
+            "{}. **{start}{}**\n",
+            index + 1,
+            reading::title(source)
+        ));
+        let mut notes = BTreeSet::new();
+        for note in finding
+            .item
+            .hypothesis
+            .iter()
+            .flat_map(|h| &h.reading)
+            .filter(|n| n.source_id == source.id)
+        {
+            if !note.reason.trim().is_empty() {
+                notes.insert(format!("Read for: {}", note.reason));
+            }
+            if !note.locator.trim().is_empty() {
+                notes.insert(format!("Where to look: {}", note.locator));
+            }
+        }
+        for (evidence, link) in &finding.evidence {
+            if evidence.source_ids.contains(&source.id) {
+                notes.insert(format!("Linked research note: {}", link.justification));
+                notes.insert(format!("How the source was used: {}", evidence.method));
+            }
+        }
+        for observation in finding
+            .reviews
+            .iter()
+            .flat_map(|r| &r.observations)
+            .filter(|o| o.source_id == source.id)
+        {
+            notes.insert(format!("Where to look: {}", observation.locator.render()));
+            notes.insert(format!("Recorded observation: {}", observation.observation));
+        }
+        if notes.is_empty() {
+            out.push_str(
+                "   - Linked to this idea. No explanation of its relevance was recorded.\n",
+            );
+        } else {
+            for note in notes {
+                out.push_str(&format!("   - {note}\n"));
+            }
+        }
+        reading::details(out, source);
+        out.push('\n');
+    }
+}
+
+fn render_known_and_unknown(out: &mut String, finding: &Finding) {
+    out.push_str("**What we know so far**\n\n");
+    let status = match finding.summary.assessment {
+        Assessment::Untested => "Not tested yet.",
+        Assessment::Plausible => "Promising after review, but not experimentally established.",
+        Assessment::Supported => "Evidence supports this idea within its stated limits.",
+        Assessment::Contested => "The evidence is mixed; the disagreement is unresolved.",
+        Assessment::Refuted => "Evidence goes against this idea or something it depends on.",
+        Assessment::Inconclusive => "The available checks did not settle whether this works.",
+    };
+    out.push_str(&format!("{status}\n\n"));
+    if let Some(record) = &finding.assessment_record {
+        out.push_str(&format!("{}\n\n", record.rationale));
+        if record.evidence.is_empty() {
+            out.push_str("This assessment does not cite evidence; reasoning alone does not show that the idea works.\n\n");
+        }
     }
     for (evidence, link) in &finding.evidence {
         let current = finding
             .assessment_record
             .as_ref()
             .is_some_and(|r| r.evidence.iter().any(|l| same_link(l, link)));
+        let relation = match link.relation {
+            EvidenceRelation::Supports => "Supports this idea",
+            EvidenceRelation::Contradicts => "Goes against this idea",
+            EvidenceRelation::Inconclusive => "Does not settle the question",
+            EvidenceRelation::Context => "Background information",
+        };
+        let role = if current {
+            "used in the current assessment"
+        } else {
+            "Background only; not used in the current assessment"
+        };
         out.push_str(&format!(
-            "- `{}` ({}, {}): **{}** the claim \"{}\". {}\n  - Observation: {}\n  - Method: {}\n",
-            evidence.id,
-            evidence.kind.as_str(),
-            if current {
-                "cited by the current assessment"
-            } else {
-                "recorded context, not a basis of the current assessment"
-            },
-            link.relation.as_str(),
-            link.claim,
-            link.justification,
-            evidence.content,
-            evidence.method
+            "- **{relation}** ({role}): {}\n  - What was found: {}\n  - How it was obtained: {}\n",
+            link.justification, evidence.content, evidence.method
         ));
-        if let Some(limits) = &link.limits {
-            out.push_str(&format!("  - Claim limits: {limits}\n"));
+        if evidence.kind == EvidenceKind::AgentCritique {
+            out.push_str("  - This is an agent's reasoning, not an independent observation.\n");
         }
-        if let Some(limits) = &evidence.limitations {
-            out.push_str(&format!("  - Evidence limits: {limits}\n"));
+        for limit in [&link.limits, &evidence.limitations].into_iter().flatten() {
+            out.push_str(&format!("  - What this does not establish: {limit}\n"));
         }
-        for id in &evidence.source_ids {
-            out.push_str(&format!(
-                "  - Source: `{id}` (see Sources for access and citation)\n"
-            ));
+        for source in &finding.sources {
+            if evidence.source_ids.contains(&source.id) {
+                out.push_str(&format!("  - Read more: {}\n", reading::title(source)));
+            }
         }
     }
-    if !finding.item.source_ids.is_empty() {
-        out.push_str(&format!(
-            "\nCandidate source references (not evidence by themselves): {}.\n",
+    if !finding.evidence.is_empty() {
+        out.push('\n');
+    }
+    let mut concerns = BTreeSet::new();
+    if let Some(h) = &finding.item.hypothesis {
+        let limits = if h.limitations.trim().is_empty() {
+            // Older records stored this note only in their generated prose.
             finding
                 .item
-                .source_ids
-                .iter()
-                .map(|id| format!("`{id}`"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
+                .content
+                .split("\n## Limitations\n")
+                .nth(1)
+                .map(|s| s.split("\n## ").next().unwrap_or(s))
+                .unwrap_or("")
+                .trim()
+        } else {
+            h.limitations.trim()
+        };
+        if !limits.is_empty() {
+            concerns.insert(limits.to_owned());
+        }
     }
-    out.push('\n');
+    for review in &finding.reviews {
+        for objection in &review.objections {
+            concerns.insert(objection.description.clone());
+        }
+        concerns.extend(review.unknowns.iter().cloned());
+    }
+    if !concerns.is_empty() {
+        out.push_str("**What still needs to be understood**\n\n");
+        for concern in concerns {
+            out.push_str(&format!("- {concern}\n"));
+        }
+        out.push('\n');
+    }
 }
 
 fn same_link(a: &EvidenceLink, b: &EvidenceLink) -> bool {
@@ -215,39 +347,4 @@ fn same_link(a: &EvidenceLink, b: &EvidenceLink) -> bool {
         && a.relation == b.relation
         && a.justification == b.justification
         && a.limits == b.limits
-}
-
-fn render_reviews(out: &mut String, finding: &Finding) {
-    out.push_str("**Review findings and objections**\n\n");
-    if finding.reviews.is_empty() {
-        out.push_str("No review was recorded for this candidate.\n\n");
-        return;
-    }
-    out.push_str("Reviews are attributed reasoning, not independent empirical validation. Their proposed status does not replace the current recorded assessment.\n\n");
-    for review in &finding.reviews {
-        out.push_str(&format!(
-            "- `{}` ({}): {}\n",
-            review.id,
-            review.strategy.as_str(),
-            review.assessment_text
-        ));
-        for objection in &review.objections {
-            out.push_str(&format!(
-                "  - {} objection: {}\n",
-                if objection.fatal {
-                    "Fatal-premise"
-                } else {
-                    "Repairable"
-                },
-                objection.description
-            ));
-            if let Some(check) = &objection.suggested_check {
-                out.push_str(&format!("    - Suggested check: {check}\n"));
-            }
-        }
-        for unknown in &review.unknowns {
-            out.push_str(&format!("  - Unresolved: {unknown}\n"));
-        }
-    }
-    out.push('\n');
 }

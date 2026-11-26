@@ -199,6 +199,11 @@ fn inline_spans(text: &str) -> Vec<Span> {
             chars.next();
             push(&mut spans, &mut buf, bold, code);
             bold = !bold;
+        } else if c == '[' && !code {
+            match reading_link(&mut chars) {
+                Some(link) => buf.push_str(&link),
+                None => buf.push(c),
+            }
         } else if c == '`' {
             push(&mut spans, &mut buf, bold, code);
             code = !code;
@@ -208,6 +213,54 @@ fn inline_spans(text: &str) -> Vec<Span> {
     }
     push(&mut spans, &mut buf, bold, code);
     spans
+}
+
+/// Render Markdown links as `title (URL)`, including the angle-bracket
+/// destinations used by the reading guide. This is text, not a PDF action.
+fn reading_link(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Option<String> {
+    let mut probe = chars.clone();
+    let mut label = String::new();
+    loop {
+        match probe.next()? {
+            ']' => break,
+            '[' => return None,
+            '\\' => label.push(probe.next()?),
+            c => label.push(c),
+        }
+    }
+    if probe.next()? != '(' {
+        return None;
+    }
+    let mut target = String::new();
+    let mut depth = 1;
+    let angle = probe.peek() == Some(&'<');
+    if angle {
+        probe.next();
+    }
+    loop {
+        let c = probe.next()?;
+        if angle && c == '>' {
+            if probe.next()? != ')' {
+                return None;
+            }
+            break;
+        }
+        if !angle {
+            match c {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        target.push(c);
+    }
+    *chars = probe;
+    Some(format!("{label} ({target})"))
 }
 
 // --- fonts and metrics ---

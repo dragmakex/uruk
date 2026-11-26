@@ -27,10 +27,10 @@ async fn human_report_explains_only_the_top_five_active_candidates() {
         .await
         .unwrap();
     let top = markdown
-        .split("### Top 5 findings\n")
+        .split("### Top 5 ideas by Elo\n")
         .nth(1)
         .expect("top-five section")
-        .split("### Candidates\n")
+        .split(report::REPORT_SECTIONS[1])
         .next()
         .unwrap();
     assert_eq!(top.matches("#### ").count(), 5);
@@ -38,10 +38,11 @@ async fn human_report_explains_only_the_top_five_active_candidates() {
     assert!(!top.contains("Candidate 0"));
     assert!(top.contains(&leader.hypothesis.as_ref().unwrap().claim));
     assert!(top.contains("stated mechanism"));
-    assert!(top.contains("**Evidence and limits**"));
-    assert!(top.contains("**Review findings and objections**"));
-    assert!(top.contains("**Next test**"));
-    assert!(top.contains("untested"));
+    assert!(top.contains("**What the idea is**"));
+    assert!(top.contains("**How it works**"));
+    assert!(top.contains("**What trying it would involve**"));
+    assert!(top.contains("**What to read**"));
+    assert!(top.contains("Not tested yet"));
     assert!(top.contains("not a probability"));
 }
 
@@ -166,14 +167,14 @@ async fn current_assessment_links_are_explained_even_when_the_original_link_was_
         .await
         .unwrap();
     let top = markdown
-        .split("### Top 5 findings\n")
+        .split("### Top 5 ideas by Elo\n")
         .nth(1)
         .unwrap()
-        .split("### Candidates\n")
+        .split(report::REPORT_SECTIONS[1])
         .next()
         .unwrap();
     assert!(
-        top.contains("cited by the current assessment): **supports**"),
+        top.contains("**Supports this idea** (used in the current assessment)"),
         "{top}"
     );
     for text in [
@@ -184,9 +185,9 @@ async fn current_assessment_links_are_explained_even_when_the_original_link_was_
         "Repeat at a second condition",
         "Cross-condition effect is unknown",
         "Run the second-condition check",
-        "recorded context, not a basis",
+        "Background only; not used in the current assessment",
     ] {
         assert!(top.contains(text), "missing {text}: {top}");
     }
-    assert!(top.contains("**Current status: supported.**"));
+    assert!(top.contains("Evidence supports this idea within its stated limits"));
 }

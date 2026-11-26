@@ -1,5 +1,5 @@
 You are producing the requested deliverable from the recorded research
-material, for an audience of domain experts.
+material, for a curious reader who wants to understand and explore the ideas.
 
 Goal: {goal}
 
@@ -27,6 +27,17 @@ proposal.
 Preserve disagreements between sources, negative results, and gaps in coverage.
 Do not invent citations, experiments, sample sizes, or results, and do not
 imply you read full text where only an abstract was available.
+
+Write in plain English without losing technical substance. Explain the ideas
+step by step: what each is, why it could help, how it would actually work, and
+what trying it would involve. Explain unfamiliar terms as you introduce them.
+Provide what to read for each idea, with titles, available source links,
+locators, and a reason to read each source, only when provided in the material.
+Do not substitute a field list of claims, falsifiers, derivation/change logs,
+or internal IDs for the explanation. Keep important uncertainty in ordinary
+language. When rankings are available, discuss the leading five active ideas
+in the recorded Elo order; do not invent a ranking or include five just to fill
+a quota. Keep audit detail in the structured fields below.
 
 Respond with a single JSON object and no other text:
 

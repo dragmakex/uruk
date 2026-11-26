@@ -59,8 +59,8 @@ async fn literature_only_task() {
         .unwrap();
 
     assert!(
-        text.contains("abstract_only"),
-        "access level must be reported"
+        text.contains("Only the abstract was available"),
+        "access level must be reported in plain English"
     );
     assert!(
         text.contains("paywalled"),
@@ -1195,5 +1195,8 @@ async fn allowed_execution_runs_without_approval_and_supports_the_claim() {
     assert!(text.contains("**Reproduction:**"), "{text}");
     assert!(text.contains("### Verification verdicts"), "{text}");
     assert!(text.contains("**reproduced**"), "{text}");
-    assert!(text.contains("supported"), "{text}");
+    assert!(
+        text.contains("Evidence supports this idea within its stated limits"),
+        "{text}"
+    );
 }

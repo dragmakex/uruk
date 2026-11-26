@@ -242,6 +242,16 @@ impl GeneratedHypothesis {
             predictions: self.predictions.clone(),
             falsifiers: self.falsifiers.clone(),
             validation_plan: self.validation_plan.clone(),
+            reading: self
+                .grounding
+                .iter()
+                .map(|g| ReadingNote {
+                    source_id: SourceId::from_raw(g.source_id.clone()),
+                    locator: g.locator.clone(),
+                    reason: g.supports.clone(),
+                })
+                .collect(),
+            limitations: self.limitations.clone(),
         }
     }
 
