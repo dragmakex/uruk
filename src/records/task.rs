@@ -1,5 +1,6 @@
 //! Tasks, decisions, artifacts, and experiments (SPEC §4.2, §8, §9.2).
 
+use super::execution::{ExecutionRequest, Reproduction};
 use super::goal::Permissions;
 use super::ids::*;
 use serde::{Deserialize, Serialize};
@@ -412,6 +413,9 @@ pub struct Experiment {
     pub required_permissions: Vec<String>,
     /// Execution record, once run.
     pub execution: Option<ExecutionRecord>,
+    /// Closed-loop verification of an earlier experiment, if this is a rerun.
+    #[serde(default)]
+    pub reproduction: Option<Reproduction>,
     /// Evidence produced from the result.
     pub evidence_ids: Vec<EvidenceId>,
     /// For external results: contributor and collection context (SPEC §8).
@@ -424,6 +428,12 @@ pub struct Experiment {
 /// A reproducibility record for one execution (SPEC §8).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionRecord {
+    /// Absent on legacy records: do not reconstruct argv from display text.
+    #[serde(default)]
+    pub request: Option<ExecutionRequest>,
+    /// Hash of the top-level program binary, not all transitive dependencies.
+    #[serde(default)]
+    pub program_hash: Option<ContentHash>,
     /// Command or equivalent API request, with secrets excluded.
     pub command: String,
     /// Tool and environment versions.
@@ -467,6 +477,8 @@ mod tests {
     fn failed_execution_cannot_support() {
         let now = OffsetDateTime::UNIX_EPOCH;
         let mut exec = ExecutionRecord {
+            request: None,
+            program_hash: None,
             command: "python analyze.py".into(),
             environment: vec![],
             parameters: vec![],

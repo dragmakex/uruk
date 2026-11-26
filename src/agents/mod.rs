@@ -14,5 +14,6 @@ pub mod ranking;
 pub mod reflection;
 pub mod search;
 pub mod supervisor;
+pub mod verification;
 
 pub use context::{AgentContext, CallAllowance, Completion};

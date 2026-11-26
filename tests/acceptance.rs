@@ -1150,7 +1150,22 @@ async fn allowed_execution_runs_without_approval_and_supports_the_claim() {
     assert_eq!(result.content.trim(), "2");
 
     let experiments = f.store.list_experiments(&f.run_id).await.unwrap();
-    assert_eq!(experiments.len(), 1);
+    assert_eq!(
+        experiments.len(),
+        2,
+        "a supported experiment must be rerun once"
+    );
+    let verification = experiments
+        .iter()
+        .find(|e| serde_json::to_value(e).unwrap()["reproduction"].is_object())
+        .expect("closed-loop verification experiment");
+    let verdict = serde_json::to_value(verification).unwrap();
+    assert_eq!(verdict["reproduction"]["verdict"], "reproduced");
+    assert!(
+        tasks
+            .iter()
+            .any(|t| t.strategy == "verify" && t.state == TaskState::Completed)
+    );
     let exec = experiments[0].execution.as_ref().unwrap();
     assert!(exec.rerun.is_ok());
     assert!(exec.code_hash.is_some());
@@ -1168,12 +1183,17 @@ async fn allowed_execution_runs_without_approval_and_supports_the_claim() {
     );
 
     let usage = f.store.budget_usage(&f.run_id).await.unwrap();
-    assert_eq!(usage.tool_executions, 1);
+    assert_eq!(
+        usage.tool_executions, 2,
+        "original execution and one verification"
+    );
 
     let export = report::export_run(&f.store, &f.run_id).await.unwrap();
     let text = tokio::fs::read_to_string(export.dir.join("REPORT.md"))
         .await
         .unwrap();
     assert!(text.contains("**Reproduction:**"), "{text}");
+    assert!(text.contains("### Verification verdicts"), "{text}");
+    assert!(text.contains("**reproduced**"), "{text}");
     assert!(text.contains("supported"), "{text}");
 }
