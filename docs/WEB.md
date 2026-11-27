@@ -259,6 +259,31 @@ belong to that run — both constraints live in the SQL queries themselves
 (and in the `OwnedSource` extractor), never in a post-fetch check, so a
 foreign run, a foreign source, and a nonexistent one are indistinguishable.
 
+### Research system map
+
+The live run view separates **Scientist input**, the **Supervisor**, an
+**asynchronous worker pool**, **Tools and retrieval**, and **Shared context
+memory**. The leading-five output stays above the map. The six campaign roles
+are shown only when present in the recorded plan or task history; bounded tasks
+are not padded with fictional workers. Search and execution workers, when
+recorded, appear with the tools rather than as additional scientific stages.
+
+The snapshot now includes the goal's `rubric` (preferences, attributes,
+constraints and acceptance criteria), a path-free `permissions` projection
+(`network`, `execute`, `allowed_tools`), and the plan's `stopping_conditions`.
+These are owner-scoped persisted facts, not new controls. The goal remains fixed
+after start, and tool permissions do not establish connection health or grant
+new access. The UI does not claim live chat, AlphaFold, external wet-lab execution,
+or integrations that the run has not recorded.
+
+Supervisor-to-worker connections describe allocation, not a mandatory pipeline.
+An observed worker start can animate a dot; coincident task changes never prove
+that one worker passed work to another. The first snapshot animates no arrival,
+and reduced-motion settings suppress the dots. Shared-memory counts come from
+the existing bounded snapshot: navigating to Candidates, Match log or Decisions
+scrolls to that panel without opening or fetching it. The source-library link
+explicitly opens the library across the browser's runs.
+
 ### On-demand run panels
 
 Match log, Candidates, and Decisions start closed and make no page request

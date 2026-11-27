@@ -90,14 +90,25 @@ for history watermarks and live-ranking page boundaries.
 
 One semantic DOM tree at every width:
 
-- ≥1440px: Supervisor left, three-column worker grid, measured SVG wires
-  (dashed while the downstream agent is thinking).
-- 1024-1439px: condensed spacing, wires retained.
-- 768-1023px: Supervisor full width, two-column grid, wires hidden; each
-  card shows its textual `feeds …` pipeline context instead.
-- <768px: single-column pipeline order, compact sticky run header,
-  collapsible key. The run header is measured at runtime so the sticky
-  record controls stay below it when the question wraps to two lines.
+- ≥1200px: Scientist input and outputs on the left, Supervisor above the
+  specialist pool in the center, Tools and retrieval on the right, shared
+  context memory below the pool. Workers form a three-column grid.
+- 1024-1199px: input and tools share the left column, the worker pool uses two
+  columns, and measured supervision connections remain visible.
+- 900-1023px: supervisor facts stack and decorative wires disappear.
+- <900px: input, supervision/workers, tools and memory stack in reading order;
+  below 600px workers become a single column.
+
+The map represents asynchronous allocation, not a required six-stage sequence.
+Role descriptions stay visible without wires. Recorded Search/Tool workers sit
+with external resources; absent roles are not invented. Permissions are clearly
+separate from integration availability. Model-call and round counts are recorded
+budget facts, not progress estimates. A moving dot indicates an observed worker
+start, never a supposed worker-to-worker transfer inferred from timing.
+
+The compact sticky run header is measured at runtime so record controls remain
+below it when the question wraps. Memory links scroll to the still-closed panels
+without requesting their pages.
 
 The layout is verified down to 320px. Both data tables (the library and
 the run-form agent legend) become stacked records rather than forcing a

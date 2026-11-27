@@ -74,6 +74,18 @@ export interface GoalView {
   mode: string;
   revision: number;
   deliverables: string[];
+  rubric: {
+    preferences: string[];
+    attributes: string[];
+    constraints: string[];
+    acceptance: string[];
+  };
+  /** Permissions recorded for this run, not tool availability or health. */
+  permissions: {
+    network: boolean;
+    execute: boolean;
+    allowed_tools: string[];
+  };
   budget: BudgetView;
 }
 
@@ -82,6 +94,7 @@ export interface PlanView {
   roles: string[];
   methods: string[];
   rationale: string;
+  stopping_conditions: string[];
 }
 
 export interface TaskCounts {
