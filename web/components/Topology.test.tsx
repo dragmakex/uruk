@@ -53,8 +53,16 @@ function panel(role: string, taskId: string | null): AgentPanel {
 }
 
 const agents = (tasks: Record<string, string | null>): AgentPanel[] =>
-  ["supervisor", "generation", "reflection", "ranking", "proximity", "evolution", "meta_review"].map(
-    (role) => panel(role, role === "supervisor" ? null : tasks[role] ?? null),
+  [
+    "supervisor",
+    "generation",
+    "reflection",
+    "ranking",
+    "proximity",
+    "evolution",
+    "meta_review",
+  ].map((role) =>
+    panel(role, role === "supervisor" ? null : (tasks[role] ?? null)),
   );
 
 /**
@@ -62,24 +70,36 @@ const agents = (tasks: Record<string, string | null>): AgentPanel[] =>
  * measure nothing. Lay the cards out on a grid so the geometry is real.
  */
 function layout(): void {
-  let row = 0;
+  const workerRoles = [
+    "generation",
+    "reflection",
+    "ranking",
+    "proximity",
+    "evolution",
+    "meta_review",
+  ];
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
     function (this: HTMLElement) {
       const role = this.dataset.role;
-      if (!role) {
-        // The container itself: origin and a width the wires can be drawn in.
-        return box(0, 0, 900, 700);
-      }
-      if (role === "supervisor") return box(0, 0, 240, 120);
-      row += 1;
-      const column = row % 2 === 1 ? 0 : 1;
-      const line = Math.floor((row - 1) / 2);
-      return box(400 + column * 260, line * 160, 240, 120);
+      if (!role) return box(0, 0, 900, 700);
+      if (role === "supervisor") return box(24, 0, 520, 140);
+      const index = workerRoles.indexOf(role);
+      return box(
+        24 + (index % 3) * 280,
+        200 + Math.floor(index / 3) * 180,
+        260,
+        140,
+      );
     },
   );
 }
 
-function box(left: number, top: number, width: number, height: number): DOMRect {
+function box(
+  left: number,
+  top: number,
+  width: number,
+  height: number,
+): DOMRect {
   return {
     left,
     top,
@@ -104,25 +124,36 @@ afterEach(() => {
 });
 
 describe("Topology", () => {
-  it("draws a wire for every pipeline edge it can measure", () => {
+  it("draws only supervisor allocation connections to the measured workers", () => {
     const { container } = render(
-      <Topology runId="run_0412aa" agents={agents({ generation: "task_g1" })} stats={stats} />,
+      <Topology
+        runId="run_0412aa"
+        agents={agents({ generation: "task_g1" })}
+        stats={stats}
+      />,
     );
-    expect(container.querySelectorAll("svg.wires polyline")).toHaveLength(7);
+    const wires = container.querySelectorAll("svg.wires polyline");
+    expect(wires).toHaveLength(6);
+    for (const wire of wires)
+      expect(wire).toHaveAttribute("data-from", "supervisor");
   });
 
   it("dashes the wires into the roles that are thinking", () => {
     const { container } = render(
-      <Topology runId="run_0412aa" agents={agents({ generation: "task_g1" })} stats={stats} />,
+      <Topology
+        runId="run_0412aa"
+        agents={agents({ generation: "task_g1" })}
+        stats={stats}
+      />,
     );
-    const carrying = Array.from(container.querySelectorAll("svg.wires polyline")).filter((el) =>
-      el.classList.contains("is-carrying"),
-    );
+    const carrying = Array.from(
+      container.querySelectorAll("svg.wires polyline"),
+    ).filter((el) => el.classList.contains("is-carrying"));
     // generation is busy, so its inbound wire carries.
     expect(carrying).toHaveLength(1);
   });
 
-  it("sends a dot along the wire when work moves to another role", () => {
+  it("marks an observed worker start without claiming a worker-to-worker handoff", () => {
     const moves: WorkMove[] = [];
     const { container, rerender } = render(
       <Topology
@@ -145,8 +176,57 @@ describe("Topology", () => {
 
     const dot = container.querySelector("circle.handoff-pulse");
     expect(dot).not.toBeNull();
-    expect(dot?.querySelector("animateMotion")?.getAttribute("path")).toMatch(/^M/);
-    expect(moves).toEqual([{ from: "generation", to: "reflection", kind: "handoff" }]);
+    expect(dot?.querySelector("animateMotion")?.getAttribute("path")).toMatch(
+      /^M/,
+    );
+    expect(moves).toEqual([
+      { from: "supervisor", to: "reflection", kind: "arrival" },
+    ]);
+  });
+
+  it("starts each dynamically inserted pulse once on the existing SVG clock", () => {
+    const begin = vi.fn();
+    const previous = Object.getOwnPropertyDescriptor(
+      SVGElement.prototype,
+      "beginElement",
+    );
+    Object.defineProperty(SVGElement.prototype, "beginElement", {
+      configurable: true,
+      value: begin,
+    });
+    try {
+      const { container, rerender } = render(
+        <Topology
+          runId="run_0412aa"
+          agents={agents({ generation: "task_g1" })}
+          stats={stats}
+        />,
+      );
+      rerender(
+        <Topology
+          runId="run_0412aa"
+          agents={agents({ reflection: "task_r1" })}
+          stats={stats}
+        />,
+      );
+      expect(container.querySelector("animateMotion")).toHaveAttribute(
+        "begin",
+        "indefinite",
+      );
+      expect(begin).toHaveBeenCalledTimes(1);
+      rerender(
+        <Topology
+          runId="run_0412aa"
+          agents={agents({ reflection: "task_r1" })}
+          stats={stats}
+        />,
+      );
+      expect(begin).toHaveBeenCalledTimes(1);
+    } finally {
+      if (previous)
+        Object.defineProperty(SVGElement.prototype, "beginElement", previous);
+      else Reflect.deleteProperty(SVGElement.prototype, "beginElement");
+    }
   });
 
   it("draws nothing on the first snapshot, which is a position, not a move", () => {
@@ -166,10 +246,18 @@ describe("Topology", () => {
   it("retires the dot once it has landed", () => {
     vi.useFakeTimers();
     const { container, rerender } = render(
-      <Topology runId="run_0412aa" agents={agents({ generation: "task_g1" })} stats={stats} />,
+      <Topology
+        runId="run_0412aa"
+        agents={agents({ generation: "task_g1" })}
+        stats={stats}
+      />,
     );
     rerender(
-      <Topology runId="run_0412aa" agents={agents({ reflection: "task_r1" })} stats={stats} />,
+      <Topology
+        runId="run_0412aa"
+        agents={agents({ reflection: "task_r1" })}
+        stats={stats}
+      />,
     );
     expect(container.querySelectorAll(".handoff-pulse")).toHaveLength(1);
 

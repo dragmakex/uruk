@@ -13,6 +13,20 @@ export function activityText(panel: AgentPanel): string {
       panel.current.attempts > 1 ? `, attempt ${panel.current.attempts}` : "";
     return `Running ${panel.current.strategy}${attempts}.`;
   }
+  if (panel.role === "supervisor" && panel.assignments !== null) {
+    const running = panel.assignments.reduce(
+      (total, assignment) => total + assignment.running,
+      0,
+    );
+    const open = panel.assignments.reduce(
+      (total, assignment) => total + assignment.open,
+      0,
+    );
+    const count = running > 0 ? running : open;
+    return count > 0
+      ? `${count} worker task${count === 1 ? "" : "s"} ${running > 0 ? "running" : "open"}.`
+      : "No open worker tasks.";
+  }
   const queued = panel.counts.pending + panel.counts.blocked;
   if (queued > 0) {
     return `${queued} task${queued === 1 ? "" : "s"} queued.`;
@@ -61,7 +75,8 @@ export function AgentCard({
   stats: Stats;
 }) {
   const meta = ROLES[panel.role];
-  const failed = panel.last_finished?.state === "failed" ? panel.last_finished : null;
+  const failed =
+    panel.last_finished?.state === "failed" ? panel.last_finished : null;
   const displayedTask = panel.current?.reasoning_preview
     ? panel.current
     : panel.last_finished?.reasoning_preview
@@ -78,13 +93,20 @@ export function AgentCard({
         <span className="agent-state">{panel.state}</span>
       </header>
       <div className="agent-body">
+        {meta && <p className="agent-purpose">{meta.description}</p>}
         <p>{activityText(panel)}</p>
         {displayedTask !== null && (
-          <p className="agent-reasoning-preview" aria-label="Latest thinking preview">
+          <p
+            className="agent-reasoning-preview"
+            aria-label="Latest thinking preview"
+          >
             <span className="agent-reasoning-label">
               Thinking
               {displayedTask.reasoning_streaming ? (
-                <span className="thinking-dots" aria-label="Receiving more thinking">
+                <span
+                  className="thinking-dots"
+                  aria-label="Receiving more thinking"
+                >
                   <i />
                   <i />
                   <i />
@@ -111,16 +133,13 @@ export function AgentCard({
                   <td>
                     {assignment.open > 0
                       ? `${assignment.open} open${assignment.running > 0 ? `, ${assignment.running} running` : ""}`
-                      : assignment.latest_strategy ?? "none"}
+                      : (assignment.latest_strategy ?? "none")}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
-        {meta?.feeds ? (
-          <p className="flow-note micro">feeds {roleLabel(meta.feeds)}</p>
-        ) : null}
       </div>
       <footer className="agent-foot">
         <span className="micro">{footerStat(panel, stats)}</span>

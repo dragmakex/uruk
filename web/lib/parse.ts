@@ -201,11 +201,24 @@ function parseBudget(value: unknown, path: string): BudgetView {
 
 function parseGoal(value: unknown, path: string): GoalView {
   const r = record(value, path);
+  const rubric = record(r.rubric, `${path}.rubric`);
+  const permissions = record(r.permissions, `${path}.permissions`);
   return {
     question: str(r.question, `${path}.question`),
     mode: str(r.mode, `${path}.mode`),
     revision: num(r.revision, `${path}.revision`),
     deliverables: strArray(r.deliverables, `${path}.deliverables`),
+    rubric: {
+      preferences: strArray(rubric.preferences, `${path}.rubric.preferences`),
+      attributes: strArray(rubric.attributes, `${path}.rubric.attributes`),
+      constraints: strArray(rubric.constraints, `${path}.rubric.constraints`),
+      acceptance: strArray(rubric.acceptance, `${path}.rubric.acceptance`),
+    },
+    permissions: {
+      network: bool(permissions.network, `${path}.permissions.network`),
+      execute: bool(permissions.execute, `${path}.permissions.execute`),
+      allowed_tools: strArray(permissions.allowed_tools, `${path}.permissions.allowed_tools`),
+    },
     budget: parseBudget(r.budget, `${path}.budget`),
   };
 }
@@ -218,6 +231,7 @@ function parsePlan(value: unknown, path: string): PlanView | null {
     roles: strArray(r.roles, `${path}.roles`),
     methods: strArray(r.methods, `${path}.methods`),
     rationale: str(r.rationale, `${path}.rationale`),
+    stopping_conditions: strArray(r.stopping_conditions, `${path}.stopping_conditions`),
   };
 }
 

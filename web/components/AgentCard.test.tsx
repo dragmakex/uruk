@@ -39,6 +39,28 @@ describe("activityText", () => {
     expect(activityText(panel({}))).toBe("No work yet this run.");
   });
 
+  it.each([
+    [0, 0, "No open worker tasks."],
+    [1, 0, "1 worker task open."],
+    [3, 0, "3 worker tasks open."],
+    [3, 1, "1 worker task running."],
+    [4, 2, "2 worker tasks running."],
+  ])(
+    "summarizes supervisor assignments with %s open and %s running",
+    (open, running, text) => {
+      expect(
+        activityText(
+          panel({
+            role: "supervisor",
+            assignments: [
+              { role: "generation", open, running, latest_strategy: null },
+            ],
+          }),
+        ),
+      ).toBe(text);
+    },
+  );
+
   it("reports queued work", () => {
     expect(
       activityText(panel({ counts: { ...panel({}).counts, pending: 3 } })),
@@ -90,15 +112,28 @@ describe("AgentCard", () => {
   it("renders the role, a text state label, and the footer stat", () => {
     const generation = snapshot.agents[1]!;
     render(<AgentCard runId="run-test" panel={generation} stats={stats} />);
-    expect(screen.getByRole("heading", { name: "Generation" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Generation" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Literature-grounded ideas and simulated debate"),
+    ).toBeInTheDocument();
     expect(screen.getByText("thinking")).toBeInTheDocument();
     expect(screen.getByText("13 items")).toBeInTheDocument();
-    expect(screen.getByText(/Thinking/, { selector: ".agent-reasoning-label" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Receiving more thinking")).toBeInTheDocument();
     expect(
-      screen.getByText("Inspect the strongest sources before comparing the hypotheses."),
+      screen.getByText(/Thinking/, { selector: ".agent-reasoning-label" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Generation — view full reasoning" })).toHaveAttribute(
+    expect(
+      screen.getByLabelText("Receiving more thinking"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Inspect the strongest sources before comparing the hypotheses.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Generation — view full reasoning" }),
+    ).toHaveAttribute(
       "href",
       "/runs/run-test/tasks/task-generation-literature/reasoning",
     );
@@ -110,7 +145,12 @@ describe("AgentCard", () => {
       role: "generation",
       state: "thinking",
       current: generation.current
-        ? { ...generation.current, id: "task-new", reasoning_preview: null, reasoning_streaming: false }
+        ? {
+            ...generation.current,
+            id: "task-new",
+            reasoning_preview: null,
+            reasoning_streaming: false,
+          }
         : null,
       last_finished: {
         id: "task-previous",
@@ -126,17 +166,22 @@ describe("AgentCard", () => {
     });
 
     render(<AgentCard runId="run-test" panel={starting} stats={stats} />);
-    expect(screen.getByText("Compare the evidence already gathered.")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Generation — view full reasoning" })).toHaveAttribute(
-      "href",
-      "/runs/run-test/tasks/task-previous/reasoning",
-    );
+    expect(
+      screen.getByText("Compare the evidence already gathered."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Generation — view full reasoning" }),
+    ).toHaveAttribute("href", "/runs/run-test/tasks/task-previous/reasoning");
   });
 
   it("is not inspectable and omits thinking when the agent has no reasoning", () => {
     render(<AgentCard runId="run-test" panel={panel({})} stats={stats} />);
-    expect(screen.queryByLabelText("Latest thinking preview")).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /view full reasoning/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Latest thinking preview"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /view full reasoning/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("renders the supervisor assignment table", () => {
@@ -147,7 +192,9 @@ describe("AgentCard", () => {
   });
 
   it("marks idle panels with the dashed-box class", () => {
-    const { container } = render(<AgentCard runId="run-test" panel={panel({})} stats={stats} />);
+    const { container } = render(
+      <AgentCard runId="run-test" panel={panel({})} stats={stats} />,
+    );
     expect(container.querySelector(".agent")).toHaveClass("is-idle");
   });
 
@@ -167,8 +214,6 @@ describe("AgentCard", () => {
       },
     });
     render(<AgentCard runId="run-test" panel={failing} stats={stats} />);
-    expect(
-      screen.getByText(/2 failed: provider timeout/),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/2 failed: provider timeout/)).toBeInTheDocument();
   });
 });
