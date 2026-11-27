@@ -39,6 +39,20 @@ after this one.
 {transcript}
 #END TRANSCRIPT#
 
+Write the idea for a curious reader in plain English. Keep the technical
+substance, but explain unfamiliar terms when first used. The claim should say
+what the idea is and why it matters. Explain the mechanism step by step: what
+acts on what, why each step follows, and what outcome is expected. Use concrete
+entities and several connected explanatory paragraphs rather than a terse
+technical abstract. In the validation plan, describe what trying the idea would
+involve: necessary inputs or equipment, setup, practical steps, and comparison
+with the current approach. Do not present that proposed procedure as executed.
+Give a reading guide: what to read, where to look (an actual source locator),
+and why that source helps someone understand this particular idea. Put those
+notes in grounding[].supports and grounding[].locator, using only source IDs
+from the supplied material. Do not invent titles, URLs, results, or unsupported
+implementation details; say when the material does not provide them.
+
 Respond with a single JSON object and no other text.
 
 To continue the discussion:
@@ -59,7 +73,8 @@ To conclude (only when the discussion has genuinely converged):
     "scope": "<where it applies>",
     "predictions": ["..."],
     "falsifiers": ["..."],
-    "validation_plan": "<how to test it>"
+    "validation_plan": "<how to test it>",
+    "grounding": [{"source_id": "<provided id>", "locator": "<where to read>", "supports": "<why to read this for the idea>"}]
   }
 }
 

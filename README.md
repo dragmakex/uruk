@@ -155,14 +155,16 @@ request or crash still yields a labelled partial report. The final deliverable
 draws on a reserved slice of the model-call budget; when it cannot run, the
 report says why.
 
-The **Human report** button opens a readable explanation of up to five active
-ranked candidates: the recorded claim and mechanism, evidence and limitations,
-review objections, and next tests. Missing candidates or validation are stated,
-not invented. **Agent report** downloads format-v1 JSON with the manifest,
-research records and assessment bases, sources, discovered works and search
-records, and exact human Markdown. The human template is v2; the five required
-top-level sections remain unchanged. The JSON download is owner-scoped and
-requires a new export (legacy exports are not regenerated on GET).
+The **Human report** starts with up to five leading active ideas by Elo. Each
+explains the idea, how it works, what trying it would involve, and what to read:
+linked source titles, reading reasons and specific sections when recorded, and
+honest access limits. Falsifiers and parent-change logs belong to the technical
+record, not the human explanation. Missing detail is stated rather than invented.
+**Agent report** downloads format-v1 JSON with the full records and assessment
+bases, sources, discovered works, searches, and exact human Markdown. Human
+template v3 puts findings and reading before research context, methods/limits,
+and reproduction. Exports are owner-scoped; existing saved reports need an
+explicit re-export to gain the layout (GET never regenerates them).
 
 ## What the design protects
 

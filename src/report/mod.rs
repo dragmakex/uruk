@@ -8,6 +8,7 @@ mod citations;
 mod export;
 mod findings;
 mod pdf;
+mod reading;
 
 pub use citations::{CitationOrigin, CitationRecord, CitationResolution, collect_citations};
 pub use export::{Export, REPORT_SECTIONS, REPORT_TEMPLATE_VERSION, export_run};

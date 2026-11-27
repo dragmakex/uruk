@@ -70,8 +70,10 @@ Honesty notes:
   exported `REPORT.md` bytes and Download PDF serves its deterministic
   PDF twin, both straight from the engine. Raw HTML inside the
   model-generated markdown is never rendered. **Human report** opens this
-  readable report, including the leading five recorded candidates and their
-  evidence, objections, limits, and next tests. **Agent report** downloads the
+  readable report: the leading five ideas by Elo, how each works, practical
+  steps, and an annotated reading guide with direct links and access limits.
+  Model counts and other run bookkeeping sit in a closed **Run details**
+  disclosure after the explanation. **Agent report** downloads the
   self-contained `AGENT_REPORT.json` audit snapshot from the same export.
   Older runs without the new artifact return `not_found` until explicitly
   re-exported; clicking the link never spends budget or starts research.

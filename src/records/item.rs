@@ -66,6 +66,20 @@ pub struct HypothesisFields {
     pub predictions: Vec<String>,
     pub falsifiers: Vec<String>,
     pub validation_plan: String,
+    /// Human reading guidance captured when the idea was generated.
+    #[serde(default)]
+    pub reading: Vec<ReadingNote>,
+    #[serde(default)]
+    pub limitations: String,
+}
+
+/// Why a particular source is worth reading for an idea. This records the
+/// author's guidance; it does not assert that a source proves the idea.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReadingNote {
+    pub source_id: SourceId,
+    pub locator: String,
+    pub reason: String,
 }
 
 /// An immutable research item version (SPEC §4.2).

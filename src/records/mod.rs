@@ -21,7 +21,7 @@ pub use evidence::{
 pub use execution::{ExecutionRequest, Reproduction, ReproductionVerdict};
 pub use goal::{Budget, Goal, InputRef, Mode, Permissions, Plan, Rubric, StopCondition};
 pub use ids::*;
-pub use item::{Author, HypothesisFields, ItemKind, ItemState, ResearchItem};
+pub use item::{Author, HypothesisFields, ItemKind, ItemState, ReadingNote, ResearchItem};
 pub use review::{
     ExplanatoryLabel, JudgeReviewView, Objection, ObservationNote, Review, ReviewStrategy,
 };

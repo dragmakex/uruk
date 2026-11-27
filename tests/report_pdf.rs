@@ -170,6 +170,25 @@ fn pdf_text_survives_a_round_trip_through_a_real_parser() {
 }
 
 #[test]
+fn pdf_source_links_are_readable_without_markdown_link_syntax() {
+    let markdown = "# Read more\n\nStart with [Calibration handbook](<https://example.org/calibration>). Then [Reference design](https://example.org/design).\n";
+    let doc = pdf_text(&render_report_pdf(markdown));
+    let text = doc.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        text.contains("Calibration handbook (https://example.org/calibration)"),
+        "{text}"
+    );
+    assert!(
+        text.contains("Reference design (https://example.org/design)"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("]("),
+        "link punctuation should not leak into the PDF: {text}"
+    );
+}
+
+#[test]
 fn untrusted_text_cannot_break_out_of_pdf_string_literals() {
     // Generated (model-derived) text lands in PDF string literals; the
     // delimiters and escape character must not let it inject operators.

@@ -146,20 +146,23 @@ export default async function ReportPage({
         </div>
       </div>
 
-      {facts.length > 0 && (
-        <dl className="manifest-grid">
-          {facts.map((fact) => (
-            <div className="manifest-cell" key={fact.label}>
-              <dt>{fact.label}</dt>
-              <dd>{fact.value}</dd>
-            </div>
-          ))}
-        </dl>
-      )}
-
       <div className="panel">
         <ReportMarkdown markdown={report.markdown} />
       </div>
+
+      {facts.length > 0 && (
+        <details className="legend-fold">
+          <summary>Run details</summary>
+          <dl className="manifest-grid">
+            {facts.map((fact) => (
+              <div className="manifest-cell" key={fact.label}>
+                <dt>{fact.label}</dt>
+                <dd>{fact.value}</dd>
+              </div>
+            ))}
+          </dl>
+        </details>
+      )}
     </div>
   );
 }

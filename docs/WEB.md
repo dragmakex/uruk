@@ -261,11 +261,27 @@ foreign run, a foreign source, and a nonexistent one are indistinguishable.
 Finished runs offer **Human report** (the rendered canonical Markdown) and
 **Agent report** (a JSON download). The human report explains up to five active
 hypotheses/proposals in the live ranking order: current-rubric Elo descending,
-unrated last, ties by immutable item ID. Each includes its recorded claim,
-mechanism, scope, assumptions, predictions, falsifiers, evidence relations and
-limits, review objections/unknowns, and proposed validation or next actions.
-Fewer candidates, absent validation, unknown cost, stale Elo, and partial runs
-are stated explicitly. Ranking is not scientific confirmation.
+unrated last, ties by immutable item ID. Each explains what the idea is, how
+it works, where it applies, expected outcomes, and what trying it would involve.
+The reading guide links source titles directly, explains why to read each
+source and where to look when that guidance was recorded, and identifies what
+was actually accessible. Full-text sources come before abstract-only and unread
+references; unrelated sources are not attached to every idea. Missing explanations,
+reading guidance, practical plans, and evidence are stated, not invented.
+Falsifiers, parent-change logs, candidate IDs, and the duplicate candidate inventory
+stay in the Agent report instead of being dumped into the human explanation.
+Important uncertainty stays visible in ordinary language. Elo still means
+ranking priority, not scientific confirmation.
+
+Human report template v3 leads with findings and reading material, then research
+context, methods/limits, and reproduction details. The web page places model
+counts and other run bookkeeping in a closed **Run details** disclosure after
+the report. The PDF renders source links as readable title/URL references.
+Generation, evolution, and synthesis prompts request plain-English walkthroughs
+and practical details; exports themselves remain deterministic and model-free.
+Previously saved reports need an explicit engine re-export to use the new
+layout. Old items without reading annotations remain readable, but do not gain
+invented reasons or source locators.
 
 Agent format v1 contains `manifest`, `top_finding_ids`, `research_records`
 (including current assessment records), `sources`, `works`, `searches`, and

@@ -11,15 +11,15 @@ use std::path::PathBuf;
 /// Version of the fixed `REPORT.md` template contract. Bump it whenever
 /// the section skeleton below changes shape, so consumers of exported
 /// reports can detect which contract a file follows.
-pub const REPORT_TEMPLATE_VERSION: u32 = 2;
+pub const REPORT_TEMPLATE_VERSION: u32 = 3;
 
-/// The canonical section headings, in the fixed order every report uses.
-/// `build_report` emits exactly these, exactly once, exactly in this
-/// order — for complete and partial runs alike.
+/// The canonical section headings, in reader-first order. The same headings
+/// are present for complete and partial runs; detailed audit records live in
+/// the agent export rather than being repeated as a candidate database dump.
 pub const REPORT_SECTIONS: [&str; 5] = [
-    "## 1. Question, scope, and work performed",
-    "## 2. Findings",
-    "## 3. Evidence",
+    "## 1. Findings",
+    "## 2. Evidence and further reading",
+    "## 3. Question, scope, and work performed",
     "## 4. Methods, uncertainty, and limitations",
     "## 5. Reproduction and next steps",
 ];
@@ -529,8 +529,133 @@ async fn build_report(
         ));
     }
 
-    // 1. The question, scope, constraints, and what work actually ran.
+    // 1. Start with the ideas, not model counters or internal bookkeeping.
     s.push_str(REPORT_SECTIONS[0]);
+    s.push_str("\n\n");
+
+    let (count, findings) = super::findings::collect(store, run_id, plan.as_ref()).await?;
+    s.push_str(&super::findings::render(count, &findings));
+    let top_finding_ids = findings.iter().map(|f| f.id().clone()).collect();
+
+    let items = store.list_items(run_id).await?;
+    let sources = store.list_sources(run_id).await?;
+    let evidence = store.list_evidence(run_id).await?;
+    let deliverable = load_deliverable(store, artifacts).await;
+    let syntheses: Vec<_> = items
+        .iter()
+        .filter(|i| i.kind == ItemKind::Synthesis || i.kind == ItemKind::Manuscript)
+        .collect();
+
+    // The ranked explanations are the campaign's human deliverable. Do not
+    // append an older recap that repeats them or lists different candidates.
+    if findings.is_empty() {
+        for item in &syntheses {
+            s.push_str(&format!("{}\n\n", item.content));
+        }
+    }
+
+    if let Some(deliverable) = &deliverable {
+        if findings.is_empty() && !deliverable.claims.is_empty() {
+            s.push_str("### What comes from the sources, and what is proposed\n\n");
+            for basis in [
+                ClaimBasis::SourceReported,
+                ClaimBasis::UrukInference,
+                ClaimBasis::UntestedProposal,
+            ] {
+                let claims: Vec<_> = deliverable
+                    .claims
+                    .iter()
+                    .filter(|c| c.basis == basis)
+                    .collect();
+                if claims.is_empty() {
+                    continue;
+                }
+                let label = match basis {
+                    ClaimBasis::SourceReported => "What the sources report",
+                    ClaimBasis::UrukInference => "How Urukai interprets it",
+                    ClaimBasis::UntestedProposal => "Ideas that still need testing",
+                };
+                s.push_str(&format!("**{label}:**\n"));
+                for c in claims {
+                    let cites = c
+                        .citations
+                        .iter()
+                        .map(|g| {
+                            let reference = sources
+                                .iter()
+                                .find(|source| source.id.as_str() == g.source_id.as_str())
+                                .map(super::reading::title)
+                                .unwrap_or_else(|| "Source reference could not be resolved".into());
+                            if g.locator.trim().is_empty() {
+                                reference
+                            } else {
+                                format!("{reference} ({})", g.locator)
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    s.push_str(&format!(
+                        "- {}{}\n",
+                        c.claim,
+                        if cites.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" [{cites}]")
+                        }
+                    ));
+                }
+                s.push('\n');
+            }
+        }
+        if !deliverable.disagreements.is_empty() {
+            s.push_str("**Disagreements between sources:**\n");
+            for d in &deliverable.disagreements {
+                s.push_str(&format!("- {d}\n"));
+            }
+            s.push('\n');
+        }
+    }
+
+    if syntheses.is_empty() && findings.is_empty() && evidence.is_empty() && deliverable.is_none() {
+        s.push_str("No findings were produced. This is a recorded outcome, not an execution error: no discovery is a valid result.\n\n");
+    }
+
+    // 2. Sources are readable references, not an inventory of record IDs.
+    s.push_str(REPORT_SECTIONS[1]);
+    s.push_str("\n\n");
+    if evidence.is_empty() {
+        s.push_str("No evidence beyond agent reasoning was obtained.\n\n");
+    } else if findings.is_empty() {
+        // Standalone tasks may have observations but no tournament ideas.
+        for observation in &evidence {
+            s.push_str(&format!(
+                "- **What was found:** {}\n  - How it was obtained: {}\n",
+                observation.content, observation.method
+            ));
+            if observation.kind == EvidenceKind::AgentCritique {
+                s.push_str("  - This is an agent's reasoning, not an independent observation.\n");
+            }
+            if let Some(limit) = &observation.limitations {
+                s.push_str(&format!("  - What this does not establish: {limit}\n"));
+            }
+        }
+        s.push('\n');
+    } else {
+        s.push_str("The idea explanations above describe the relevant evidence and its limits. Complete observations, methods, and their links are retained in the Agent report.\n\n");
+    }
+    if sources.is_empty() {
+        s.push_str("No sources were recorded for further reading.\n\n");
+    } else {
+        s.push_str("### Sources\n\nUse each idea's reading guide above to decide where to start. Other sources consulted during this run are included here without implying they support every idea.\n\n");
+        for source in &sources {
+            s.push_str(&format!("- {}\n", super::reading::title(source)));
+            super::reading::details(&mut s, source);
+            s.push('\n');
+        }
+    }
+
+    // 3. Research context follows the ideas and their reading material.
+    s.push_str(REPORT_SECTIONS[2]);
     s.push_str("\n\n");
     s.push_str(&format!("- **Mode:** {}\n", goal.mode.as_str()));
     if let Some(scope) = &goal.scope {
@@ -618,183 +743,6 @@ async fn build_report(
              §4\n\n",
             connectors.join(", ")
         ));
-    }
-
-    // 2. Established results, Urukai's interpretations, and untested proposals.
-    s.push_str(REPORT_SECTIONS[1]);
-    s.push_str("\n\n");
-
-    let (count, findings) = super::findings::collect(store, run_id, plan.as_ref()).await?;
-    s.push_str(&super::findings::render(count, &findings));
-    let top_finding_ids = findings.iter().map(|f| f.id().clone()).collect();
-
-    let items = store.list_items(run_id).await?;
-    let syntheses: Vec<_> = items
-        .iter()
-        .filter(|i| i.kind == ItemKind::Synthesis || i.kind == ItemKind::Manuscript)
-        .collect();
-
-    for item in &syntheses {
-        s.push_str(&format!("{}\n\n", item.content));
-    }
-
-    if let Some(deliverable) = load_deliverable(store, artifacts).await {
-        if !deliverable.claims.is_empty() {
-            s.push_str("### Claim provenance\n\n");
-            for basis in [
-                ClaimBasis::SourceReported,
-                ClaimBasis::UrukInference,
-                ClaimBasis::UntestedProposal,
-            ] {
-                let claims: Vec<_> = deliverable
-                    .claims
-                    .iter()
-                    .filter(|c| c.basis == basis)
-                    .collect();
-                if claims.is_empty() {
-                    continue;
-                }
-                s.push_str(&format!("**{}:**\n", capitalize(basis.label())));
-                for c in claims {
-                    let cites = c
-                        .citations
-                        .iter()
-                        .map(|g| format!("`{}` {}", g.source_id, g.locator))
-                        .collect::<Vec<_>>()
-                        .join("; ");
-                    s.push_str(&format!(
-                        "- {}{}\n",
-                        c.claim,
-                        if cites.is_empty() {
-                            String::new()
-                        } else {
-                            format!(" [{cites}]")
-                        }
-                    ));
-                }
-                s.push('\n');
-            }
-        }
-        if !deliverable.disagreements.is_empty() {
-            s.push_str("**Disagreements between sources:**\n");
-            for d in &deliverable.disagreements {
-                s.push_str(&format!("- {d}\n"));
-            }
-            s.push('\n');
-        }
-    }
-
-    let candidates: Vec<_> = items.iter().filter(|i| i.kind.is_rankable()).collect();
-    if !candidates.is_empty() {
-        s.push_str("### Candidates\n\n");
-        for item in &candidates {
-            let assessment = store.current_assessment(&item.id).await?;
-            let disposition = store.get_disposition(&item.id).await?;
-            let rating = match plan {
-                Some(p) => store.get_rating(&item.id, &p.id).await?,
-                None => None,
-            };
-
-            s.push_str(&format!("#### {} `{}`\n\n", item.title, item.id));
-            s.push_str(&format!(
-                "- **Epistemic status:** {} — {}\n",
-                assessment.as_str(),
-                describe_assessment(assessment)
-            ));
-            if !matches!(disposition, Disposition::Active) {
-                s.push_str(&format!(
-                    "- **Workflow disposition:** {} (separate from scientific status)\n",
-                    disposition.as_str()
-                ));
-            }
-            if let Some(r) = &rating {
-                s.push_str(&format!(
-                    "- **Elo:** {:.0} over {} match(es){} — relative prioritisation within \
-                     this rubric cohort, not a probability or confidence\n",
-                    r.rating,
-                    r.matches_played,
-                    if r.stale {
-                        " **(STALE: new evidence has not yet been reflected)**"
-                    } else {
-                        ""
-                    }
-                ));
-            }
-            if item.is_child() {
-                s.push_str(&format!(
-                    "- **Derived from:** {}\n",
-                    item.parent_ids
-                        .iter()
-                        .map(|p| format!("`{p}`"))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ));
-                if let Some(d) = &item.derivation {
-                    s.push_str(&format!("- **What changed:** {d}\n"));
-                }
-            }
-            if let Some(h) = &item.hypothesis
-                && !h.falsifiers.is_empty()
-            {
-                s.push_str(&format!("- **Falsifiers:** {}\n", h.falsifiers.join("; ")));
-            }
-            s.push('\n');
-        }
-    }
-
-    if syntheses.is_empty() && candidates.is_empty() {
-        s.push_str(
-            "No findings were produced. This is a recorded outcome, not an execution \
-             error: no discovery is a valid result.\n\n",
-        );
-    }
-
-    // 3. Supporting and contradicting evidence.
-    s.push_str(REPORT_SECTIONS[2]);
-    s.push_str("\n\n");
-    let evidence = store.list_evidence(run_id).await?;
-    if evidence.is_empty() {
-        s.push_str("No evidence beyond agent reasoning was obtained.\n\n");
-    } else {
-        for e in &evidence {
-            s.push_str(&format!(
-                "- `{}` ({}): {}\n",
-                e.id,
-                e.kind.as_str(),
-                first_line(&e.content, 200)
-            ));
-            s.push_str(&format!("  - Method: {}\n", e.method));
-            if let Some(l) = &e.limitations {
-                s.push_str(&format!("  - Limitations: {l}\n"));
-            }
-            for link in store.links_for_evidence(&e.id).await? {
-                s.push_str(&format!(
-                    "  - **{}** claim on `{}`: {}\n",
-                    link.relation.as_str(),
-                    link.item_id,
-                    link.justification
-                ));
-            }
-        }
-        s.push('\n');
-    }
-
-    let sources = store.list_sources(run_id).await?;
-    if !sources.is_empty() {
-        s.push_str("### Sources\n\n");
-        for src in &sources {
-            s.push_str(&format!(
-                "- `{}` {} — access: {}{}\n",
-                src.id,
-                src.short_citation(),
-                src.access.as_str(),
-                match &src.access_limitations {
-                    Some(l) => format!(" ({l})"),
-                    None => String::new(),
-                }
-            ));
-        }
-        s.push('\n');
     }
 
     // 4. Methods, uncertainty, unavailable information, incomplete validation.
@@ -1074,40 +1022,6 @@ fn completed_by_strategy(tasks: &[Task]) -> BTreeMap<(String, String), usize> {
     counts
 }
 
-fn describe_assessment(a: Assessment) -> &'static str {
-    match a {
-        Assessment::Untested => "proposed, with no relevant validation yet",
-        Assessment::Plausible => "survived review; not experimentally established",
-        Assessment::Supported => "relevant evidence supports the scoped claim, with limits stated",
-        Assessment::Contested => "supporting and contradicting evidence remain unresolved",
-        Assessment::Refuted => "evidence contradicts the scoped claim or a necessary assumption",
-        Assessment::Inconclusive => "available checks cannot resolve the claim",
-    }
-}
-
-fn capitalize(s: &str) -> String {
-    let mut c = s.chars();
-    match c.next() {
-        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-        None => String::new(),
-    }
-}
-
 fn yes_no(b: bool) -> &'static str {
     if b { "permitted" } else { "not permitted" }
-}
-
-fn first_line(s: &str, max: usize) -> String {
-    let line = s.lines().next().unwrap_or("");
-    if line.len() <= max {
-        line.to_string()
-    } else {
-        let end = line
-            .char_indices()
-            .map(|(i, _)| i)
-            .take_while(|&i| i <= max)
-            .last()
-            .unwrap_or(0);
-        format!("{}…", &line[..end])
-    }
 }
