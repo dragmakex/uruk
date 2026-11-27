@@ -107,6 +107,16 @@ describe("parseDecisionLedger", () => {
 });
 
 describe("parseRunSnapshot", () => {
+  it("preserves the research brief, permissions and recorded stopping conditions", () => {
+    const fixture = snapshotFixture() as { goal: Record<string, unknown>; plan: Record<string, unknown> };
+    fixture.goal.rubric = { preferences: ["Prefer replication"], attributes: ["Testability"], constraints: ["No animal work"], acceptance: ["Name a measurable endpoint"] };
+    fixture.goal.permissions = { network: true, execute: false, allowed_tools: ["literature.discover"] };
+    fixture.plan.stopping_conditions = ["rounds_completed", "budget_exhausted"];
+    const snap = parseRunSnapshot(fixture);
+    expect(snap.goal).toHaveProperty("rubric", fixture.goal.rubric);
+    expect(snap.goal).toHaveProperty("permissions", fixture.goal.permissions);
+    expect(snap.plan).toHaveProperty("stopping_conditions", fixture.plan.stopping_conditions);
+  });
   it("requires the assessment basis and validates named evidence", () => {
     const fixture = snapshotFixture() as { items: Array<Record<string, unknown>> };
     delete fixture.items[0]!.assessment_basis;
