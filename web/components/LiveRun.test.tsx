@@ -54,7 +54,9 @@ beforeEach(() => {
   vi.stubGlobal(
     "fetch",
     async (): Promise<Response> =>
-      new Response(JSON.stringify({ ok: true, tournament: { run_id: "run_0412aa", matches: [] } }), {
+      new Response(JSON.stringify({ ok: true, candidates: {
+        run_id: "run_0412aa", total: initial.items.length, offset: 0, limit: 5, through: null, items: initial.items,
+      } }), {
         status: 200,
         headers: { "content-type": "application/json" },
       }),
@@ -78,7 +80,7 @@ describe("LiveRun", () => {
     expect(overview).toHaveTextContent("+16");
   });
 
-  it("renders the header facts and topology from the initial snapshot", () => {
+  it("renders the header facts and topology from the initial snapshot", async () => {
     render(<LiveRun runId="run_0412aa" initial={initial} />);
 
     // Header: question, method, round; all real recorded facts.
@@ -98,7 +100,7 @@ describe("LiveRun", () => {
 
     // Record tables are closed by default; opening candidates reveals the
     // ranked row with its recorded rating.
-    fireEvent.click(screen.getByRole("button", { name: "Open candidates" }));
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Open candidates" })); });
     expect(screen.getByText(/1\. XBP1 splicing escape/)).toBeInTheDocument();
     expect(screen.getByText(/elo 1412, 9 matches/)).toBeInTheDocument();
   });
@@ -336,13 +338,13 @@ describe("LiveRun while on the queue", () => {
     expect(screen.queryByText(/XBP1 splicing escape/)).not.toBeInTheDocument();
   }
 
-  function expectVisualization() {
+  async function expectVisualization() {
     expect(screen.getByRole("heading", { name: "Supervisor" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Generation" })).toBeInTheDocument();
     expect(screen.getByText(/Fig\. run/)).toBeInTheDocument();
     expect(screen.getByText("Key")).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Ranked candidates" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Open candidates" }));
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Open candidates" })); });
     expect(screen.getByText(/1\. XBP1 splicing escape/)).toBeInTheDocument();
   }
 
@@ -368,7 +370,7 @@ describe("LiveRun while on the queue", () => {
       source.emit("snapshot", JSON.stringify(snapshotFixture()));
     });
     expect(screen.queryByRole("status", { name: /queued/i })).not.toBeInTheDocument();
-    expectVisualization();
+    await expectVisualization();
     expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
   });
 
@@ -436,6 +438,6 @@ describe("LiveRun while on the queue", () => {
     });
     expect(screen.queryByRole("status", { name: "Model provider status" })).not.toBeInTheDocument();
     expect(screen.queryByRole("status", { name: /queued/i })).not.toBeInTheDocument();
-    expectVisualization();
+    await expectVisualization();
   });
 });

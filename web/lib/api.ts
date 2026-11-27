@@ -17,6 +17,7 @@ import {
   parseApiError,
   parseDecisionLedger,
   parseCandidateHistory,
+  parseCandidatePage,
   parseCitations,
   parseLibraryPassageHits,
   parsePassagePage,
@@ -35,11 +36,13 @@ import {
 } from "./parse";
 import type {
   CandidateHistory,
+  CandidatePage,
   CitationView,
   DecisionLedger,
   LibraryFilter,
   LibraryPassageHit,
   PassagePage,
+  PageRequest,
   ReportView,
   RunOverview,
   RunPreview,
@@ -140,39 +143,58 @@ export async function fetchTaskReasoning(
 }
 
 /**
- * The recorded tournament so far: every match this run played, with the
- * Elo movement each verdict caused. Read-only; a run with no matches yet
- * answers with an empty feed rather than a placeholder.
+ * One server-bounded match page, newest first, with recorded Elo movement.
+ * An empty history answers with an empty page rather than a placeholder.
  */
 export async function fetchTournament(
   runId: string,
-  cookie?: string,
+  page: PageRequest,
+  signal?: AbortSignal,
 ): Promise<TournamentFeed> {
   const body = await request(
-    `/api/runs/${encodeURIComponent(runId)}/tournament`,
-    undefined,
-    cookie,
+    `/api/runs/${encodeURIComponent(runId)}/tournament${pageQuery(page)}`,
+    { signal },
   );
   const envelope = body as { tournament?: unknown };
   return parseTournamentFeed(envelope.tournament);
 }
 
 /**
- * The run's decisions, oldest first. A run that has decided nothing answers
- * with an empty ledger rather than a placeholder, and the page re-reads it
- * when the snapshot's decision count changes.
+ * One server-bounded decision page, oldest first. Reads are explicit; a live
+ * snapshot change marks the panel stale instead of requesting another page.
  */
 export async function fetchDecisions(
   runId: string,
-  cookie?: string,
+  page: PageRequest,
+  signal?: AbortSignal,
 ): Promise<DecisionLedger> {
   const body = await request(
-    `/api/runs/${encodeURIComponent(runId)}/decisions`,
-    undefined,
-    cookie,
+    `/api/runs/${encodeURIComponent(runId)}/decisions${pageQuery(page)}`,
+    { signal },
   );
   const envelope = body as { ledger?: unknown };
   return parseDecisionLedger(envelope.ledger);
+}
+
+function pageQuery(page: PageRequest): string {
+  return queryString({
+    offset: String(page.offset),
+    limit: String(page.limit),
+    through: page.through === undefined ? undefined : String(page.through),
+  });
+}
+
+export async function fetchCandidates(
+  runId: string,
+  page: PageRequest,
+  signal?: AbortSignal,
+): Promise<CandidatePage> {
+  const body = await request(
+    `/api/runs/${encodeURIComponent(runId)}/candidates${pageQuery(page)}`,
+    { signal },
+  );
+  const envelope = body as { candidates?: unknown };
+  return parseCandidatePage(envelope.candidates);
 }
 
 /**

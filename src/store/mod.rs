@@ -9,6 +9,7 @@ mod owners;
 mod passages;
 mod queries;
 mod queue;
+mod run_panels;
 mod search;
 mod tasks;
 #[cfg(test)]
@@ -21,6 +22,7 @@ pub use owners::{OwnerDigest, SourceFilter};
 pub use passages::{OwnedPassageHit, PassageHit, StoredPassage, sanitize_match_query};
 pub use queries::{ItemSummary, RunOverview};
 pub use queue::{ENGINE_OWNER, QueueContext, QueueEntry, QueueState, QueueStatus, RunTiming};
+pub use run_panels::{PageInfo, PageRequest, RecordPage, RunRecordCounts};
 pub use search::StoredWork;
 pub use tasks::{BudgetUsage, ReasoningPreview, ReasoningTrace};
 pub use uploads::Upload;

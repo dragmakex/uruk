@@ -19,6 +19,7 @@ import type {
   CitationOriginView,
   CitationResolutionView,
   CandidateHistory,
+  CandidatePage,
   CitationView,
   DecisionLedger,
   DecisionView,
@@ -31,6 +32,7 @@ import type {
   MatchMethod,
   MatchOutcome,
   PassagePage,
+  PageInfo,
   PassageView,
   PlanView,
   ProviderWait,
@@ -581,6 +583,7 @@ function parseTournamentSide(value: unknown, path: string): TournamentSide {
 export function parseTournamentFeed(value: unknown): TournamentFeed {
   const r = record(value, "tournament response");
   return {
+    ...parsePageInfo(r, "matches", "tournament response"),
     run_id: str(r.run_id, "tournament response.run_id"),
     matches: array(r.matches, "tournament response.matches").map((v, i) => {
       const path = `matches[${i}]`;
@@ -610,6 +613,7 @@ export function parseTournamentFeed(value: unknown): TournamentFeed {
 export function parseDecisionLedger(value: unknown): DecisionLedger {
   const r = record(value, "ledger response");
   return {
+    ...parsePageInfo(r, "decisions", "ledger response"),
     run_id: str(r.run_id, "ledger response.run_id"),
     decisions: array(r.decisions, "ledger response.decisions").map((v, i) => {
       const path = `decisions[${i}]`;
@@ -626,6 +630,53 @@ export function parseDecisionLedger(value: unknown): DecisionLedger {
       };
       return decision;
     }),
+  };
+}
+
+function pageInteger(value: unknown, path: string): number {
+  const n = num(value, path);
+  if (!Number.isSafeInteger(n) || n < 0)
+    throw new ParseError(path, "nonnegative safe integer", value);
+  return n;
+}
+
+function parsePageInfo(
+  r: Record<string, unknown>,
+  field: string,
+  path: string,
+): PageInfo {
+  const total = pageInteger(r.total, `${path}.total`);
+  const offset = pageInteger(r.offset, `${path}.offset`);
+  const limit = pageInteger(r.limit, `${path}.limit`);
+  if (limit < 1 || limit > 100)
+    throw new ParseError(`${path}.limit`, "1 to 100", limit);
+  const rows = array(r[field], `${path}.${field}`);
+  if (rows.length !== Math.min(limit, Math.max(0, total - offset))) {
+    throw new ParseError(
+      `${path}.${field}`,
+      "exactly the declared page slice",
+      rows,
+    );
+  }
+  if (r.through === undefined)
+    throw new ParseError(`${path}.through`, "integer | null", undefined);
+  return {
+    total,
+    offset,
+    limit,
+    through:
+      r.through === null ? null : pageInteger(r.through, `${path}.through`),
+  };
+}
+
+export function parseCandidatePage(value: unknown): CandidatePage {
+  const r = record(value, "candidates response");
+  return {
+    ...parsePageInfo(r, "items", "candidates response"),
+    run_id: str(r.run_id, "candidates response.run_id"),
+    items: array(r.items, "candidates response.items").map((item, index) =>
+      parseItem(item, `items[${index}]`),
+    ),
   };
 }
 

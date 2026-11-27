@@ -80,6 +80,14 @@ Honesty notes:
 
 ## Responsive topology
 
+The Match log, Candidates, and Decisions panels are request-paginated (five
+records per page). Opening reads page one; the arrow buttons read only the
+requested page. There is no mount-time or next-page prefetch. SSE updates
+counts and marks cached pages stale without triggering another page request;
+Refresh reads a new first page. Close aborts an unfinished request and keeps
+an unchanged loaded page for reopening. See the API contract in `docs/WEB.md`
+for history watermarks and live-ranking page boundaries.
+
 One semantic DOM tree at every width:
 
 - ≥1440px: Supervisor left, three-column worker grid, measured SVG wires

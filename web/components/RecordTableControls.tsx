@@ -43,11 +43,13 @@ export function RecordTablePager({
   page,
   totalPages,
   onPage,
+  disabled = false,
 }: {
   label: string;
   page: number;
   totalPages: number;
   onPage: (page: number) => void;
+  disabled?: boolean;
 }) {
   if (totalPages <= 1) return null;
 
@@ -58,7 +60,7 @@ export function RecordTablePager({
         variant="outline"
         aria-label={`Previous ${label} page`}
         title={`Previous ${label} page`}
-        disabled={page === 1}
+        disabled={disabled || page === 1}
         onClick={() => onPage(Math.max(1, page - 1))}
       >
         <span aria-hidden="true">←</span>
@@ -71,7 +73,7 @@ export function RecordTablePager({
         variant="outline"
         aria-label={`Next ${label} page`}
         title={`Next ${label} page`}
-        disabled={page === totalPages}
+        disabled={disabled || page === totalPages}
         onClick={() => onPage(Math.min(totalPages, page + 1))}
       >
         <span aria-hidden="true">→</span>

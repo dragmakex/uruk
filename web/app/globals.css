@@ -1224,7 +1224,7 @@ details.legend-fold .legend-line {
 .record-table-controls[data-open="true"] {
   position: sticky;
   top: calc(var(--nav-height) + var(--run-head-height));
-  z-index: 20;
+  z-index: 9;
   min-height: 48px;
   margin-inline: -1px;
   padding: 8px 12px;

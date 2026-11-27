@@ -341,8 +341,28 @@ export interface DecisionView {
   created_at: string;
 }
 
-/** Every decision on the run's record, oldest first. */
-export interface DecisionLedger {
+/** Bounds for one explicitly requested record page. */
+export interface PageRequest {
+  offset: number;
+  limit: number;
+  through?: number;
+}
+
+/** Server-applied bounds; histories pin an append-only insertion watermark. */
+export interface PageInfo {
+  total: number;
+  offset: number;
+  limit: number;
+  through: number | null;
+}
+
+export interface CandidatePage extends PageInfo {
+  run_id: string;
+  items: ItemCard[];
+}
+
+/** One page of decisions on the run's record, oldest first. */
+export interface DecisionLedger extends PageInfo {
   run_id: string;
   decisions: DecisionView[];
 }
@@ -436,9 +456,9 @@ export interface TournamentMatch {
   produced_by: string | null;
 }
 
-export interface TournamentFeed {
+export interface TournamentFeed extends PageInfo {
   run_id: string;
-  /** Every recorded match for this run, oldest first as the API returns it. */
+  /** Only the requested slice, newest first with deterministic ID tie breaks. */
   matches: TournamentMatch[];
 }
 

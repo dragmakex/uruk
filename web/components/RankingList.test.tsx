@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ItemCard } from "@/lib/types";
-import { RankingList } from "./RankingList";
+import { RankingRows } from "./RankingList";
 
 function item(id: string, title: string, rating: number | null): ItemCard {
   return {
@@ -72,21 +72,14 @@ function rowBox(top: number): DOMRect {
   } as DOMRect;
 }
 
-function openCandidates() {
-  const toggle = screen.getByRole("button", { name: "Open candidates" });
-  expect(toggle.textContent).toBe("Open");
-  fireEvent.click(toggle);
-}
-
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
 });
 
-describe("RankingList", () => {
+describe("RankingRows", () => {
   it("gives every candidate an evidence chip with a keyboard-readable basis", () => {
-    render(<RankingList runId="run_test" items={first} />);
-    openCandidates();
+    render(<RankingRows runId="run_test" items={first} />);
     const chips = screen.getAllByRole("button", { name: /Evidence for/ });
     expect(chips).toHaveLength(first.length);
     expect(chips[0]).toHaveTextContent("plausible");
@@ -96,15 +89,13 @@ describe("RankingList", () => {
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   });
   it("says nothing about movement before it has seen a second board", () => {
-    const { container } = render(<RankingList runId="run_test" items={first} />);
-    openCandidates();
+    const { container } = render(<RankingRows runId="run_test" items={first} />);
     expect(container.querySelector(".rank-move")).toBeNull();
   });
 
   it("marks the places each row gained or lost when the board reorders", () => {
-    const { container, rerender } = render(<RankingList runId="run_test" items={first} />);
-    openCandidates();
-    rerender(<RankingList runId="run_test" items={reopened} />);
+    const { container, rerender } = render(<RankingRows runId="run_test" items={first} />);
+    rerender(<RankingRows runId="run_test" items={reopened} />);
 
     expect(screen.getAllByText("▲1").length).toBeGreaterThan(0);
     expect(screen.getAllByText("▼1").length).toBeGreaterThan(0);
@@ -113,28 +104,24 @@ describe("RankingList", () => {
   });
 
   it("keeps the count after the reorder, so a late reader still sees it", () => {
-    const { rerender } = render(<RankingList runId="run_test" items={first} />);
-    openCandidates();
-    rerender(<RankingList runId="run_test" items={reopened} />);
+    const { rerender } = render(<RankingRows runId="run_test" items={first} />);
+    rerender(<RankingRows runId="run_test" items={reopened} />);
     // A snapshot that changed nothing else must not wipe the movement.
-    rerender(<RankingList runId="run_test" items={[...reopened]} />);
+    rerender(<RankingRows runId="run_test" items={[...reopened]} />);
     expect(screen.getAllByText("▲1").length).toBeGreaterThan(0);
   });
 
-  it("calls a newcomer new rather than pretending it climbed", () => {
-    const { container, rerender } = render(<RankingList runId="run_test" items={first} />);
-    openCandidates();
-    rerender(<RankingList runId="run_test" items={reopened} />);
+  it("does not call an unseen page entrant a new candidate", () => {
+    const { container, rerender } = render(<RankingRows runId="run_test" items={first} />);
+    rerender(<RankingRows runId="run_test" items={reopened} />);
     const mark = container.querySelector(".rank-move.is-new");
-    expect(mark).not.toBeNull();
-    expect(mark?.textContent).toContain("not on the board at the last update");
+    expect(mark).toBeNull();
   });
 
   it("keeps the place a row holds out of the way", () => {
-    const { container, rerender } = render(<RankingList runId="run_test" items={first} />);
-    openCandidates();
+    const { container, rerender } = render(<RankingRows runId="run_test" items={first} />);
     // a and b swap; c is untouched at third.
-    rerender(<RankingList runId="run_test" items={[first[1]!, first[0]!, first[2]!]} />);
+    rerender(<RankingRows runId="run_test" items={[first[1]!, first[0]!, first[2]!]} />);
     const rows = Array.from(container.querySelectorAll(".item-row"));
     const held = rows.find((row) => row.textContent?.includes("Intron retention"));
     expect(held?.querySelector(".rank-move")).toBeNull();
@@ -156,11 +143,10 @@ describe("RankingList", () => {
     const animate = vi.fn();
     Element.prototype.animate = animate as unknown as Element["animate"];
 
-    const { rerender } = render(<RankingList runId="run_test" items={first} />);
-    openCandidates();
+    const { rerender } = render(<RankingRows runId="run_test" items={first} />);
     animate.mockClear();
     scrollY = 500;
-    rerender(<RankingList runId="run_test" items={reopened} />);
+    rerender(<RankingRows runId="run_test" items={reopened} />);
 
     expect(animate).toHaveBeenCalled();
     const [frames] = animate.mock.calls[0] as [Array<{ transform: string }>];
@@ -179,14 +165,13 @@ describe("RankingList", () => {
     const animate = vi.fn();
     Element.prototype.animate = animate as unknown as Element["animate"];
 
-    const { container, rerender } = render(<RankingList runId="run_test" items={first} />);
-    openCandidates();
+    const { container, rerender } = render(<RankingRows runId="run_test" items={first} />);
     const summary = container.querySelector("summary.item-row")!;
     fireEvent.click(summary);
     await waitFor(() => expect(container.querySelector(".history")).not.toBeNull());
     animate.mockClear();
 
-    rerender(<RankingList runId="run_test" items={reopened} />);
+    rerender(<RankingRows runId="run_test" items={reopened} />);
     expect(animate).not.toHaveBeenCalled();
 
     animate.mockClear();
@@ -196,15 +181,13 @@ describe("RankingList", () => {
   });
 
   it("still shows the rating and unrated status as before", () => {
-    render(<RankingList runId="run_test" items={reopened} />);
-    openCandidates();
+    render(<RankingRows runId="run_test" items={reopened} />);
     expect(screen.getByText(/elo 1490/)).toBeDefined();
     expect(screen.getByText("unrated")).toBeDefined();
   });
 
   it("opens a row onto that candidate's own matches, and only then", async () => {
-    const { container } = render(<RankingList runId="run_test" items={first} />);
-    openCandidates();
+    const { container } = render(<RankingRows runId="run_test" items={first} />);
     // A closed board reads nothing: no request, no empty panel.
     expect(container.querySelector(".history")).toBeNull();
 
@@ -221,27 +204,11 @@ describe("RankingList", () => {
     expect(panel).toContain("1 match · 1 lost · newest first");
   });
 
-  it("is closed by default and pages five candidates at a time", () => {
-    const many = Array.from({ length: 7 }, (_, index) =>
-      item(`item_${index + 1}`, `Candidate ${index + 1}`, 1500 - index),
-    );
-    render(<RankingList runId="run_test" items={many} />);
-
-    expect(screen.queryByRole("list")).toBeNull();
-    openCandidates();
-    const close = screen.getByRole("button", { name: "Close candidates" });
-    expect(close.textContent).toBe("Close");
-    expect(close.closest(".record-table-controls")).toHaveAttribute("data-open", "true");
-    expect(screen.getByRole("list").children).toHaveLength(5);
-    expect(screen.getByText("1. Candidate 1")).toBeDefined();
-    expect(screen.queryByText("6. Candidate 6")).toBeNull();
-    expect(screen.getByRole("button", { name: "Previous Candidates page" }).textContent).toBe("←");
-
-    const next = screen.getByRole("button", { name: "Next Candidates page" });
-    expect(next.textContent).toBe("→");
-    fireEvent.click(next);
+  it("uses the server page offset for global rank numbers", () => {
+    const lastPage = [item("item_6", "Candidate 6", 1495), item("item_7", "Candidate 7", 1494)];
+    render(<RankingRows runId="run_test" items={lastPage} pageStart={5} />);
     expect(screen.getByRole("list").children).toHaveLength(2);
     expect(screen.getByText("6. Candidate 6")).toBeDefined();
-    expect(screen.getByText("Page 2 of 2")).toBeDefined();
+    expect(screen.getByText("7. Candidate 7")).toBeDefined();
   });
 });

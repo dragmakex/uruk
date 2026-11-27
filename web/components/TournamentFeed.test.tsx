@@ -11,7 +11,14 @@ function stubTournament(body: unknown, status = 200): string[] {
     "fetch",
     async (url: RequestInfo | URL): Promise<Response> => {
       seen.push(String(url));
-      return new Response(JSON.stringify(body), {
+      const parsed = new URL(String(url), "http://localhost");
+      const offset = Number(parsed.searchParams.get("offset") ?? 0);
+      const limit = Number(parsed.searchParams.get("limit") ?? 5);
+      const envelope = body as { tournament?: { matches: unknown[] } };
+      const feed = envelope.tournament;
+      const response = feed ? { ...envelope, tournament: { ...feed, total: feed.matches.length,
+        offset, limit, through: feed.matches.length, matches: feed.matches.slice(offset, offset + limit) } } : body;
+      return new Response(JSON.stringify(response), {
         status,
         headers: { "content-type": "application/json" },
       });
@@ -33,7 +40,7 @@ function tournamentWithMatches(count: number) {
       id: `match_${index + 1}`,
       rationale: `rationale ${index + 1}`,
       created_at: `2026-10-04T14:${String(index).padStart(2, "0")}:00Z`,
-    })),
+    })).reverse(),
   };
 }
 
@@ -54,6 +61,8 @@ describe("TournamentFeed", () => {
   it("asks the run-scoped tournament route", async () => {
     const seen = stubTournament({ ok: true, tournament: tournamentFixture() });
     render(<TournamentFeed runId="run_0412aa" matchCount={2} />);
+    expect(seen).toHaveLength(0);
+    await openMatchLog();
     await waitFor(() => expect(seen).toHaveLength(1));
     expect(seen[0]).toContain("/api/runs/run_0412aa/tournament");
   });
@@ -106,18 +115,21 @@ describe("TournamentFeed", () => {
   it("says the tournament has not started rather than showing an empty bracket", async () => {
     stubTournament({ ok: true, tournament: { run_id: "run_0412aa", matches: [] } });
     render(<TournamentFeed runId="run_0412aa" matchCount={0} />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Open match log" }));
     expect(await screen.findByText(/No matches yet/)).toBeDefined();
   });
 
   it("admits a failed read instead of rendering a stale or invented log", async () => {
     stubTournament({ ok: false, error: "unavailable", kind: "internal" }, 500);
     render(<TournamentFeed runId="run_0412aa" matchCount={2} />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Open match log" }));
     expect(await screen.findByText(/could not be read/)).toBeDefined();
   });
 
   it("reports a feed that fails validation as unreadable", async () => {
     stubTournament({ ok: true, tournament: { run_id: "run_0412aa", matches: [{}] } });
     render(<TournamentFeed runId="run_0412aa" matchCount={1} />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Open match log" }));
     expect(await screen.findByText(/could not be read/)).toBeDefined();
   });
 
@@ -145,7 +157,7 @@ describe("TournamentFeed", () => {
     expect(screen.queryByText(/older matches|newer matches/i)).toBeNull();
     await user.click(next);
 
-    const log = screen.getByRole("list", { name: "Match log" });
+    const log = await screen.findByRole("list", { name: "Match log" });
     expect(log.children).toHaveLength(2);
     expect(within(log).getByText("rationale 2")).toBeDefined();
     expect(within(log).getByText("rationale 1")).toBeDefined();
@@ -163,6 +175,7 @@ describe("TournamentFeed", () => {
     expect(closedToggle.textContent).toBe("Open");
     await user.click(closedToggle);
 
+    await screen.findByRole("list", { name: "Match log" });
     const toggle = screen.getByRole("button", { name: "Close match log" });
     expect(toggle.textContent).toBe("Close");
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
